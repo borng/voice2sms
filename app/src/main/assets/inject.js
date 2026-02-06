@@ -23,60 +23,92 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     console.log('[Voice2SMS] Starting compose for: ' + normalizedPhone);
 
     /**
-     * Simulate realistic input on an element (dispatches input/change events).
+     * Get Angular's zone reference from an element's Zone.js symbol properties.
+     * Angular registers event listeners inside its own zone fork (named 'angular'),
+     * NOT the root zone. Zone.current in console/setTimeout is always <root>.
+     * We must extract Angular's zone from __zone_symbol__ to dispatch events
+     * that Angular's change detection actually picks up.
+     */
+    function getAngularZone(el) {
+        // Try common zone symbol properties — format: __zone_symbol__{event}{capture}
+        var symbolKeys = [
+            '__zone_symbol__inputfalse',
+            '__zone_symbol__focusfalse',
+            '__zone_symbol__blurfalse',
+            '__zone_symbol__keydownfalse'
+        ];
+        for (var i = 0; i < symbolKeys.length; i++) {
+            var listeners = el[symbolKeys[i]];
+            if (listeners && listeners.length > 0 && listeners[0].zone) {
+                return listeners[0].zone;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Set value on an input/textarea and trigger Angular change detection.
+     * Uses native setter + InputEvent dispatched inside Angular's zone so that
+     * NgZone picks up the change and updates form controls / autocomplete.
      */
     function setInputValue(el, value) {
-        // Focus the element
         el.focus();
         el.click();
 
-        // Use native setter to bypass React/Angular controlled input
-        var nativeSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype, 'value'
-        ) || Object.getOwnPropertyDescriptor(
-            window.HTMLTextAreaElement.prototype, 'value'
-        );
-
+        // Use native setter to set the value directly
+        var proto = (el.tagName === 'TEXTAREA')
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
         if (nativeSetter && nativeSetter.set) {
             nativeSetter.set.call(el, value);
         } else {
             el.value = value;
         }
 
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        // Dispatch InputEvent inside Angular's zone (NOT Zone.current which is <root>)
+        var angularZone = getAngularZone(el);
+        var inputEvent = new InputEvent('input', {
+            bubbles: true, inputType: 'insertText', data: value
+        });
+
+        if (angularZone) {
+            console.log('[Voice2SMS] Dispatching in Angular zone: ' + angularZone.name);
+            angularZone.run(function() {
+                el.dispatchEvent(inputEvent);
+            });
+        } else if (typeof Zone !== 'undefined') {
+            console.log('[Voice2SMS] Angular zone not found, falling back to Zone.current');
+            Zone.current.run(function() {
+                el.dispatchEvent(inputEvent);
+            });
+        } else {
+            el.dispatchEvent(inputEvent);
+        }
     }
 
     /**
      * Try to find an existing conversation with this phone number.
-     * GV uses itemId attributes like "t.+15551234567" on conversation items.
+     * GV lists conversations as <li> items inside <ol gv-test-id="list">,
+     * each containing <gv-message-thread-list-item> / <gv-thread-list-item>.
+     * We search by text content since itemId attributes are not present.
      */
     function findExistingConversation() {
-        // Try itemId selector (confirmed from GV DOM)
-        var selectors = [
-            '[itemId="t.' + normalizedPhone + '"]',
-            '[itemId="t.+' + digitsOnly + '"]',
-            '[itemId="t.' + digitsOnly + '"]'
-        ];
+        // Search conversation list items by text content
+        var items = document.querySelectorAll(
+            'ol[gv-test-id="list"] li.list-item, ' +
+            'gv-message-thread-list-item, ' +
+            'gv-thread-list-item'
+        );
 
-        for (var i = 0; i < selectors.length; i++) {
-            var el = document.querySelector(selectors[i]);
-            if (el) {
-                console.log('[Voice2SMS] Found existing conversation via: ' + selectors[i]);
-                return el;
-            }
-        }
-
-        // Fallback: search by text content
-        var items = document.querySelectorAll('[role="listitem"], gv-thread-item');
-        for (var j = 0; j < items.length; j++) {
-            var text = items[j].textContent || '';
+        for (var i = 0; i < items.length; i++) {
+            var text = items[i].textContent || '';
             if (text.indexOf(digitsOnly) !== -1 ||
                 text.indexOf(normalizedPhone) !== -1) {
-                console.log('[Voice2SMS] Found conversation by text content');
-                return items[j];
+                console.log('[Voice2SMS] Found conversation by text content match');
+                // Find the clickable div[role="button"] inside
+                var clickable = items[i].querySelector('div[role="button"]') || items[i];
+                return clickable;
             }
         }
 
@@ -87,14 +119,9 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      * Click the "new conversation" / compose button.
      */
     function clickNewConversation() {
-        // Try the send-new-message button (floating action button)
         var selectors = [
-            '[gv-test-id="send-new-message"]',
-            'a[aria-label*="new"]',
-            'a[aria-label*="Send"]',
             'button[aria-label*="new"]',
-            'button[aria-label*="compose"]',
-            '[data-tooltip*="message"]'
+            'button[aria-label*="compose"]'
         ];
 
         for (var i = 0; i < selectors.length; i++) {
@@ -119,12 +146,12 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             return;
         }
 
-        // Look for the "To" / recipient input
         var recipientInput = document.querySelector(
-            'input[placeholder*="name"], input[placeholder*="number"], ' +
-            'input[aria-label*="To"], input[aria-label*="recipient"], ' +
-            '[gv-test-id="recipient-input"] input, ' +
-            'gv-recipient-picker input'
+            'input[placeholder="Type a name or phone number"], ' +
+            'input[placeholder*="name or phone"], ' +
+            'input[placeholder*="number"], ' +
+            'input[aria-label*="To"], ' +
+            'input[aria-label*="recipient"]'
         );
 
         if (!recipientInput) {
@@ -135,30 +162,55 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         console.log('[Voice2SMS] Found recipient input, filling: ' + normalizedPhone);
         setInputValue(recipientInput, normalizedPhone);
 
-        // Wait, then press Enter to confirm the recipient
+        // Wait for dropdown to appear, then select with ArrowDown + Enter
+        setTimeout(function() { selectRecipientFromDropdown(recipientInput, MAX_RETRIES); }, 500);
+    }
+
+    /**
+     * Select the first suggestion from the recipient dropdown.
+     * Uses direct click on the CDK overlay suggestion elements.
+     * (Dispatched KeyboardEvents are isTrusted:false and ignored by CDK.)
+     */
+    function selectRecipientFromDropdown(inp, retries) {
+        if (retries <= 0) {
+            console.log('[Voice2SMS] Gave up waiting for recipient dropdown');
+            setTimeout(function() { fillBody(MAX_RETRIES); }, 500);
+            return;
+        }
+
+        // Check if dropdown is visible in the CDK overlay
+        var overlay = document.querySelector('.cdk-overlay-container');
+        var hasDropdown = overlay && overlay.innerHTML.trim().length > 50;
+
+        if (!hasDropdown) {
+            setTimeout(function() { selectRecipientFromDropdown(inp, retries - 1); }, POLL_INTERVAL);
+            return;
+        }
+
+        console.log('[Voice2SMS] Dropdown detected, clicking suggestion');
+
+        // Primary: click "Send to <number>" button
+        var sendToBtn = overlay.querySelector('.send-to-button');
+        // Fallback: click first contact row
+        if (!sendToBtn) {
+            var contactBtns = overlay.querySelectorAll('button.container.row');
+            if (contactBtns.length > 0) sendToBtn = contactBtns[0];
+        }
+
+        if (sendToBtn) {
+            var label = sendToBtn.textContent.replace(/\s+/g, ' ').trim().substring(0, 60);
+            console.log('[Voice2SMS] Clicking: ' + label);
+            sendToBtn.click();
+        } else {
+            console.log('[Voice2SMS] No clickable suggestion found in overlay');
+        }
+
+        // Verify chip and proceed to body
         setTimeout(function() {
-            recipientInput.dispatchEvent(new KeyboardEvent('keydown', {
-                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-            }));
-            recipientInput.dispatchEvent(new KeyboardEvent('keyup', {
-                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-            }));
-
-            // After recipient is set, wait for suggestion/chip, then fill body
-            setTimeout(function() {
-                // Try clicking the first suggestion if a dropdown appeared
-                var suggestion = document.querySelector(
-                    '[role="option"], [role="listbox"] [role="option"], ' +
-                    'gv-contact-suggestion, .suggestion'
-                );
-                if (suggestion) {
-                    console.log('[Voice2SMS] Clicking recipient suggestion');
-                    suggestion.click();
-                }
-
-                setTimeout(function() { fillBody(MAX_RETRIES); }, 500);
-            }, 500);
-        }, 300);
+            var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
+            console.log('[Voice2SMS] Recipient chips: ' + chips.length);
+            setTimeout(function() { fillBody(MAX_RETRIES); }, 500);
+        }, 500);
     }
 
     /**
@@ -176,10 +228,10 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         }
 
         var textarea = document.querySelector(
-            'textarea[aria-label*="message"], textarea[aria-label*="text"], ' +
-            'textarea[placeholder*="message"], textarea[placeholder*="text"], ' +
-            '[gv-test-id="message-input"] textarea, ' +
-            'gv-message-compose textarea, ' +
+            'textarea[placeholder="Type a message"], ' +
+            'textarea[placeholder*="message"], ' +
+            'textarea[placeholder*="text"], ' +
+            'textarea[aria-label*="message"], ' +
             '[contenteditable="true"][aria-label*="message"]'
         );
 
@@ -214,11 +266,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         }
 
         var sendBtn = document.querySelector(
-            '[gv-test-id="send-message"], ' +
-            'button[aria-label*="Send"], ' +
-            '[aria-label="Send message"], ' +
-            'gv-icon-button[icon="send"], ' +
-            'button[data-tooltip*="Send"]'
+            'button[aria-label*="Send"]'
         );
 
         if (!sendBtn) {
@@ -226,7 +274,6 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             return;
         }
 
-        // Only send if the button is enabled
         if (sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
             console.log('[Voice2SMS] Send button disabled, retrying...');
             setTimeout(function() { clickSend(retries - 1); }, POLL_INTERVAL);
@@ -246,10 +293,9 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             return;
         }
 
-        // Wait for any indication that the GV SPA has rendered
+        // Wait for the GV Angular SPA to render
         var rendered = document.querySelector(
-            'gv-side-nav, [gv-test-id], gv-thread-list, ' +
-            '[role="navigation"], [aria-label*="conversation"]'
+            'gv-side-nav, gv-thread-list, [gv-test-id="sidenav"]'
         );
 
         if (!rendered) {
@@ -263,14 +309,12 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         var existing = findExistingConversation();
         if (existing) {
             existing.click();
-            // Wait for conversation to open, then fill body
             setTimeout(function() { fillBody(MAX_RETRIES); }, 1000);
         } else {
             // Start a new conversation
             if (clickNewConversation()) {
                 setTimeout(function() { fillRecipient(MAX_RETRIES); }, 500);
             } else {
-                // Retry — SPA might still be loading
                 setTimeout(function() { start(retries - 1); }, POLL_INTERVAL);
             }
         }
