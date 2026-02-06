@@ -230,7 +230,8 @@ public class GVoiceWebViewActivity extends Activity {
         injected = true;
 
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean autoSend = prefs.getBoolean("auto_send", false);
+        boolean autoSend = getIntent().getBooleanExtra("force_auto_send",
+                prefs.getBoolean("auto_send", false));
         int autoSendDelay = prefs.getInt("auto_send_delay", 2) * 1000;
 
         try {

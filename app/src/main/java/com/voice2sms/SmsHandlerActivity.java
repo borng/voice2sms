@@ -28,6 +28,8 @@ public class SmsHandlerActivity extends Activity {
             handleLauncherStart();
         } else if (Intent.ACTION_SENDTO.equals(action) || Intent.ACTION_VIEW.equals(action)) {
             handleSmsIntent(intent);
+        } else if (Intent.ACTION_SEND.equals(action)) {
+            handleShareIntent(intent);
         } else {
             // Unknown action — just open GV web
             launchWebView(null, null);
@@ -100,6 +102,11 @@ public class SmsHandlerActivity extends Activity {
         }
 
         launchWebView(recipient, body);
+    }
+
+    private void handleShareIntent(Intent intent) {
+        String body = intent.getStringExtra(Intent.EXTRA_TEXT);
+        launchWebView(null, body);
     }
 
     private void launchWebView(String recipient, String body) {

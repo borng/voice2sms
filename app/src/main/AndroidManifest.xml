@@ -44,6 +44,13 @@
                 <data android:scheme="mms" />
                 <data android:scheme="mmsto" />
             </intent-filter>
+
+            <!-- Share sheet: ACTION_SEND with text -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <!-- WebView activity for Google Voice -->
