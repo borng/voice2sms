@@ -15,6 +15,11 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     var MAX_RETRIES = 30;
     var POLL_INTERVAL = 500;
 
+    /** Return a random integer between min and max (inclusive). */
+    function randDelay(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
     // Normalize phone: strip everything except digits and leading +
     var normalizedPhone = phone.replace(/[^\d+]/g, '');
     // Also create a digits-only version for matching
@@ -162,8 +167,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         console.log('[Voice2SMS] Found recipient input, filling: ' + normalizedPhone);
         setInputValue(recipientInput, normalizedPhone);
 
-        // Wait for dropdown to appear, then select with ArrowDown + Enter
-        setTimeout(function() { selectRecipientFromDropdown(recipientInput, MAX_RETRIES); }, 500);
+        // Wait for dropdown to appear, then click suggestion
+        setTimeout(function() { selectRecipientFromDropdown(recipientInput, MAX_RETRIES); }, randDelay(400, 800));
     }
 
     /**
@@ -209,8 +214,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         setTimeout(function() {
             var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
             console.log('[Voice2SMS] Recipient chips: ' + chips.length);
-            setTimeout(function() { fillBody(MAX_RETRIES); }, 500);
-        }, 500);
+            setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(300, 700));
+        }, randDelay(400, 800));
     }
 
     /**
@@ -251,8 +256,9 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         }
 
         if (autoSend) {
-            console.log('[Voice2SMS] Auto-send enabled, will send in ' + autoSendDelay + 'ms');
-            setTimeout(function() { clickSend(5); }, autoSendDelay);
+            var jitteredDelay = autoSendDelay + randDelay(-300, 500);
+            console.log('[Voice2SMS] Auto-send enabled, will send in ' + jitteredDelay + 'ms');
+            setTimeout(function() { clickSend(5); }, jitteredDelay);
         }
     }
 
@@ -309,11 +315,11 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         var existing = findExistingConversation();
         if (existing) {
             existing.click();
-            setTimeout(function() { fillBody(MAX_RETRIES); }, 1000);
+            setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(800, 1500));
         } else {
             // Start a new conversation
             if (clickNewConversation()) {
-                setTimeout(function() { fillRecipient(MAX_RETRIES); }, 500);
+                setTimeout(function() { fillRecipient(MAX_RETRIES); }, randDelay(400, 900));
             } else {
                 setTimeout(function() { start(retries - 1); }, POLL_INTERVAL);
             }

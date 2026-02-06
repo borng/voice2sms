@@ -63,12 +63,18 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    // Exact Chrome Mobile UA — matches real Chrome 131 on Pixel 8 / Android 14
+    private static final String CHROME_UA =
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+            + "AppleWebKit/537.36 (KHTML, like Gecko) "
+            + "Chrome/131.0.0.0 Mobile Safari/537.36";
+
     private void setupWebView() {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setUserAgentString(settings.getUserAgentString().replace("; wv", ""));
+        settings.setUserAgentString(CHROME_UA);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
         // Enable third-party cookies for Google auth
@@ -96,6 +102,8 @@ public class GVoiceWebViewActivity extends Activity {
                 if (url.contains("voice.google.com/u/0/messages")) {
                     injected = false;
                 }
+                // Inject fingerprint masking as early as possible
+                injectFingerprintMask();
             }
 
             @Override
@@ -199,6 +207,23 @@ public class GVoiceWebViewActivity extends Activity {
 
     private void loadGoogleVoice() {
         webView.loadUrl(GV_MESSAGES_URL);
+    }
+
+    private void injectFingerprintMask() {
+        try {
+            InputStream is = getAssets().open("fingerprint-mask.js");
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            reader.close();
+            webView.evaluateJavascript(sb.toString(), null);
+            Log.d(TAG, "Injected fingerprint mask");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to inject fingerprint mask", e);
+        }
     }
 
     private void injectComposer() {
