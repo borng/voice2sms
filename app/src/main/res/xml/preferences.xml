@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory android:title="Default SMS App">
+        <Preference
+            android:key="set_default_sms"
+            android:title="Set as default SMS app"
+            android:summary="Required to handle sms: links from other apps" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="Google Account">
+        <Preference
+            android:key="switch_account"
+            android:title="Switch Google account"
+            android:summary="Not set" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="Auto-Send">
+        <SwitchPreferenceCompat
+            android:key="auto_send"
+            android:title="Auto-send messages"
+            android:summary="Automatically send after composing"
+            android:defaultValue="false" />
+
+        <SeekBarPreference
+            android:key="auto_send_delay"
+            android:title="Auto-send delay"
+            android:summary="2 seconds"
+            android:defaultValue="2"
+            android:max="5"
+            app:min="1"
+            app:showSeekBarValue="true"
+            android:dependency="auto_send" />
+    </PreferenceCategory>
+
+</PreferenceScreen>
