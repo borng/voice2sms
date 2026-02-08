@@ -86,10 +86,14 @@ public class SmsHandlerActivity extends Activity {
                 }
             }
 
-            // Try to get body from URI query param
-            String queryBody = data.getQueryParameter("body");
-            if (queryBody != null) {
-                body = queryBody;
+            // Try to get body from URI query param.
+            // sms:/smsto: URIs are opaque (not hierarchical), so getQueryParameter()
+            // throws UnsupportedOperationException. Guard with isHierarchical() check.
+            if (data.isHierarchical()) {
+                String queryBody = data.getQueryParameter("body");
+                if (queryBody != null) {
+                    body = queryBody;
+                }
             }
         }
 

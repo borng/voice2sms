@@ -4,8 +4,9 @@
  * Composes a message in the Google Voice web UI by:
  * 1. Finding an existing conversation by phone number, OR
  * 2. Starting a new conversation via the compose button.
- * 3. Populating the message body.
- * 4. Optionally clicking send after a delay.
+ * 3. Creating a recipient chip (directly via Angular's internal callback).
+ * 4. Populating the message body.
+ * 5. Optionally clicking send after a delay.
  *
  * Usage: voice2sms('+15551234567', 'Hello world', false, 2000)
  */
@@ -29,23 +30,32 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
     /**
      * Get Angular's zone reference from an element's Zone.js symbol properties.
-     * Angular registers event listeners inside its own zone fork (named 'angular'),
-     * NOT the root zone. Zone.current in console/setTimeout is always <root>.
-     * We must extract Angular's zone from __zone_symbol__ to dispatch events
-     * that Angular's change detection actually picks up.
+     *
+     * Zone.js stores event listener tasks on elements as __zone_symbol__{event}{capture}.
+     * Each task object has the Angular zone stored in an obfuscated property.
+     * We find it by scanning for an object with a .run() method and .name property.
      */
     function getAngularZone(el) {
-        // Try common zone symbol properties — format: __zone_symbol__{event}{capture}
-        var symbolKeys = [
-            '__zone_symbol__inputfalse',
-            '__zone_symbol__focusfalse',
-            '__zone_symbol__blurfalse',
-            '__zone_symbol__keydownfalse'
-        ];
-        for (var i = 0; i < symbolKeys.length; i++) {
-            var listeners = el[symbolKeys[i]];
-            if (listeners && listeners.length > 0 && listeners[0].zone) {
-                return listeners[0].zone;
+        var zoneKeys = Object.keys(el).filter(function(k) {
+            return k.indexOf('__zone_symbol__') === 0;
+        });
+        for (var i = 0; i < zoneKeys.length; i++) {
+            var listeners = el[zoneKeys[i]];
+            if (!listeners || !listeners.length) continue;
+            var task = listeners[0];
+            // Check legacy .zone property first
+            if (task.zone && typeof task.zone.run === 'function') {
+                return task.zone;
+            }
+            // Scan task properties for the zone object (obfuscated name)
+            var props = Object.getOwnPropertyNames(task);
+            for (var j = 0; j < props.length; j++) {
+                try {
+                    var v = task[props[j]];
+                    if (v && typeof v === 'object' && typeof v.run === 'function' && v.name) {
+                        return v;
+                    }
+                } catch(e) {}
             }
         }
         return null;
@@ -53,14 +63,12 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
     /**
      * Set value on an input/textarea and trigger Angular change detection.
-     * Uses native setter + InputEvent dispatched inside Angular's zone so that
-     * NgZone picks up the change and updates form controls / autocomplete.
+     * Uses native setter + InputEvent dispatched inside Angular's zone.
      */
     function setInputValue(el, value) {
         el.focus();
         el.click();
 
-        // Use native setter to set the value directly
         var proto = (el.tagName === 'TEXTAREA')
             ? window.HTMLTextAreaElement.prototype
             : window.HTMLInputElement.prototype;
@@ -71,7 +79,6 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             el.value = value;
         }
 
-        // Dispatch InputEvent inside Angular's zone (NOT Zone.current which is <root>)
         var angularZone = getAngularZone(el);
         var inputEvent = new InputEvent('input', {
             bubbles: true, inputType: 'insertText', data: value
@@ -82,11 +89,6 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             angularZone.run(function() {
                 el.dispatchEvent(inputEvent);
             });
-        } else if (typeof Zone !== 'undefined') {
-            console.log('[Voice2SMS] Angular zone not found, falling back to Zone.current');
-            Zone.current.run(function() {
-                el.dispatchEvent(inputEvent);
-            });
         } else {
             el.dispatchEvent(inputEvent);
         }
@@ -94,12 +96,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
     /**
      * Try to find an existing conversation with this phone number.
-     * GV lists conversations as <li> items inside <ol gv-test-id="list">,
-     * each containing <gv-message-thread-list-item> / <gv-thread-list-item>.
-     * We search by text content since itemId attributes are not present.
      */
     function findExistingConversation() {
-        // Search conversation list items by text content
         var items = document.querySelectorAll(
             'ol[gv-test-id="list"] li.list-item, ' +
             'gv-message-thread-list-item, ' +
@@ -111,7 +109,6 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             if (text.indexOf(digitsOnly) !== -1 ||
                 text.indexOf(normalizedPhone) !== -1) {
                 console.log('[Voice2SMS] Found conversation by text content match');
-                // Find the clickable div[role="button"] inside
                 var clickable = items[i].querySelector('div[role="button"]') || items[i];
                 return clickable;
             }
@@ -125,7 +122,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      */
     function clickNewConversation() {
         var selectors = [
-            'button[aria-label*="new"]',
+            'button[aria-label*="new"]',       // Mobile: FAB button
+            '[aria-label="Send new message"]',  // Desktop: div role=button
             'button[aria-label*="compose"]'
         ];
 
@@ -143,7 +141,83 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     }
 
     /**
+     * Create a recipient chip by directly calling Angular's matChipInputTokenEnd
+     * callback. This bypasses the autocomplete dropdown entirely — no need for
+     * isTrusted keyboard events or dropdown interaction.
+     *
+     * How it works:
+     * - Angular Material's MatChipInput registers a (matChipInputTokenEnd) handler
+     *   via Zone.js patched addEventListener on the input element
+     * - The listener task is stored at input['__zone_symbol__matChipInputTokenEndfalse']
+     * - We set the input value, then call the callback with a mock event matching
+     *   MatChipInputTokenEndEvent: { value, chipInput: { inputElement, clear } }
+     * - Angular processes it as if the user pressed Enter, creating the chip
+     */
+    function createChipDirectly(inp) {
+        var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        );
+
+        // Set the input value
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(inp, normalizedPhone);
+        } else {
+            inp.value = normalizedPhone;
+        }
+        inp.focus();
+        console.log('[Voice2SMS] Input value set: ' + inp.value);
+
+        // Find the matChipInputTokenEnd listener
+        var tokenListeners = inp['__zone_symbol__matChipInputTokenEndfalse'];
+        if (!tokenListeners || !tokenListeners.length) {
+            console.log('[Voice2SMS] No matChipInputTokenEnd listener found');
+            return false;
+        }
+
+        var task = tokenListeners[0];
+        var callback = task.callback;
+        if (typeof callback !== 'function') {
+            console.log('[Voice2SMS] matChipInputTokenEnd callback is not a function');
+            return false;
+        }
+
+        // Find Angular zone from the task
+        var zone = getAngularZone(inp);
+
+        // Build mock MatChipInputTokenEndEvent
+        var setter = nativeSetter;
+        var mockEvent = {
+            value: normalizedPhone,
+            chipInput: {
+                inputElement: inp,
+                clear: function() {
+                    if (setter && setter.set) {
+                        setter.set.call(inp, '');
+                    } else {
+                        inp.value = '';
+                    }
+                },
+                focused: true
+            },
+            preventDefault: function() {}
+        };
+
+        // Call the callback inside Angular's zone
+        if (zone) {
+            console.log('[Voice2SMS] Calling matChipInputTokenEnd in zone: ' + zone.name);
+            zone.run(function() { callback(mockEvent); });
+        } else {
+            console.log('[Voice2SMS] Calling matChipInputTokenEnd (no zone found)');
+            callback(mockEvent);
+        }
+
+        return true;
+    }
+
+    /**
      * Fill in the recipient field for a new conversation.
+     * Primary: create chip directly via matChipInputTokenEnd callback.
+     * Fallback: type char-by-char and click the dropdown suggestion.
      */
     function fillRecipient(retries) {
         if (retries <= 0) {
@@ -164,57 +238,144 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             return;
         }
 
-        console.log('[Voice2SMS] Found recipient input, filling: ' + normalizedPhone);
-        setInputValue(recipientInput, normalizedPhone);
+        console.log('[Voice2SMS] Found recipient input');
 
-        // Wait for dropdown to appear, then click suggestion
-        setTimeout(function() { selectRecipientFromDropdown(recipientInput, MAX_RETRIES); }, randDelay(400, 800));
+        // Primary: create chip directly (bypasses autocomplete dropdown)
+        var created = createChipDirectly(recipientInput);
+        if (created) {
+            // Verify chip was actually created
+            setTimeout(function() { verifyChipAndProceed(recipientInput, 10); }, randDelay(500, 1000));
+        } else {
+            // Fallback: type and use dropdown
+            console.log('[Voice2SMS] Direct chip creation unavailable, falling back to typing');
+            fillRecipientViaTyping(recipientInput);
+        }
     }
 
     /**
-     * Select the first suggestion from the recipient dropdown.
-     * Uses direct click on the CDK overlay suggestion elements.
-     * (Dispatched KeyboardEvents are isTrusted:false and ignored by CDK.)
+     * Verify that a chip was created, dismiss any overlays, and proceed to body.
      */
-    function selectRecipientFromDropdown(inp, retries) {
-        if (retries <= 0) {
-            console.log('[Voice2SMS] Gave up waiting for recipient dropdown');
-            setTimeout(function() { fillBody(MAX_RETRIES); }, 500);
-            return;
-        }
+    function verifyChipAndProceed(inp, retries) {
+        var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
+        console.log('[Voice2SMS] Recipient chips: ' + chips.length);
 
-        // Check if dropdown is visible in the CDK overlay
-        var overlay = document.querySelector('.cdk-overlay-container');
-        var hasDropdown = overlay && overlay.innerHTML.trim().length > 50;
-
-        if (!hasDropdown) {
-            setTimeout(function() { selectRecipientFromDropdown(inp, retries - 1); }, POLL_INTERVAL);
-            return;
-        }
-
-        console.log('[Voice2SMS] Dropdown detected, clicking suggestion');
-
-        // Primary: click "Send to <number>" button
-        var sendToBtn = overlay.querySelector('.send-to-button');
-        // Fallback: click first contact row
-        if (!sendToBtn) {
-            var contactBtns = overlay.querySelectorAll('button.container.row');
-            if (contactBtns.length > 0) sendToBtn = contactBtns[0];
-        }
-
-        if (sendToBtn) {
-            var label = sendToBtn.textContent.replace(/\s+/g, ' ').trim().substring(0, 60);
-            console.log('[Voice2SMS] Clicking: ' + label);
-            sendToBtn.click();
-        } else {
-            console.log('[Voice2SMS] No clickable suggestion found in overlay');
-        }
-
-        // Verify chip and proceed to body
-        setTimeout(function() {
-            var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
-            console.log('[Voice2SMS] Recipient chips: ' + chips.length);
+        if (chips.length > 0) {
+            // Dismiss any lingering CDK backdrop
+            var backdrop = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+            if (backdrop) {
+                console.log('[Voice2SMS] Dismissing CDK backdrop');
+                document.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
+                }));
+            }
             setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(300, 700));
+        } else if (retries > 0) {
+            // Chip might need a moment to render
+            setTimeout(function() { verifyChipAndProceed(inp, retries - 1); }, POLL_INTERVAL);
+        } else {
+            console.log('[Voice2SMS] Chip not created, falling back to typing');
+            fillRecipientViaTyping(inp);
+        }
+    }
+
+    /**
+     * Fallback: type recipient char-by-char and click the autocomplete suggestion.
+     * Used when direct chip creation is not available.
+     */
+    function fillRecipientViaTyping(inp) {
+        console.log('[Voice2SMS] Typing recipient: ' + normalizedPhone);
+
+        // Clear any value from the direct chip attempt
+        var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        );
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(inp, '');
+        }
+
+        var angularZone = getAngularZone(inp);
+        var i = 0;
+
+        function typeNext() {
+            if (i >= normalizedPhone.length) {
+                console.log('[Voice2SMS] Finished typing, value=' + inp.value);
+                setTimeout(function() {
+                    waitForDropdownAndClick(inp, MAX_RETRIES);
+                }, randDelay(400, 800));
+                return;
+            }
+
+            var char = normalizedPhone[i];
+            inp.focus();
+            var inserted = document.execCommand('insertText', false, char);
+
+            if (!inserted) {
+                var currentValue = normalizedPhone.substring(0, i + 1);
+                if (nativeSetter && nativeSetter.set) {
+                    nativeSetter.set.call(inp, currentValue);
+                }
+                var inputEvent = new InputEvent('input', {
+                    bubbles: true, inputType: 'insertText', data: char
+                });
+                if (angularZone) {
+                    angularZone.run(function() { inp.dispatchEvent(inputEvent); });
+                } else {
+                    inp.dispatchEvent(inputEvent);
+                }
+            }
+
+            i++;
+            setTimeout(typeNext, randDelay(40, 80));
+        }
+
+        inp.focus();
+        inp.click();
+        typeNext();
+    }
+
+    /**
+     * Wait for the autocomplete dropdown and click the first suggestion.
+     */
+    function waitForDropdownAndClick(inp, retries) {
+        if (retries <= 0) {
+            console.log('[Voice2SMS] Dropdown never appeared, proceeding to body');
+            setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(300, 700));
+            return;
+        }
+
+        var overlay = document.querySelector('.cdk-overlay-container');
+        var sendToBtn = overlay && overlay.querySelector('.send-to-button');
+        if (!sendToBtn) {
+            var contactBtns = overlay && overlay.querySelectorAll('button.container.row');
+            if (contactBtns && contactBtns.length > 0) sendToBtn = contactBtns[0];
+        }
+
+        if (!sendToBtn) {
+            if (retries % 5 === 0) {
+                console.log('[Voice2SMS] Dropdown poll: retries=' + retries +
+                    ', inputValue=' + inp.value);
+            }
+            setTimeout(function() { waitForDropdownAndClick(inp, retries - 1); }, POLL_INTERVAL);
+            return;
+        }
+
+        var label = sendToBtn.textContent.replace(/\s+/g, ' ').trim().substring(0, 60);
+        console.log('[Voice2SMS] Clicking: ' + label);
+        sendToBtn.click();
+
+        // Dismiss backdrop and verify chip
+        setTimeout(function() {
+            var backdrop = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+            if (backdrop) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
+                }));
+            }
+            setTimeout(function() {
+                var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
+                console.log('[Voice2SMS] Recipient chips: ' + chips.length);
+                setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(300, 700));
+            }, randDelay(300, 500));
         }, randDelay(400, 800));
     }
 
