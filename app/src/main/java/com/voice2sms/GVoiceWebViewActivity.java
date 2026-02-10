@@ -106,24 +106,30 @@ public class GVoiceWebViewActivity extends Activity {
                         || url.contains("gstatic.com")) {
                     return false;
                 }
-                return false;
+                // Block non-Google URLs to prevent accidental navigation away
+                Log.d(TAG, "Blocking non-Google URL: " + url);
+                return true;
             }
 
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
-                // Reset injection flag when navigating to a new GV page
-                if (url.startsWith("https://voice.google.com")) {
-                    injected = false;
+                // Only inject fingerprint mask on fresh full-page loads, not SPA navigations.
+                // Do NOT reset injected flag here — SPA triggers onPageStarted for
+                // internal navigations which would cause double injection.
+                if (!injected) {
+                    injectFingerprintMask();
                 }
-                // Inject fingerprint masking as early as possible
-                injectFingerprintMask();
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 Log.d(TAG, "onPageFinished: " + url);
+
+                // Flush cookies after every page load to persist auth state
+                CookieManager.getInstance().flush();
+
                 if (url.startsWith("https://voice.google.com") && !injected && recipient != null) {
                     injectComposer();
                 } else if (!url.contains("voice.google.com") && !injected
@@ -319,6 +325,79 @@ public class GVoiceWebViewActivity extends Activity {
             Log.d(TAG, "JS requested native typing: " + text);
             runOnUiThread(() -> typeIntoWebView(text, 0));
         }
+
+        /**
+         * Request that the soft keyboard be shown.
+         * Uses InputMethodManager.showSoftInput with a delay to let WebView
+         * establish focus first.
+         */
+        @JavascriptInterface
+        public void requestShowKeyboard() {
+            Log.d(TAG, "JS requested showKeyboard");
+            runOnUiThread(() -> {
+                webView.setFocusableInTouchMode(true);
+                webView.requestFocus();
+                Handler handler = new Handler(Looper.getMainLooper());
+                handler.postDelayed(() -> {
+                    android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager)
+                            getSystemService(INPUT_METHOD_SERVICE);
+                    if (imm != null) {
+                        imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
+                        Log.d(TAG, "Called showSoftInput(SHOW_FORCED)");
+                    }
+                }, 300);
+            });
+        }
+
+        /**
+         * Focus a specific element and show keyboard.
+         * Uses dispatchTouchEvent (which DOES work for same-app WebView focus,
+         * unlike `input tap` which requires INJECT_EVENTS permission) followed
+         * by showSoftInput. The key insight is that dispatchTouchEvent sets the
+         * WebView's internal focus correctly, and we need to call showSoftInput
+         * AFTER a sufficient delay for the InputConnection to be established.
+         */
+        @JavascriptInterface
+        public void requestFocusAndKeyboard(float cssX, float cssY) {
+            Log.d(TAG, "JS requested focus+keyboard at CSS (" + cssX + "," + cssY + ")");
+            runOnUiThread(() -> {
+                // Ensure WebView has Android-level focus
+                webView.setFocusableInTouchMode(true);
+                webView.requestFocus();
+                webView.requestFocusFromTouch();
+
+                float scale = webView.getScale();
+                float viewX = cssX * scale;
+                float viewY = cssY * scale;
+                Log.d(TAG, "Dispatching touch at view (" + viewX + "," + viewY +
+                        "), scale=" + scale);
+
+                // Dispatch real touch events to the WebView
+                long downTime = SystemClock.uptimeMillis();
+                MotionEvent down = MotionEvent.obtain(downTime, downTime,
+                        MotionEvent.ACTION_DOWN, viewX, viewY, 0);
+                MotionEvent up = MotionEvent.obtain(downTime, downTime + 80,
+                        MotionEvent.ACTION_UP, viewX, viewY, 0);
+                webView.dispatchTouchEvent(down);
+                webView.dispatchTouchEvent(up);
+                down.recycle();
+                up.recycle();
+
+                // Wait for WebView to process the touch and establish InputConnection,
+                // then force-show the keyboard
+                Handler handler = new Handler(Looper.getMainLooper());
+                handler.postDelayed(() -> {
+                    android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager)
+                            getSystemService(INPUT_METHOD_SERVICE);
+                    if (imm != null) {
+                        imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
+                        Log.d(TAG, "Called showSoftInput after touch");
+                    }
+                }, 500);
+            });
+        }
     }
 
     /**
@@ -353,9 +432,13 @@ public class GVoiceWebViewActivity extends Activity {
         down.recycle();
         up.recycle();
 
-        // Wait longer for InputConnection to be established (2 seconds), then type
-        Handler handler = new Handler(Looper.getMainLooper());
-        handler.postDelayed(() -> typeIntoWebView(text, 0), 2000);
+        // Only type if there's text to type; empty string means just tap for focus/keyboard
+        if (text != null && !text.isEmpty()) {
+            Handler handler = new Handler(Looper.getMainLooper());
+            handler.postDelayed(() -> typeIntoWebView(text, 0), 2000);
+        } else {
+            Log.d(TAG, "Tap-only (no text to type), keyboard should appear");
+        }
     }
 
     /**
@@ -436,12 +519,29 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     @Override
-    public void onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
+    protected void onPause() {
+        super.onPause();
+        // Flush cookies to disk so auth state persists across activity restarts
+        CookieManager.getInstance().flush();
+        if (webView != null) {
+            webView.onPause();
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.onResume();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Always finish and return to the calling app.
+        // WebView history contains auth redirects and SPA navigations
+        // that the user doesn't want to walk through.
+        finish();
     }
 
     @Override

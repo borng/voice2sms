@@ -211,6 +211,14 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             callback(mockEvent);
         }
 
+        // Explicitly clear the input value — Angular's clear() may not fire
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(inp, '');
+        } else {
+            inp.value = '';
+        }
+        inp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+
         return true;
     }
 
@@ -253,6 +261,35 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     }
 
     /**
+     * Dismiss any CDK overlay backdrops that may be blocking interaction.
+     * Tries multiple approaches since synthetic events may not work.
+     */
+    function dismissOverlays() {
+        // Approach 1: Click the backdrop directly
+        var backdrop = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+        if (backdrop) {
+            console.log('[Voice2SMS] Clicking CDK backdrop to dismiss');
+            backdrop.click();
+        }
+
+        // Approach 2: Remove backdrop elements entirely as a fallback
+        setTimeout(function() {
+            var backdrops = document.querySelectorAll('.cdk-overlay-backdrop');
+            for (var i = 0; i < backdrops.length; i++) {
+                backdrops[i].style.pointerEvents = 'none';
+                backdrops[i].classList.remove('cdk-overlay-backdrop-showing');
+            }
+            // Also hide any open overlay panes (autocomplete dropdowns)
+            var panes = document.querySelectorAll('.cdk-overlay-pane');
+            for (var j = 0; j < panes.length; j++) {
+                if (panes[j].querySelector('.send-to-button, .autocomplete-panel, mat-autocomplete')) {
+                    panes[j].style.display = 'none';
+                }
+            }
+        }, 200);
+    }
+
+    /**
      * Verify that a chip was created, dismiss any overlays, and proceed to body.
      */
     function verifyChipAndProceed(inp, retries) {
@@ -260,15 +297,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         console.log('[Voice2SMS] Recipient chips: ' + chips.length);
 
         if (chips.length > 0) {
-            // Dismiss any lingering CDK backdrop
-            var backdrop = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
-            if (backdrop) {
-                console.log('[Voice2SMS] Dismissing CDK backdrop');
-                document.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
-                }));
-            }
-            setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(300, 700));
+            dismissOverlays();
+            setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(500, 900));
         } else if (retries > 0) {
             // Chip might need a moment to render
             setTimeout(function() { verifyChipAndProceed(inp, retries - 1); }, POLL_INTERVAL);
@@ -365,12 +395,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
         // Dismiss backdrop and verify chip
         setTimeout(function() {
-            var backdrop = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
-            if (backdrop) {
-                document.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
-                }));
-            }
+            dismissOverlays();
             setTimeout(function() {
                 var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
                 console.log('[Voice2SMS] Recipient chips: ' + chips.length);
@@ -380,16 +405,54 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     }
 
     /**
+     * Focus the message textarea to bring up the keyboard.
+     * In Android WebView, programmatic .focus()/.click() don't open the
+     * soft keyboard — a trusted touch event is required. Use the native
+     * bridge to tap at the textarea's coordinates.
+     */
+    function focusTextarea(textarea) {
+        // Focus the textarea via JS and request keyboard from native side.
+        // We do NOT use dispatchTouchEvent for coordinate-based tapping because
+        // coordinate mapping between CSS and WebView view coords is unreliable
+        // and often hits the wrong element.
+        //
+        // Instead: JS .focus() sets DOM focus correctly on the textarea, and
+        // requestShowKeyboard() calls IMM.showSoftInput(SHOW_FORCED) which
+        // shows the keyboard. The WebView routes keystrokes to the JS-focused
+        // element via its InputConnection.
+        textarea.focus();
+        textarea.click();
+
+        // Dispatch a synthetic mousedown/mouseup on the textarea — this helps
+        // WebView's Blink engine establish the editing context for this element
+        var rect = textarea.getBoundingClientRect();
+        var cx = rect.left + rect.width / 2;
+        var cy = rect.top + rect.height / 2;
+        textarea.dispatchEvent(new MouseEvent('mousedown', {
+            bubbles: true, clientX: cx, clientY: cy
+        }));
+        textarea.dispatchEvent(new MouseEvent('mouseup', {
+            bubbles: true, clientX: cx, clientY: cy
+        }));
+
+        console.log('[Voice2SMS] Textarea focused, active=' +
+            (document.activeElement === textarea) +
+            ', tag=' + document.activeElement.tagName);
+
+        if (typeof V2SBridge !== 'undefined' && V2SBridge.requestShowKeyboard) {
+            setTimeout(function() {
+                console.log('[Voice2SMS] Requesting keyboard show');
+                V2SBridge.requestShowKeyboard();
+            }, 400);
+        }
+    }
+
+    /**
      * Fill in the message body textarea.
      */
     function fillBody(retries) {
         if (retries <= 0) {
             console.log('[Voice2SMS] Gave up waiting for message textarea');
-            return;
-        }
-
-        if (!body || body.length === 0) {
-            console.log('[Voice2SMS] No body to fill');
             return;
         }
 
@@ -406,6 +469,15 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             return;
         }
 
+        // Dismiss any remaining overlays before interacting with textarea
+        dismissOverlays();
+
+        if (!body || body.length === 0) {
+            console.log('[Voice2SMS] No body to fill, focusing textarea for keyboard');
+            setTimeout(function() { focusTextarea(textarea); }, 300);
+            return;
+        }
+
         console.log('[Voice2SMS] Found message textarea, filling body');
 
         if (textarea.contentEditable === 'true') {
@@ -415,6 +487,9 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         } else {
             setInputValue(textarea, body);
         }
+
+        // Focus after a brief delay to ensure Angular has processed the value
+        setTimeout(function() { focusTextarea(textarea); }, 200);
 
         if (autoSend) {
             var jitteredDelay = autoSendDelay + randDelay(-300, 500);
