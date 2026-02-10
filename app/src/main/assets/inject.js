@@ -298,7 +298,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
         if (chips.length > 0) {
             dismissOverlays();
-            setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(500, 900));
+            setTimeout(function() { fillBody(MAX_RETRIES); }, 150);
         } else if (retries > 0) {
             // Chip might need a moment to render
             setTimeout(function() { verifyChipAndProceed(inp, retries - 1); }, POLL_INTERVAL);
@@ -443,7 +443,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             setTimeout(function() {
                 console.log('[Voice2SMS] Requesting keyboard show');
                 V2SBridge.requestShowKeyboard();
-            }, 400);
+            }, 100);
         }
     }
 
@@ -474,7 +474,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
         if (!body || body.length === 0) {
             console.log('[Voice2SMS] No body to fill, focusing textarea for keyboard');
-            setTimeout(function() { focusTextarea(textarea); }, 300);
+            focusTextarea(textarea);
             return;
         }
 
@@ -489,7 +489,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         }
 
         // Focus after a brief delay to ensure Angular has processed the value
-        setTimeout(function() { focusTextarea(textarea); }, 200);
+        setTimeout(function() { focusTextarea(textarea); }, 50);
 
         if (autoSend) {
             var jitteredDelay = autoSendDelay + randDelay(-300, 500);

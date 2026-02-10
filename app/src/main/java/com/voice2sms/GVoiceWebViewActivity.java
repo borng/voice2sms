@@ -346,7 +346,7 @@ public class GVoiceWebViewActivity extends Activity {
                         imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
                         Log.d(TAG, "Called showSoftInput(SHOW_FORCED)");
                     }
-                }, 300);
+                }, 100);
             });
         }
 
