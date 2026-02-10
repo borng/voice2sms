@@ -93,4 +93,22 @@
             return originalQuery.call(navigator.permissions, desc);
         };
     }
+
+    // 8. Dark mode — inject CSS to invert colors for a dark theme.
+    //    Uses invert + hue-rotate on html, then re-inverts images/videos
+    //    so they look normal. Applied via a <style> tag for reliability.
+    var darkStyle = document.createElement('style');
+    darkStyle.id = 'v2s-dark-mode';
+    darkStyle.textContent =
+        'html { filter: invert(0.9) hue-rotate(180deg) !important; background: #111 !important; }' +
+        'img, video, svg image, [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }' +
+        'img, video { opacity: 0.9; }';
+    // Inject as early as possible, re-inject on DOMContentLoaded if needed
+    if (document.head) {
+        document.head.appendChild(darkStyle);
+    } else {
+        document.addEventListener('DOMContentLoaded', function() {
+            document.head.appendChild(darkStyle);
+        });
+    }
 })();
