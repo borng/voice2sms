@@ -132,6 +132,11 @@ public class GVoiceWebViewActivity extends Activity {
 
                 if (url.startsWith("https://voice.google.com") && !injected && recipient != null) {
                     injectComposer();
+                } else if (url.contains("accounts.google.com") && injected) {
+                    // Session expired — user got redirected to login.
+                    // Reset so injection can re-run after they sign back in.
+                    Log.d(TAG, "Auth redirect detected, resetting injected flag");
+                    injected = false;
                 } else if (!url.contains("voice.google.com") && !injected
                         && url.contains("accounts.google.com")
                         && url.contains("MergeSession")
@@ -395,7 +400,7 @@ public class GVoiceWebViewActivity extends Activity {
                         imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
                         Log.d(TAG, "Called showSoftInput after touch");
                     }
-                }, 500);
+                }, 100);
             });
         }
     }

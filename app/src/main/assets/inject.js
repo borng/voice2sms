@@ -272,7 +272,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             backdrop.click();
         }
 
-        // Approach 2: Remove backdrop elements entirely as a fallback
+        // Approach 2: Temporarily disable backdrops, restore after 3s so
+        // subsequent manual interactions (e.g. adding another recipient) still work
         setTimeout(function() {
             var backdrops = document.querySelectorAll('.cdk-overlay-backdrop');
             for (var i = 0; i < backdrops.length; i++) {
@@ -281,11 +282,22 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             }
             // Also hide any open overlay panes (autocomplete dropdowns)
             var panes = document.querySelectorAll('.cdk-overlay-pane');
+            var hiddenPanes = [];
             for (var j = 0; j < panes.length; j++) {
                 if (panes[j].querySelector('.send-to-button, .autocomplete-panel, mat-autocomplete')) {
                     panes[j].style.display = 'none';
+                    hiddenPanes.push(panes[j]);
                 }
             }
+            // Restore after 3s so the UI isn't permanently broken
+            setTimeout(function() {
+                for (var k = 0; k < backdrops.length; k++) {
+                    backdrops[k].style.pointerEvents = '';
+                }
+                for (var l = 0; l < hiddenPanes.length; l++) {
+                    hiddenPanes[l].style.display = '';
+                }
+            }, 3000);
         }, 200);
     }
 
@@ -466,9 +478,6 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             setTimeout(function() { fillBody(retries - 1); }, POLL_INTERVAL);
             return;
         }
-
-        // Dismiss any remaining overlays before interacting with textarea
-        dismissOverlays();
 
         if (!body || body.length === 0) {
             console.log('[Voice2SMS] No body to fill, focusing textarea for keyboard');
