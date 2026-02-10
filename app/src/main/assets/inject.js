@@ -242,7 +242,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         );
 
         if (!recipientInput) {
-            setTimeout(function() { fillRecipient(retries - 1); }, POLL_INTERVAL);
+            setTimeout(function() { fillRecipient(retries - 1); }, 100);
             return;
         }
 
@@ -251,8 +251,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         // Primary: create chip directly (bypasses autocomplete dropdown)
         var created = createChipDirectly(recipientInput);
         if (created) {
-            // Verify chip was actually created
-            setTimeout(function() { verifyChipAndProceed(recipientInput, 10); }, randDelay(500, 1000));
+            // Verify chip was actually created — use tight poll, no artificial delay
+            setTimeout(function() { verifyChipAndProceed(recipientInput, 10); }, 50);
         } else {
             // Fallback: type and use dropdown
             console.log('[Voice2SMS] Direct chip creation unavailable, falling back to typing');
@@ -312,8 +312,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             dismissOverlays();
             fillBody(MAX_RETRIES);
         } else if (retries > 0) {
-            // Chip might need a moment to render
-            setTimeout(function() { verifyChipAndProceed(inp, retries - 1); }, POLL_INTERVAL);
+            // Chip might need a moment to render — tight poll
+            setTimeout(function() { verifyChipAndProceed(inp, retries - 1); }, 50);
         } else {
             console.log('[Voice2SMS] Chip not created, falling back to typing');
             fillRecipientViaTyping(inp);
@@ -475,7 +475,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         );
 
         if (!textarea) {
-            setTimeout(function() { fillBody(retries - 1); }, POLL_INTERVAL);
+            setTimeout(function() { fillBody(retries - 1); }, 100);
             return;
         }
 
@@ -558,11 +558,11 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         var existing = findExistingConversation();
         if (existing) {
             existing.click();
-            setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(800, 1500));
+            setTimeout(function() { fillBody(MAX_RETRIES); }, 100);
         } else {
             // Start a new conversation
             if (clickNewConversation()) {
-                setTimeout(function() { fillRecipient(MAX_RETRIES); }, randDelay(400, 900));
+                setTimeout(function() { fillRecipient(MAX_RETRIES); }, 100);
             } else {
                 setTimeout(function() { start(retries - 1); }, POLL_INTERVAL);
             }
