@@ -288,7 +288,9 @@ public class GVoiceWebViewActivity extends Activity {
                     + autoSend + ", " + autoSendDelay + ");";
 
             webView.evaluateJavascript(js, null);
-            Log.d(TAG, "Injected composer JS for recipient: " + recipient);
+            Log.d(TAG, "Injected composer JS for recipient: " + recipient
+                    + ", body=" + (body != null ? "\"" + body + "\"" : "null")
+                    + ", autoSend=" + autoSend + ", delay=" + autoSendDelay);
         } catch (Exception e) {
             Log.e(TAG, "Failed to inject JS", e);
         }

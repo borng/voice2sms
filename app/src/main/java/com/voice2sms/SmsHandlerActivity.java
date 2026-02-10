@@ -67,6 +67,19 @@ public class SmsHandlerActivity extends Activity {
     }
 
     private void handleSmsIntent(Intent intent) {
+        // Dump all intent details for debugging
+        android.util.Log.d("Voice2SMS", "SmsHandler intent: action=" + intent.getAction()
+                + ", data=" + intent.getData()
+                + ", type=" + intent.getType());
+        Bundle extras = intent.getExtras();
+        if (extras != null) {
+            for (String key : extras.keySet()) {
+                android.util.Log.d("Voice2SMS", "  extra: " + key + " = " + extras.get(key));
+            }
+        } else {
+            android.util.Log.d("Voice2SMS", "  no extras");
+        }
+
         Uri data = intent.getData();
         String recipient = null;
         String body = null;
@@ -88,11 +101,27 @@ public class SmsHandlerActivity extends Activity {
 
             // Try to get body from URI query param.
             // sms:/smsto: URIs are opaque (not hierarchical), so getQueryParameter()
-            // throws UnsupportedOperationException. Guard with isHierarchical() check.
+            // throws UnsupportedOperationException. Parse manually for opaque URIs.
             if (data.isHierarchical()) {
                 String queryBody = data.getQueryParameter("body");
                 if (queryBody != null) {
                     body = queryBody;
+                }
+            } else {
+                // Opaque URI — parse query manually from scheme-specific part
+                // e.g. smsto:+1234?body=Hello
+                String ssp2 = data.getSchemeSpecificPart();
+                if (ssp2 != null && ssp2.contains("body=")) {
+                    int bodyIdx = ssp2.indexOf("body=");
+                    String bodyVal = ssp2.substring(bodyIdx + 5);
+                    int ampIdx = bodyVal.indexOf('&');
+                    if (ampIdx >= 0) bodyVal = bodyVal.substring(0, ampIdx);
+                    try {
+                        body = java.net.URLDecoder.decode(bodyVal, "UTF-8");
+                    } catch (Exception e) {
+                        body = bodyVal;
+                    }
+                    android.util.Log.d("Voice2SMS", "Parsed body from opaque URI: " + body);
                 }
             }
         }
@@ -105,6 +134,8 @@ public class SmsHandlerActivity extends Activity {
             body = intent.getStringExtra(Intent.EXTRA_TEXT);
         }
 
+        android.util.Log.d("Voice2SMS", "SmsHandler: recipient=" + recipient
+                + ", body=" + (body != null ? "\"" + body + "\"" : "null"));
         launchWebView(recipient, body);
     }
 
@@ -120,6 +151,11 @@ public class SmsHandlerActivity extends Activity {
         }
         if (body != null) {
             webIntent.putExtra("body", body);
+        }
+        // Forward force_auto_send if present (e.g. from RespondViaMessage or ADB testing)
+        Intent src = getIntent();
+        if (src.hasExtra("force_auto_send")) {
+            webIntent.putExtra("force_auto_send", src.getBooleanExtra("force_auto_send", false));
         }
         startActivity(webIntent);
         finish();
