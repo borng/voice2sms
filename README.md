@@ -1,6 +1,22 @@
 # Voice2SMS
 
-Route SMS intents through Google Voice instead of your carrier. When set as the default SMS app, Voice2SMS intercepts outgoing SMS intents (from Gemini, contacts, share sheets, etc.) and composes the message in Google Voice's web UI via an embedded WebView.
+## The Problem
+
+If you use Google Voice as your primary phone number, texting is broken on Android. Tapping a phone number in your contacts, sharing text from an app, or asking Gemini to "send a text" all fire standard Android SMS intents — which go straight to your carrier number, not Google Voice. There's no way to set Google Voice as the default SMS handler because it doesn't register as an SMS app. You're stuck copying numbers, switching to the GV app, pasting, and typing your message manually.
+
+This means:
+- **Tapping a phone number** to text goes to your carrier, not Google Voice
+- **Share > SMS** from any app sends via carrier
+- **"Hey Google, text Rachel"** sends via carrier (or Gemini tries `SmsManager` directly)
+- **Quick-reply from notifications** — carrier, not GV
+
+If your real number is your Google Voice number, none of the standard Android SMS workflows work.
+
+## The Solution
+
+Voice2SMS registers as the default SMS app and intercepts all SMS intents. Instead of sending via carrier, it opens Google Voice's web UI in an embedded WebView and programmatically composes the message — creating the recipient chip, filling the body, and optionally auto-sending.
+
+For Gemini voice assistant integration, an **optional** AccessibilityService can monitor Gemini's SMS compose overlay and auto-send through Google Voice. Without it, Gemini's "Modify/Edit" button still routes through Voice2SMS — you just tap Send yourself. The AccessibilityService adds hands-free auto-send for both button taps and voice confirmations ("Yes").
 
 ## How It Works
 
