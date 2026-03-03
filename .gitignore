@@ -22,8 +22,10 @@ package.json
 package-lock.json
 gvoicedmp.txt
 RALPH-PROMPT.md
+CLAUDE.md.dev
 DEBUG-SESSION-*.md
 PLAN.md
+TEST-PLAN-*.md
 STARTUP-OPTIMIZATION.md
 benchmark*.sh
 setup-github-secrets.sh

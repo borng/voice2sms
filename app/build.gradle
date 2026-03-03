@@ -6,6 +6,10 @@ android {
     namespace 'com.voice2sms'
     compileSdk 35
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId "com.voice2sms"
         minSdk 24

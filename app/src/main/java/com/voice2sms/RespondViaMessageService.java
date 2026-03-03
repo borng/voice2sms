@@ -53,7 +53,7 @@ public class RespondViaMessageService extends Service {
             }
             webIntent.putExtra("force_auto_send", true);
             startActivity(webIntent);
-            Log.d(TAG, "RespondViaMessage: launching composer for " + recipient);
+            if (BuildConfig.DEBUG) Log.d(TAG, "RespondViaMessage: launching composer");
         } else {
             Log.w(TAG, "RespondViaMessage: no recipient found, ignoring");
         }

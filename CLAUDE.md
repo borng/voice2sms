@@ -19,30 +19,20 @@ All core features working. Three Gemini SMS interception paths confirmed on devi
 | `app/src/main/java/com/voice2sms/SettingsActivity.java` | Preferences + Gemini toggle |
 | `app/src/main/assets/fingerprint-mask.js` | Anti-detection + dark mode |
 | `app/src/main/res/xml/gemini_accessibility_config.xml` | AccessibilityService config |
-| `TEST-PLAN-GEMINI-SMS.md` | Gemini integration architecture + test plan |
-| `PLAN.md` | Architecture plan & debug log |
-| `MEMORY.md` (in memory dir) | Persistent memory across sessions |
 
-### Credentials
+### Building & Testing
 
-- **Prompt the user for a fresh cookie string** if you need to authenticate with Google Voice in the Playwright MCP browser
-- Cookies go on `.google.com` domain, `__Secure-*` cookies need `sameSite: 'None'`
-- Reference: `test-pw-local.js` has the cookie parsing logic and last-known cookies
+- Build: `ANDROID_HOME=/opt/android-sdk ./gradlew assembleDebug`
+- Release: `ANDROID_HOME=/opt/android-sdk ./gradlew assembleRelease`
+- See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
 
-### Testing
+### Known Issues / Future Work
 
-- Device: Pixel 10 Pro Fold, ADB over WiFi
-- ADB binary: `/opt/android-sdk/platform-tools/adb`
-- Build: `./gradlew assembleDebug` or `./gradlew assembleRelease`
-- Wireless debugging port changes on reconnect — check device settings
-
-### Reference Docs
-
-- See `MEMORY.md` for verified selectors, mobile vs desktop differences, and all prior findings
-- See `TEST-PLAN-GEMINI-SMS.md` for Gemini interception architecture and UI resource IDs
-- See `DEBUG-SESSION-2026-02-08.md` for the inject.js debug session log
-
-### Future Work
-
+- `SHOW_FORCED` is deprecated on API 33+ — consider `SHOW_IMPLICIT` or `WindowInsetsController`
+- Dead `V2SBridge` methods (`requestType`, `requestTapAndType`, `requestFocusAndKeyboard`) — audit and remove if unused
+- Dead `resetComposeState()` function in inject.js — remove if no longer needed
+- Hardcoded User-Agent string will age — consider deriving from `WebSettings.getDefaultUserAgent()`
+- `SmsHandlerActivity` uses `android.util.Log` inline — normalize to imported `Log` with `TAG`
+- Accessibility service monitors all packages (`packageNames = null`) — consider narrowing to Gemini packages only
 - Shizuku integration to replace ADB commands with in-app API calls
 - `SmsDeliverService`/`SendStatusReceiver` for deeper SMS routing control

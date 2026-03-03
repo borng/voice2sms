@@ -113,13 +113,15 @@ keytool -genkey -v -keystore keystore/release.jks \
 
 Pushing a tag (`v*`) triggers a release build via GitHub Actions. The workflow builds the APK, signs it, and creates a GitHub Release with the artifact attached.
 
-After creating the GitHub repo, run the setup script to configure signing secrets:
+After creating the GitHub repo, configure 4 secrets for APK signing:
 
 ```bash
-./setup-github-secrets.sh owner/voice2sms
+# Encode keystore as base64 and set secrets
+gh secret set KEYSTORE_BASE64 --repo owner/voice2sms --body "$(base64 -w0 keystore/release.jks)"
+gh secret set KEYSTORE_PASSWORD --repo owner/voice2sms --body "your-store-password"
+gh secret set KEY_ALIAS --repo owner/voice2sms --body "voice2sms"
+gh secret set KEY_PASSWORD --repo owner/voice2sms --body "your-key-password"
 ```
-
-This reads `keystore/release.jks` and `keystore.properties` (both gitignored) and sets 4 secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 
 To trigger a release:
 ```bash

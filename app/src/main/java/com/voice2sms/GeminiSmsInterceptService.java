@@ -112,9 +112,8 @@ public class GeminiSmsInterceptService extends AccessibilityService {
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             CharSequence className = event.getClassName();
-            Log.d(TAG, "WINDOW_STATE_CHANGED: class=" + className
-                    + " cached=" + hasCachedSmsData()
-                    + " cachedPhone=" + cachedPhone);
+            if (BuildConfig.DEBUG) Log.d(TAG, "WINDOW_STATE_CHANGED: class=" + className
+                    + " cached=" + hasCachedSmsData());
             // If the Gemini overlay dismisses while we have cached SMS data
             // and no recent SENDTO (i.e. Edit button wasn't tapped), this
             // likely means voice-confirm "Yes" triggered SmsManager directly.
@@ -214,7 +213,7 @@ public class GeminiSmsInterceptService extends AccessibilityService {
 
         if (isSmsCardSend) {
             if (hasCachedSmsData()) {
-                Log.d(TAG, "Firing with cached data: phone=" + cachedPhone
+                if (BuildConfig.DEBUG) Log.d(TAG, "Firing with cached data: phone=" + cachedPhone
                         + " body=" + cachedBody);
                 fireSendIntent(cachedPhone, cachedBody);
                 clearSmsCache();
@@ -272,9 +271,8 @@ public class GeminiSmsInterceptService extends AccessibilityService {
                 cachedPhone = data[0];
                 cachedBody = data[1];
                 cachedTimestamp = System.currentTimeMillis();
-                Log.d(TAG, "Cached SMS card: title=\"" + title
-                        + "\" phone=" + cachedPhone
-                        + " body=" + cachedBody);
+                if (BuildConfig.DEBUG) Log.d(TAG, "Cached SMS card: title=\"" + title
+                        + "\" phone=" + cachedPhone + " body=" + cachedBody);
                 // Reset watchdog — fires WATCHDOG_DELAY_MS after last cache update.
                 // If voice "Yes" triggers SmsManager (which produces no accessibility
                 // events), the watchdog will detect the card is gone and fire our intent.
@@ -310,8 +308,8 @@ public class GeminiSmsInterceptService extends AccessibilityService {
     }
 
     private void fireSendIntent(String phoneNumber, String messageBody) {
-        Log.d(TAG, "Intercepted SMS: phone=" + phoneNumber
-                + ", body=" + (messageBody != null ? "\"" + messageBody + "\"" : "null"));
+        if (BuildConfig.DEBUG) Log.d(TAG, "Intercepted SMS: phone=" + phoneNumber
+                + ", body=" + (messageBody != null ? "[present]" : "null"));
 
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
         boolean autoSend = prefs.getBoolean("gemini_auto_send", true);
@@ -337,7 +335,7 @@ public class GeminiSmsInterceptService extends AccessibilityService {
      *
      * The assistant_robin_action_card_text nodes appear in traversal order:
      *   [0] "Voice2SMS"              (app name)
-     *   [1] "Jane Doe"                (contact name)
+     *   [1] "Jane Doe"              (contact name)
      *   [2] "Mobile . +15551234567"  (phone — matched by regex)
      *   [3] "Hello"                  (body — first text after phone)
      */
@@ -424,8 +422,7 @@ public class GeminiSmsInterceptService extends AccessibilityService {
             }
         }
 
-        Log.d(TAG, "Watchdog: card visible=" + cardStillVisible
-                + " phone=" + cachedPhone + " body=" + cachedBody);
+        if (BuildConfig.DEBUG) Log.d(TAG, "Watchdog: card visible=" + cardStillVisible);
 
         if (!cardStillVisible) {
             Log.d(TAG, "Watchdog: SMS card gone with unconsumed cache — voice confirm path");

@@ -91,7 +91,7 @@ Discovered via `uiautomator dump`:
 
 `findAccessibilityNodeInfosByViewId(RES_ACTION_CARD_TEXT)` returns:
 1. App name (e.g., "Voice2SMS")
-2. Contact name (e.g., "Rachel")
+2. Contact name (e.g., "Jane Doe")
 3. Phone line (e.g., "Mobile . +15551234567") — matched by `\+\d{10,}` regex
 4. Message body (e.g., "Hello") — first node after phone match
 

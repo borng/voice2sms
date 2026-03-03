@@ -117,7 +117,8 @@ public class GVoiceWebViewActivity extends Activity {
         body = intent.getStringExtra("body");
         injected = false;
 
-        Log.d(TAG, "onNewIntent: recipient=" + recipient + ", body=" + (body != null ? "\"" + body + "\"" : "null"));
+        if (BuildConfig.DEBUG) Log.d(TAG, "onNewIntent: recipient=" + recipient
+                + ", body=" + (body != null ? "[present]" : "null"));
 
         webView.onResume();
 
@@ -318,8 +319,8 @@ public class GVoiceWebViewActivity extends Activity {
                     + autoSend + ", " + autoSendDelay + ");";
 
             webView.evaluateJavascript(js, null);
-            Log.d(TAG, "Injected composer JS for recipient: " + recipient
-                    + ", body=" + (body != null ? "\"" + body + "\"" : "null")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Injected composer JS for recipient: " + recipient
+                    + ", body=" + (body != null ? "[present]" : "null")
                     + ", autoSend=" + autoSend + ", delay=" + autoSendDelay);
         } catch (Exception e) {
             Log.e(TAG, "Failed to inject JS", e);

@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Toast;
 
 /**
@@ -15,6 +16,7 @@ import android.widget.Toast;
  */
 public class SmsHandlerActivity extends Activity {
 
+    private static final String TAG = "Voice2SMS";
     private static final int REQUEST_DEFAULT_SMS = 1001;
 
     /**
@@ -85,17 +87,9 @@ public class SmsHandlerActivity extends Activity {
     private void handleSmsIntent(Intent intent) {
         // Record timestamp so AccessibilityService can avoid double-fire
         lastSendtoTimestamp = System.currentTimeMillis();
-        // Dump all intent details for debugging
-        android.util.Log.d("Voice2SMS", "SmsHandler intent: action=" + intent.getAction()
-                + ", data=" + intent.getData()
-                + ", type=" + intent.getType());
-        Bundle extras = intent.getExtras();
-        if (extras != null) {
-            for (String key : extras.keySet()) {
-                android.util.Log.d("Voice2SMS", "  extra: " + key + " = " + extras.get(key));
-            }
-        } else {
-            android.util.Log.d("Voice2SMS", "  no extras");
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "SmsHandler intent: action=" + intent.getAction()
+                    + ", data=" + intent.getData());
         }
 
         Uri data = intent.getData();
@@ -145,7 +139,7 @@ public class SmsHandlerActivity extends Activity {
                     } catch (Exception e) {
                         body = bodyVal;
                     }
-                    android.util.Log.d("Voice2SMS", "Parsed body from opaque URI: " + body);
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Parsed body from opaque URI");
                 }
             }
         }
@@ -158,8 +152,8 @@ public class SmsHandlerActivity extends Activity {
             body = intent.getStringExtra(Intent.EXTRA_TEXT);
         }
 
-        android.util.Log.d("Voice2SMS", "SmsHandler: recipient=" + recipient
-                + ", body=" + (body != null ? "\"" + body + "\"" : "null"));
+        if (BuildConfig.DEBUG) Log.d(TAG, "SmsHandler: recipient=" + recipient
+                + ", body=" + (body != null ? "[present]" : "null"));
         launchWebView(recipient, body);
     }
 
