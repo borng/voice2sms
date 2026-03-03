@@ -58,6 +58,7 @@
         <activity
             android:name=".GVoiceWebViewActivity"
             android:exported="false"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
 

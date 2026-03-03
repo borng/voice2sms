@@ -231,21 +231,23 @@ public class GVoiceWebViewActivity extends Activity {
     private void requestAuthToken(android.accounts.AccountManager am, android.accounts.Account account) {
         am.getAuthToken(account, "weblogin:service=grandcentral",
                 null, this, future -> {
-                    try {
-                        Bundle result = future.getResult();
-                        String authUrl = result.getString(android.accounts.AccountManager.KEY_AUTHTOKEN);
-                        if (authUrl != null && authUrl.startsWith("http")
-                                && !authUrl.contains("WILL_NOT_SIGN_IN")) {
-                            Log.d(TAG, "Loading auth token exchange URL");
-                            webView.loadUrl(authUrl);
-                        } else {
-                            Log.d(TAG, "Auth token not usable, loading GV directly");
+                    runOnUiThread(() -> {
+                        try {
+                            Bundle result = future.getResult();
+                            String authUrl = result.getString(android.accounts.AccountManager.KEY_AUTHTOKEN);
+                            if (authUrl != null && authUrl.startsWith("http")
+                                    && !authUrl.contains("WILL_NOT_SIGN_IN")) {
+                                Log.d(TAG, "Loading auth token exchange URL");
+                                webView.loadUrl(authUrl);
+                            } else {
+                                Log.d(TAG, "Auth token not usable, loading GV directly");
+                                loadGoogleVoice();
+                            }
+                        } catch (Exception e) {
+                            Log.w(TAG, "Auth token exchange failed", e);
                             loadGoogleVoice();
                         }
-                    } catch (Exception e) {
-                        Log.w(TAG, "Auth token exchange failed", e);
-                        loadGoogleVoice();
-                    }
+                    });
                 }, null);
     }
 
@@ -534,6 +536,11 @@ public class GVoiceWebViewActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        // Remove JS interface to break reference from singleton WebView → this Activity
+        if (webView != null) {
+            webView.removeJavascriptInterface("V2SBridge");
+        }
+
         // Detach WebView from our layout but do NOT destroy it
         ViewGroup container = findViewById(R.id.webview_container);
         if (container != null && webView != null) {

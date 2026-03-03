@@ -1,6 +1,6 @@
 # Voice2SMS — Project Instructions
 
-## Current State: v1.1.0 — Gemini Accessibility Auto-Send
+## Current State: v1.2.0 — Static Analysis Fixes
 
 All core features working. Three Gemini SMS interception paths confirmed on device:
 1. **Send button tap** — resource ID match → auto-send via GV
