@@ -20,6 +20,16 @@ SMS Intent (sms:/smsto:)          Share Intent (text/plain)
                                                         fills message body textarea
                                                                     |
                                                     shows keyboard / auto-sends
+
+
+Gemini AI ("send a text to...")
+        |
+        v
+  GeminiSmsInterceptService (AccessibilityService)
+        |
+        +-- Send button tap --> resource ID match --> auto-send via GV
+        +-- Modify/Edit btn --> SENDTO intent ------> review mode (no auto-send)
+        +-- Voice "Yes" ------> watchdog timer ------> auto-send via GV
 ```
 
 ### Key Design Decisions
@@ -36,7 +46,9 @@ SMS Intent (sms:/smsto:)          Share Intent (text/plain)
 | `SmsHandlerActivity` | Transparent launcher + SMS/share intent router. Parses `sms:`/`smsto:` URIs (including opaque variants with `&body=`). |
 | `GVoiceWebViewActivity` | Hosts the WebView, manages auth flow, injects JS on page load. `singleTask` launch mode for intent reuse. |
 | `Voice2SmsApplication` | Application subclass holding singleton WebView. Configures async WebView startup, renderer warm-up, and URL prefetch. |
-| `SettingsActivity` | Preferences: set default SMS app, switch Google account. |
+| `GeminiSmsInterceptService` | AccessibilityService monitoring Gemini's SMS compose overlay. Caches phone+body, intercepts Send button (resource ID match), null-source clicks (with SENDTO dedup), and voice "Yes" confirm (watchdog timer). |
+| `SetupActivity` | First-install wizard: default SMS role, ADB commands for blocking Gemini carrier SMS, accessibility service enablement. |
+| `SettingsActivity` | Preferences: set default SMS app, switch Google account, Gemini interception toggle, auto-send switch. |
 | `inject.js` | Core JS injection — SPA detection, compose flow, chip creation, body fill, auto-send. |
 | `fingerprint-mask.js` | Anti-fingerprinting overrides + dark mode CSS filter. |
 | `SmsReceiver` | Stub `SMS_DELIVER` receiver (required for default SMS app role). |
@@ -92,7 +104,7 @@ keytool -genkey -v -keystore keystore/release.jks \
 ## Install
 
 ```bash
-adb install release/voice2sms-v1.0.0.apk
+adb install release/voice2sms-v1.1.0.apk
 ```
 
 Then open the app and:
@@ -100,7 +112,40 @@ Then open the app and:
 2. Sign into your Google account (one-time; cookies persist)
 3. Test by sending an SMS from Gemini, contacts, or any app that fires `sms:` intents
 
+### Gemini Integration Setup
+
+To route Gemini AI SMS through Google Voice, three additional steps are required (guided by the in-app setup wizard on first launch):
+
+**Step 1: Set as default SMS app** (done above)
+
+**Step 2: Block Gemini's direct carrier SMS** (one-time ADB commands):
+```bash
+adb shell pm revoke com.google.android.googlequicksearchbox android.permission.SEND_SMS
+adb shell pm set-permission-flags com.google.android.googlequicksearchbox android.permission.SEND_SMS user-fixed
+adb shell appops set com.google.android.googlequicksearchbox SEND_SMS ignore
+```
+
+**Step 3: Enable the AccessibilityService**
+- Settings > Accessibility > Voice2SMS Gemini Intercept > Enable
+
+The triple ADB command combo (`pm revoke` + `user-fixed` + `appops ignore`) persists across reboots. Future versions will use Shizuku to automate this step.
+
 ## Version History
+
+### v1.1.0 (2026-03-03)
+
+Gemini Accessibility Auto-Send Support.
+
+- AccessibilityService monitors Gemini's SMS compose overlay (FloatyActivity)
+- Three interception paths:
+  - Send button tap (resource ID match) -> auto-send via Google Voice
+  - Modify/Edit button (SENDTO intent) -> review mode, no auto-send
+  - Voice "Yes" confirm (watchdog timer detects card gone) -> auto-send via Google Voice
+- SMS card data caching with 60s TTL and 500ms scan throttle
+- SENDTO timestamp dedup prevents double-fire on Edit button path
+- Auto-send toggle in Settings (Gemini Integration category)
+- First-install setup wizard (default SMS, ADB commands, accessibility service)
+- Broadened accessibility event monitoring (notifications, window state changes)
 
 ### v1.0.0 (2026-03-03)
 
