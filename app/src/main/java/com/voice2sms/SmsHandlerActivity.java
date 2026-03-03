@@ -158,10 +158,11 @@ public class SmsHandlerActivity extends Activity {
             webIntent.putExtra("force_auto_send", true);
         }
 
-        // Forward explicit force_auto_send if present (e.g. from RespondViaMessage or ADB testing)
+        // Forward explicit force_auto_send from source intent, but only allow
+        // opt-out (false). Never let a forwarded true override the empty-body guard above.
         Intent src = getIntent();
-        if (src.hasExtra("force_auto_send")) {
-            webIntent.putExtra("force_auto_send", src.getBooleanExtra("force_auto_send", false));
+        if (src.hasExtra("force_auto_send") && !src.getBooleanExtra("force_auto_send", false)) {
+            webIntent.putExtra("force_auto_send", false);
         }
         startActivity(webIntent);
         finish();

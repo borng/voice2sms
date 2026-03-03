@@ -306,9 +306,19 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      */
     function verifyChipAndProceed(inp, retries) {
         var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
-        console.log('[Voice2SMS] Recipient chips: ' + chips.length);
+        // Verify the chip is for our recipient, not a leftover from previous compose
+        var hasOurChip = false;
+        for (var c = 0; c < chips.length; c++) {
+            var chipText = chips[c].textContent || '';
+            if (chipText.indexOf(digitsOnly) !== -1 ||
+                chipText.indexOf(normalizedPhone) !== -1) {
+                hasOurChip = true;
+                break;
+            }
+        }
+        console.log('[Voice2SMS] Recipient chips: ' + chips.length + ', ours=' + hasOurChip);
 
-        if (chips.length > 0) {
+        if (hasOurChip) {
             dismissOverlays();
             fillBody(MAX_RETRIES);
         } else if (retries > 0) {
@@ -499,7 +509,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         focusTextarea(textarea);
 
         if (autoSend) {
-            var jitteredDelay = autoSendDelay + randDelay(-300, 500);
+            var jitteredDelay = Math.max(0, autoSendDelay + randDelay(-300, 500));
             console.log('[Voice2SMS] Auto-send enabled, will send in ' + jitteredDelay + 'ms');
             setTimeout(function() { clickSend(5); }, jitteredDelay);
         }

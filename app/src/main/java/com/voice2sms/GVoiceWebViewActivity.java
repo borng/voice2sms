@@ -1,9 +1,5 @@
 package com.voice2sms;
 
-import android.accounts.Account;
-import android.accounts.AccountManager;
-import android.accounts.AccountManagerCallback;
-import android.accounts.AccountManagerFuture;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -13,9 +9,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
-import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.webkit.CookieManager;
@@ -36,8 +33,10 @@ import java.io.InputStreamReader;
 
 /**
  * Hosts a WebView pointed at voice.google.com.
- * After the page loads, injects JavaScript to compose a message
- * with the recipient and body passed from SmsHandlerActivity.
+ * Uses a singleton WebView from Voice2SmsApplication so the SPA stays
+ * loaded across Activity lifecycles (warm start optimization).
+ *
+ * Launch mode is singleTask — subsequent intents arrive via onNewIntent().
  */
 public class GVoiceWebViewActivity extends Activity {
 
@@ -58,55 +57,87 @@ public class GVoiceWebViewActivity extends Activity {
         recipient = getIntent().getStringExtra("recipient");
         body = getIntent().getStringExtra("body");
 
-        webView = findViewById(R.id.webview);
-        setupWebView();
+        Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
+        webView = app.getOrCreateWebView();
+        app.attachActivityContext(this);
 
-        // Check if we already have a session cookie for Google Voice
-        CookieManager cookieManager = CookieManager.getInstance();
-        String cookies = cookieManager.getCookie("https://voice.google.com");
+        // Detach from any previous parent
+        ViewParent parent = webView.getParent();
+        if (parent instanceof ViewGroup) {
+            ((ViewGroup) parent).removeView(webView);
+        }
 
-        if (cookies != null && cookies.contains("SID")) {
-            // Looks like we have an active session, load directly
+        // Attach to our container
+        ViewGroup container = findViewById(R.id.webview_container);
+        container.addView(webView, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // Set up WebViewClient and JS interface (re-set each time since
+        // the bridge closure captures `this` Activity)
+        setupWebViewClient();
+        webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
+                if (cm.message() != null && cm.message().contains("[Voice2SMS]")) {
+                    Log.d(TAG, "JS: " + cm.message());
+                }
+                return super.onConsoleMessage(cm);
+            }
+        });
+
+        if (app.isSpaLoaded() && recipient != null) {
+            // Warm start — SPA already loaded. Resume WebView first (it was
+            // paused in previous Activity's onPause), then inject.
+            // inject.js handles reset of any existing compose state.
+            Log.d(TAG, "Warm start: SPA loaded, resuming WebView and injecting");
+            webView.onResume();
+            injectComposer();
+        } else if (!app.isSpaLoaded()) {
+            // Cold start — need to load the page
+            CookieManager cookieManager = CookieManager.getInstance();
+            String cookies = cookieManager.getCookie("https://voice.google.com");
+
+            if (cookies != null && cookies.contains("SID")) {
+                loadGoogleVoice();
+            } else {
+                attemptAccountAuth();
+            }
+        }
+        // else: SPA loaded but no recipient — just show the WebView
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+
+        recipient = intent.getStringExtra("recipient");
+        body = intent.getStringExtra("body");
+        injected = false;
+
+        Log.d(TAG, "onNewIntent: recipient=" + recipient + ", body=" + (body != null ? "\"" + body + "\"" : "null"));
+
+        Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
+        if (app.isSpaLoaded() && recipient != null) {
+            Log.d(TAG, "Warm start (onNewIntent): injecting");
+            webView.onResume();
+            injectComposer();
+        } else if (!app.isSpaLoaded()) {
             loadGoogleVoice();
-        } else {
-            // Try AccountManager auth flow
-            attemptAccountAuth();
         }
     }
 
-    // Exact Chrome Mobile UA — matches real Chrome 131 on Pixel 8 / Android 14
-    private static final String CHROME_UA =
-            "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
-            + "AppleWebKit/537.36 (KHTML, like Gecko) "
-            + "Chrome/131.0.0.0 Mobile Safari/537.36";
-
-    private void setupWebView() {
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setUserAgentString(CHROME_UA);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-
-        // Enable third-party cookies for Google auth
-        CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.setAcceptCookie(true);
-        cookieManager.setAcceptThirdPartyCookies(webView, true);
-
-        // Enable debugging so we can inspect/automate via CDP if needed
-        WebView.setWebContentsDebuggingEnabled(true);
-        webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
-        webView.setWebChromeClient(new WebChromeClient());
+    private void setupWebViewClient() {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // Keep Google auth and voice URLs in the WebView
                 if (url.contains("google.com") || url.contains("googleapis.com")
                         || url.contains("gstatic.com")) {
                     return false;
                 }
-                // Block non-Google URLs to prevent accidental navigation away
                 Log.d(TAG, "Blocking non-Google URL: " + url);
                 return true;
             }
@@ -114,9 +145,6 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
-                // Only inject fingerprint mask on fresh full-page loads, not SPA navigations.
-                // Do NOT reset injected flag here — SPA triggers onPageStarted for
-                // internal navigations which would cause double injection.
                 if (!injected) {
                     injectFingerprintMask();
                 }
@@ -127,35 +155,49 @@ public class GVoiceWebViewActivity extends Activity {
                 super.onPageFinished(view, url);
                 Log.d(TAG, "onPageFinished: " + url);
 
-                // Flush cookies after every page load to persist auth state
                 CookieManager.getInstance().flush();
 
                 if (url.startsWith("https://voice.google.com") && !injected && recipient != null) {
+                    // Mark SPA as loaded for future warm starts
+                    Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
+                    app.setSpaLoaded(true);
                     injectComposer();
+                } else if (url.startsWith("https://voice.google.com") && !injected) {
+                    // No recipient but page loaded — mark SPA ready
+                    Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
+                    app.setSpaLoaded(true);
                 } else if (url.contains("accounts.google.com") && injected) {
-                    // Session expired — user got redirected to login.
-                    // Reset so injection can re-run after they sign back in.
                     Log.d(TAG, "Auth redirect detected, resetting injected flag");
                     injected = false;
+                    Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
+                    app.setSpaLoaded(false);
                 } else if (!url.contains("voice.google.com") && !injected
                         && url.contains("accounts.google.com")
                         && url.contains("MergeSession")
                         && !url.contains("WILL_NOT_SIGN_IN")) {
-                    // Successful auth token exchange — redirect to GV
                     Log.d(TAG, "Auth MergeSession loaded, redirecting to GV");
                     view.loadUrl(GV_MESSAGES_URL);
                 }
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                Log.w(TAG, "Renderer gone! crashed=" + detail.didCrash());
+                Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
+                app.onRendererGone();
+                webView = null; // prevent stale reference in onPause/onDestroy
+                recreate();
+                return true;
             }
         });
     }
 
     private void attemptAccountAuth() {
         try {
-            AccountManager am = AccountManager.get(this);
-            Account[] accounts = am.getAccountsByType("com.google");
+            android.accounts.AccountManager am = android.accounts.AccountManager.get(this);
+            android.accounts.Account[] accounts = am.getAccountsByType("com.google");
 
             if (accounts.length == 0) {
-                // No Google accounts; just load GV and let user sign in manually
                 loadGoogleVoice();
                 return;
             }
@@ -164,8 +206,7 @@ public class GVoiceWebViewActivity extends Activity {
             String savedAccount = prefs.getString("google_account", null);
 
             if (savedAccount != null) {
-                // Use previously selected account
-                for (Account account : accounts) {
+                for (android.accounts.Account account : accounts) {
                     if (account.name.equals(savedAccount)) {
                         requestAuthToken(am, account);
                         return;
@@ -174,12 +215,10 @@ public class GVoiceWebViewActivity extends Activity {
             }
 
             if (accounts.length == 1) {
-                // Only one account, use it
                 prefs.edit().putString("google_account", accounts[0].name).apply();
                 requestAuthToken(am, accounts[0]);
             } else {
-                // Multiple accounts — show picker
-                Intent pickIntent = AccountManager.newChooseAccountIntent(
+                Intent pickIntent = android.accounts.AccountManager.newChooseAccountIntent(
                         null, null, new String[]{"com.google"}, null, null, null, null);
                 startActivityForResult(pickIntent, REQUEST_ACCOUNT_PICKER);
             }
@@ -189,28 +228,23 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
-    private void requestAuthToken(AccountManager am, Account account) {
-        // Use "weblogin:" token type to get a web session token
+    private void requestAuthToken(android.accounts.AccountManager am, android.accounts.Account account) {
         am.getAuthToken(account, "weblogin:service=grandcentral",
-                null, this, new AccountManagerCallback<Bundle>() {
-                    @Override
-                    public void run(AccountManagerFuture<Bundle> future) {
-                        try {
-                            Bundle result = future.getResult();
-                            String authUrl = result.getString(AccountManager.KEY_AUTHTOKEN);
-                            if (authUrl != null && authUrl.startsWith("http")
-                                    && !authUrl.contains("WILL_NOT_SIGN_IN")) {
-                                // Load the token exchange URL — this sets session cookies
-                                Log.d(TAG, "Loading auth token exchange URL");
-                                webView.loadUrl(authUrl);
-                            } else {
-                                Log.d(TAG, "Auth token not usable (WILL_NOT_SIGN_IN or null), loading GV directly");
-                                loadGoogleVoice();
-                            }
-                        } catch (Exception e) {
-                            Log.w(TAG, "Auth token exchange failed", e);
+                null, this, future -> {
+                    try {
+                        Bundle result = future.getResult();
+                        String authUrl = result.getString(android.accounts.AccountManager.KEY_AUTHTOKEN);
+                        if (authUrl != null && authUrl.startsWith("http")
+                                && !authUrl.contains("WILL_NOT_SIGN_IN")) {
+                            Log.d(TAG, "Loading auth token exchange URL");
+                            webView.loadUrl(authUrl);
+                        } else {
+                            Log.d(TAG, "Auth token not usable, loading GV directly");
                             loadGoogleVoice();
                         }
+                    } catch (Exception e) {
+                        Log.w(TAG, "Auth token exchange failed", e);
+                        loadGoogleVoice();
                     }
                 }, null);
     }
@@ -220,14 +254,14 @@ public class GVoiceWebViewActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_ACCOUNT_PICKER) {
             if (resultCode == RESULT_OK && data != null) {
-                String accountName = data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
+                String accountName = data.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME);
                 if (accountName != null) {
                     SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
                     prefs.edit().putString("google_account", accountName).apply();
 
-                    AccountManager am = AccountManager.get(this);
-                    Account[] accounts = am.getAccountsByType("com.google");
-                    for (Account account : accounts) {
+                    android.accounts.AccountManager am = android.accounts.AccountManager.get(this);
+                    android.accounts.Account[] accounts = am.getAccountsByType("com.google");
+                    for (android.accounts.Account account : accounts) {
                         if (account.name.equals(accountName)) {
                             requestAuthToken(am, account);
                             return;
@@ -235,7 +269,6 @@ public class GVoiceWebViewActivity extends Activity {
                     }
                 }
             }
-            // Fallback
             loadGoogleVoice();
         }
     }
@@ -243,6 +276,7 @@ public class GVoiceWebViewActivity extends Activity {
     private void loadGoogleVoice() {
         webView.loadUrl(GV_MESSAGES_URL);
     }
+
 
     private void injectFingerprintMask() {
         try {
@@ -270,7 +304,6 @@ public class GVoiceWebViewActivity extends Activity {
         int autoSendDelay = prefs.getInt("auto_send_delay", 2) * 1000;
 
         try {
-            // Load inject.js from assets
             InputStream is = getAssets().open("inject.js");
             BufferedReader reader = new BufferedReader(new InputStreamReader(is));
             StringBuilder sb = new StringBuilder();
@@ -281,7 +314,6 @@ public class GVoiceWebViewActivity extends Activity {
             reader.close();
 
             String js = sb.toString();
-            // Append the function call with JSON-encoded arguments for safety
             String jsonRecipient = jsonEncode(recipient);
             String jsonBody = jsonEncode(body != null ? body : "");
             js += "\nvoice2sms(" + jsonRecipient + ", " + jsonBody + ", "
@@ -296,48 +328,31 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
-    /** Encode a string as a JSON string literal (with surrounding quotes). */
     private static String jsonEncode(String s) {
         try {
             JSONArray arr = new JSONArray();
             arr.put(s);
-            String json = arr.toString(); // ["the string"]
-            return json.substring(1, json.length() - 1); // "the string"
+            String json = arr.toString();
+            return json.substring(1, json.length() - 1);
         } catch (Exception e) {
-            // Fallback: basic escaping
             return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
                     .replace("\n", "\\n").replace("\r", "\\r") + "\"";
         }
     }
 
-    /**
-     * JavaScript interface: lets inject.js call back to Java for operations
-     * that require trusted native events (e.g., typing into inputs).
-     */
     private class V2SBridge {
-        /**
-         * Called by inject.js with the input's CSS coordinates and text to type.
-         * Simulates a real tap at (cssX, cssY) to establish an InputConnection,
-         * then types the text character by character via dispatchKeyEvent.
-         */
         @JavascriptInterface
         public void requestTapAndType(float cssX, float cssY, String text) {
             Log.d(TAG, "JS requested tap(" + cssX + "," + cssY + ") + type: " + text);
             runOnUiThread(() -> tapAndType(cssX, cssY, text));
         }
 
-        /** Backward compat — type without tap (may not trigger autocomplete). */
         @JavascriptInterface
         public void requestType(String text) {
             Log.d(TAG, "JS requested native typing: " + text);
             runOnUiThread(() -> typeIntoWebView(text, 0));
         }
 
-        /**
-         * Request that the soft keyboard be shown.
-         * Uses InputMethodManager.showSoftInput with a delay to let WebView
-         * establish focus first.
-         */
         @JavascriptInterface
         public void requestShowKeyboard() {
             Log.d(TAG, "JS requested showKeyboard");
@@ -357,19 +372,10 @@ public class GVoiceWebViewActivity extends Activity {
             });
         }
 
-        /**
-         * Focus a specific element and show keyboard.
-         * Uses dispatchTouchEvent (which DOES work for same-app WebView focus,
-         * unlike `input tap` which requires INJECT_EVENTS permission) followed
-         * by showSoftInput. The key insight is that dispatchTouchEvent sets the
-         * WebView's internal focus correctly, and we need to call showSoftInput
-         * AFTER a sufficient delay for the InputConnection to be established.
-         */
         @JavascriptInterface
         public void requestFocusAndKeyboard(float cssX, float cssY) {
             Log.d(TAG, "JS requested focus+keyboard at CSS (" + cssX + "," + cssY + ")");
             runOnUiThread(() -> {
-                // Ensure WebView has Android-level focus
                 webView.setFocusableInTouchMode(true);
                 webView.requestFocus();
                 webView.requestFocusFromTouch();
@@ -380,7 +386,6 @@ public class GVoiceWebViewActivity extends Activity {
                 Log.d(TAG, "Dispatching touch at view (" + viewX + "," + viewY +
                         "), scale=" + scale);
 
-                // Dispatch real touch events to the WebView
                 long downTime = SystemClock.uptimeMillis();
                 MotionEvent down = MotionEvent.obtain(downTime, downTime,
                         MotionEvent.ACTION_DOWN, viewX, viewY, 0);
@@ -391,8 +396,6 @@ public class GVoiceWebViewActivity extends Activity {
                 down.recycle();
                 up.recycle();
 
-                // Wait for WebView to process the touch and establish InputConnection,
-                // then force-show the keyboard
                 Handler handler = new Handler(Looper.getMainLooper());
                 handler.postDelayed(() -> {
                     android.view.inputmethod.InputMethodManager imm =
@@ -407,28 +410,18 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
-    /**
-     * Simulate a real tap at CSS coordinates, then type text.
-     * The tap goes through the full Android touch pipeline which establishes
-     * an InputConnection — required for key events to reach the focused input.
-     */
     private void tapAndType(float cssX, float cssY, String text) {
-        // Ensure WebView has focus first
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
         webView.requestFocusFromTouch();
 
-        // Convert CSS pixels to Android view pixels (account for WebView scale)
         float scale = webView.getScale();
         float viewX = cssX * scale;
         float viewY = cssY * scale;
-        // Note: getBoundingClientRect() returns viewport-relative coords,
-        // so we do NOT subtract scrollY
 
         Log.d(TAG, "Tapping at view coords: (" + viewX + ", " + viewY +
                 "), scale=" + scale);
 
-        // Dispatch touch DOWN + UP to simulate a real tap
         long downTime = SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(downTime, downTime,
                 MotionEvent.ACTION_DOWN, viewX, viewY, 0);
@@ -439,7 +432,6 @@ public class GVoiceWebViewActivity extends Activity {
         down.recycle();
         up.recycle();
 
-        // Only type if there's text to type; empty string means just tap for focus/keyboard
         if (text != null && !text.isEmpty()) {
             Handler handler = new Handler(Looper.getMainLooper());
             handler.postDelayed(() -> typeIntoWebView(text, 0), 2000);
@@ -448,32 +440,20 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
-    /**
-     * Type text using multiple strategies, trying each until one works.
-     * Strategy 1: `input text` shell command (goes through Android input framework)
-     * Strategy 2: InputConnection.commitText (IME pipeline)
-     * Strategy 3: dispatchKeyEvent (direct key events)
-     */
     private void typeIntoWebView(String text, long initialDelay) {
         Handler handler = new Handler(Looper.getMainLooper());
 
-        // Ensure WebView has proper focus before typing
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
         webView.requestFocusFromTouch();
 
         handler.postDelayed(() -> {
-            // Strategy 1: Use Android's input command via shell
-            // This goes through the system's InputManager and produces truly trusted events
             try {
-                // Replace + with keyevent since 'input text' doesn't handle + well
-                // Type each char individually with small delays for reliability
                 new Thread(() -> {
                     try {
                         for (int i = 0; i < text.length(); i++) {
                             char c = text.charAt(i);
                             if (c == '+') {
-                                // '+' needs special handling — use keyevent KEYCODE_PLUS (81)
                                 Runtime.getRuntime().exec(new String[]{"input", "keyevent", "81"}).waitFor();
                             } else {
                                 Runtime.getRuntime().exec(new String[]{"input", "text", String.valueOf(c)}).waitFor();
@@ -482,7 +462,6 @@ public class GVoiceWebViewActivity extends Activity {
                         }
                         Log.d(TAG, "Shell input typing complete");
                         runOnUiThread(() -> {
-                            // Check if input actually has text now
                             webView.evaluateJavascript(
                                 "document.querySelector('input[placeholder*=\"name or phone\"]')?.value || ''",
                                 value -> {
@@ -494,7 +473,6 @@ public class GVoiceWebViewActivity extends Activity {
                         });
                     } catch (Exception e) {
                         Log.w(TAG, "Shell input typing failed: " + e.getMessage());
-                        // Fall back to InputConnection approach
                         runOnUiThread(() -> typeViaInputConnection(text));
                     }
                 }).start();
@@ -505,7 +483,6 @@ public class GVoiceWebViewActivity extends Activity {
         }, initialDelay);
     }
 
-    /** Fallback: type via InputConnection.commitText() */
     private void typeViaInputConnection(String text) {
         Handler handler = new Handler(Looper.getMainLooper());
         for (int i = 0; i < text.length(); i++) {
@@ -528,7 +505,6 @@ public class GVoiceWebViewActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        // Flush cookies to disk so auth state persists across activity restarts
         CookieManager.getInstance().flush();
         if (webView != null) {
             webView.onPause();
@@ -545,17 +521,21 @@ public class GVoiceWebViewActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        // Always finish and return to the calling app.
-        // WebView history contains auth redirects and SPA navigations
-        // that the user doesn't want to walk through.
         finish();
     }
 
     @Override
     protected void onDestroy() {
-        if (webView != null) {
-            webView.destroy();
+        // Detach WebView from our layout but do NOT destroy it
+        ViewGroup container = findViewById(R.id.webview_container);
+        if (container != null && webView != null) {
+            container.removeView(webView);
         }
+
+        Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
+        app.detachActivityContext();
+
         super.onDestroy();
+        // Note: we do NOT call webView.destroy() — it stays alive in the Application
     }
 }
