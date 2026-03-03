@@ -12,6 +12,7 @@ local.properties
 .claude/
 keystore/
 *.jks
+keystore.properties
 node_modules/
 screenshot-*.png
 release/

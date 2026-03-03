@@ -19,11 +19,15 @@ android {
     signingConfigs {
         release {
             // CI: keystore from environment variables (GitHub Secrets)
-            // Local: hardcoded defaults for dev builds
+            // Local: reads from keystore.properties (gitignored)
+            def props = new Properties()
+            def propsFile = rootProject.file('keystore.properties')
+            if (propsFile.exists()) props.load(new FileInputStream(propsFile))
+
             storeFile file(System.getenv('KEYSTORE_PATH') ?: "${rootProject.projectDir}/keystore/release.jks")
-            storePassword System.getenv('KEYSTORE_PASSWORD') ?: "voice2sms"
-            keyAlias System.getenv('KEY_ALIAS') ?: "voice2sms"
-            keyPassword System.getenv('KEY_PASSWORD') ?: "voice2sms"
+            storePassword System.getenv('KEYSTORE_PASSWORD') ?: props.getProperty('storePassword', '')
+            keyAlias System.getenv('KEY_ALIAS') ?: props.getProperty('keyAlias', 'voice2sms')
+            keyPassword System.getenv('KEY_PASSWORD') ?: props.getProperty('keyPassword', '')
         }
     }
 
