@@ -5,6 +5,8 @@ import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -53,15 +55,22 @@ public class GeminiSmsInterceptService extends AccessibilityService {
     private long lastScanTimestamp = 0;
     private static final long SCAN_THROTTLE_MS = 500;
 
+    // Watchdog: fires if cache is populated but no click/SENDTO consumed it
+    private final Handler watchdogHandler = new Handler(Looper.getMainLooper());
+    private static final long WATCHDOG_DELAY_MS = 4000; // 4 seconds after last cache update
+    private final Runnable watchdogRunnable = this::checkVoiceConfirmPath;
+
     @Override
     public void onServiceConnected() {
         AccessibilityServiceInfo info = getServiceInfo();
         if (info == null) info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_CLICKED
                 | AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
+                | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                | AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        info.packageNames = new String[]{GEMINI_PACKAGE};
+        // Monitor all packages so we can catch Toast/notification from SMS failure
+        info.packageNames = null;
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
                 | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         info.notificationTimeout = 100;
@@ -72,6 +81,79 @@ public class GeminiSmsInterceptService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         int eventType = event.getEventType();
+        CharSequence eventPkg = event.getPackageName();
+
+        // Log all notification events (from any package) for diagnostics
+        if (eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            Log.d(TAG, "NOTIFICATION: pkg=" + eventPkg
+                    + " text=" + event.getText()
+                    + " class=" + event.getClassName()
+                    + " cached=" + hasCachedSmsData());
+            // If we see a Toast/notification while SMS data is cached,
+            // Gemini likely tried SmsManager and got denied.
+            // Fire our intent to handle it.
+            if (hasCachedSmsData() && GEMINI_PACKAGE.equals(
+                    eventPkg != null ? eventPkg.toString() : "")) {
+                long msSinceSendto = System.currentTimeMillis()
+                        - SmsHandlerActivity.lastSendtoTimestamp;
+                if (msSinceSendto > 2000) {
+                    Log.d(TAG, "Gemini notification with cached data — voice confirm path");
+                    fireSendIntent(cachedPhone, cachedBody);
+                    clearSmsCache();
+                }
+            }
+            return;
+        }
+
+        // For non-Gemini packages, only handle notifications (above)
+        if (eventPkg != null && !GEMINI_PACKAGE.equals(eventPkg.toString())) {
+            return;
+        }
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            CharSequence className = event.getClassName();
+            Log.d(TAG, "WINDOW_STATE_CHANGED: class=" + className
+                    + " cached=" + hasCachedSmsData()
+                    + " cachedPhone=" + cachedPhone);
+            // If the Gemini overlay dismisses while we have cached SMS data
+            // and no recent SENDTO (i.e. Edit button wasn't tapped), this
+            // likely means voice-confirm "Yes" triggered SmsManager directly.
+            // Fire our intent to catch that path.
+            if (hasCachedSmsData()) {
+                long msSinceSendto = System.currentTimeMillis()
+                        - SmsHandlerActivity.lastSendtoTimestamp;
+                if (msSinceSendto > 2000) {
+                    // Check if the SMS card is still visible
+                    AccessibilityNodeInfo root = getRootInActiveWindow();
+                    boolean cardStillVisible = false;
+                    if (root != null) {
+                        try {
+                            List<AccessibilityNodeInfo> titleNodes =
+                                    root.findAccessibilityNodeInfosByViewId(RES_TITLE_TEXT);
+                            for (AccessibilityNodeInfo n : titleNodes) {
+                                CharSequence t = n.getText();
+                                if (t != null && (t.toString().contains("Text")
+                                        || t.toString().contains("SMS")
+                                        || t.toString().contains("Message"))) {
+                                    cardStillVisible = true;
+                                }
+                                n.recycle();
+                            }
+                        } finally {
+                            root.recycle();
+                        }
+                    }
+                    Log.d(TAG, "Card still visible: " + cardStillVisible);
+                    if (!cardStillVisible) {
+                        Log.d(TAG, "SMS card disappeared with cached data — voice confirm path");
+                        fireSendIntent(cachedPhone, cachedBody);
+                        clearSmsCache();
+                        return;
+                    }
+                }
+            }
+            // Fall through to cache scan
+        }
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 || eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
@@ -193,6 +275,11 @@ public class GeminiSmsInterceptService extends AccessibilityService {
                 Log.d(TAG, "Cached SMS card: title=\"" + title
                         + "\" phone=" + cachedPhone
                         + " body=" + cachedBody);
+                // Reset watchdog — fires WATCHDOG_DELAY_MS after last cache update.
+                // If voice "Yes" triggers SmsManager (which produces no accessibility
+                // events), the watchdog will detect the card is gone and fire our intent.
+                watchdogHandler.removeCallbacks(watchdogRunnable);
+                watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_DELAY_MS);
             }
         } finally {
             root.recycle();
@@ -293,6 +380,62 @@ public class GeminiSmsInterceptService extends AccessibilityService {
         cachedPhone = null;
         cachedBody = null;
         cachedTimestamp = 0;
+        watchdogHandler.removeCallbacks(watchdogRunnable);
+    }
+
+    /**
+     * Watchdog: fires WATCHDOG_DELAY_MS after the last cache update.
+     * If cache is still populated (no click handler consumed it),
+     * check whether the SMS card is still visible. If gone, the user
+     * likely voice-confirmed "Yes" and Gemini tried SmsManager (blocked).
+     * Fire our intent to handle it.
+     */
+    private void checkVoiceConfirmPath() {
+        if (!hasCachedSmsData()) {
+            Log.d(TAG, "Watchdog: cache already consumed, skipping");
+            return;
+        }
+
+        long msSinceSendto = System.currentTimeMillis()
+                - SmsHandlerActivity.lastSendtoTimestamp;
+        if (msSinceSendto <= 2000) {
+            Log.d(TAG, "Watchdog: recent SENDTO (" + msSinceSendto + "ms ago), skipping");
+            return;
+        }
+
+        // Check if the SMS card is still visible
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        boolean cardStillVisible = false;
+        if (root != null) {
+            try {
+                List<AccessibilityNodeInfo> titleNodes =
+                        root.findAccessibilityNodeInfosByViewId(RES_TITLE_TEXT);
+                for (AccessibilityNodeInfo n : titleNodes) {
+                    CharSequence t = n.getText();
+                    if (t != null && (t.toString().contains("Text")
+                            || t.toString().contains("SMS")
+                            || t.toString().contains("Message"))) {
+                        cardStillVisible = true;
+                    }
+                    n.recycle();
+                }
+            } finally {
+                root.recycle();
+            }
+        }
+
+        Log.d(TAG, "Watchdog: card visible=" + cardStillVisible
+                + " phone=" + cachedPhone + " body=" + cachedBody);
+
+        if (!cardStillVisible) {
+            Log.d(TAG, "Watchdog: SMS card gone with unconsumed cache — voice confirm path");
+            fireSendIntent(cachedPhone, cachedBody);
+            clearSmsCache();
+        } else {
+            // Card still visible — user hasn't acted yet, reschedule
+            Log.d(TAG, "Watchdog: card still visible, rescheduling");
+            watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_DELAY_MS);
+        }
     }
 
     @Override

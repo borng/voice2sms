@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeViewClicked|typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeViewClicked|typeWindowStateChanged|typeWindowContentChanged|typeNotificationStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
     android:description="@string/gemini_intercept_description"
-    android:packageNames="com.google.android.googlequicksearchbox"
     android:settingsActivity="com.voice2sms.SettingsActivity" />
