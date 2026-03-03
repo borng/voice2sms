@@ -152,7 +152,13 @@ public class SmsHandlerActivity extends Activity {
         if (body != null) {
             webIntent.putExtra("body", body);
         }
-        // Forward force_auto_send if present (e.g. from RespondViaMessage or ADB testing)
+        // Auto-send when both recipient and a non-empty body are present
+        // (e.g. Gemini "Edit" button with a pre-composed message)
+        if (recipient != null && body != null && !body.isEmpty()) {
+            webIntent.putExtra("force_auto_send", true);
+        }
+
+        // Forward explicit force_auto_send if present (e.g. from RespondViaMessage or ADB testing)
         Intent src = getIntent();
         if (src.hasExtra("force_auto_send")) {
             webIntent.putExtra("force_auto_send", src.getBooleanExtra("force_auto_send", false));

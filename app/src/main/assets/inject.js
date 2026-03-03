@@ -534,6 +534,43 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     }
 
     /**
+     * Reset compose view for warm starts — remove existing chips and clear body.
+     * Returns true if we were on a compose view and reset it.
+     */
+    function resetComposeState() {
+        var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
+        if (chips.length === 0) return false;
+
+        console.log('[Voice2SMS] Warm start: clearing ' + chips.length + ' existing chips');
+
+        // Click remove buttons on each chip
+        for (var i = 0; i < chips.length; i++) {
+            var removeBtn = chips[i].querySelector(
+                'button[aria-label*="remove"], ' +
+                'button[matchipremovedisable], ' +
+                '.mdc-evolution-chip__action--trailing'
+            );
+            if (removeBtn) removeBtn.click();
+        }
+
+        // Clear body textarea
+        var ta = document.querySelector('textarea[placeholder*="message"]');
+        if (ta) {
+            var nativeSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLTextAreaElement.prototype, 'value'
+            );
+            if (nativeSetter && nativeSetter.set) {
+                nativeSetter.set.call(ta, '');
+            } else {
+                ta.value = '';
+            }
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        return true;
+    }
+
+    /**
      * Main entry: poll until the page is ready, then compose.
      */
     function start(retries) {
@@ -554,7 +591,33 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
         console.log('[Voice2SMS] GV SPA detected as rendered');
 
-        // Try to find an existing conversation first
+        // Check current view state for warm start handling
+        var recipientInput = document.querySelector(
+            'input[placeholder="Type a name or phone number"], ' +
+            'input[placeholder*="name or phone"]'
+        );
+        var existingChips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
+        var fabButton = document.querySelector('button[aria-label*="new"]');
+
+        if (recipientInput && !fabButton) {
+            // Compose view is open — warm start with recipient input visible
+            console.log('[Voice2SMS] Compose view already open (warm start), chips=' + existingChips.length);
+            resetComposeState();
+            // Wait for chips to be removed, then fill new recipient
+            setTimeout(function() { fillRecipient(MAX_RETRIES); }, 200);
+            return;
+        }
+
+        if (!fabButton) {
+            // Not on messages list and not in compose — likely a conversation
+            // thread from a previous send. Navigate back to messages list.
+            console.log('[Voice2SMS] In conversation thread, navigating back to messages list');
+            window.history.back();
+            setTimeout(function() { start(retries - 1); }, 500);
+            return;
+        }
+
+        // Messages list (FAB visible): normal flow
         var existing = findExistingConversation();
         if (existing) {
             existing.click();
