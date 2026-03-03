@@ -130,6 +130,14 @@ adb shell appops set com.google.android.googlequicksearchbox SEND_SMS ignore
 
 The triple ADB command combo (`pm revoke` + `user-fixed` + `appops ignore`) persists across reboots. Future versions will use Shizuku to automate this step.
 
+## Disclaimer
+
+This project relies on internal implementation details of Google Voice's web UI (Angular component structure, Zone.js listener internals, DOM selectors) and Gemini's accessibility tree (resource IDs, FloatyActivity layout). **Google may change any of these at any time without notice**, which could break functionality. This is a personal-use tool, not a supported product. If something stops working after a Google Voice or Gemini update, the relevant selectors and resource IDs will need to be re-discovered and updated.
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
+
 ## Version History
 
 ### v1.1.0 (2026-03-03)
