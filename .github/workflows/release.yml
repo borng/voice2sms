@@ -1,0 +1,66 @@
+name: Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Convert semver to integer versionCode: 1.1.0 -> 10100
+          IFS='.' read -r major minor patch <<< "$TAG"
+          CODE=$(( major * 10000 + minor * 100 + ${patch:-0} ))
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Version: $TAG (code: $CODE)"
+
+      - name: Decode keystore
+        run: |
+          mkdir -p keystore
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore/release.jks
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Build release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -PVERSION_NAME=${{ steps.version.outputs.tag }} \
+            -PVERSION_CODE=${{ steps.version.outputs.code }}
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/keystore/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Rename APK
+        run: |
+          mkdir -p release
+          cp app/build/outputs/apk/release/app-release.apk \
+             release/voice2sms-v${{ steps.version.outputs.tag }}.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/voice2sms-v${{ steps.version.outputs.tag }}.apk
+          generate_release_notes: true
+          name: Voice2SMS v${{ steps.version.outputs.tag }}

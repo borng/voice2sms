@@ -10,16 +10,20 @@ android {
         applicationId "com.voice2sms"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        // versionCode and versionName are set dynamically from git tags in CI,
+        // or fall back to defaults for local builds
+        versionCode project.hasProperty('VERSION_CODE') ? project.property('VERSION_CODE').toInteger() : 1
+        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "1.1.0"
     }
 
     signingConfigs {
         release {
-            storeFile file("${rootProject.projectDir}/keystore/release.jks")
-            storePassword "voice2sms"
-            keyAlias "voice2sms"
-            keyPassword "voice2sms"
+            // CI: keystore from environment variables (GitHub Secrets)
+            // Local: hardcoded defaults for dev builds
+            storeFile file(System.getenv('KEYSTORE_PATH') ?: "${rootProject.projectDir}/keystore/release.jks")
+            storePassword System.getenv('KEYSTORE_PASSWORD') ?: "voice2sms"
+            keyAlias System.getenv('KEY_ALIAS') ?: "voice2sms"
+            keyPassword System.getenv('KEY_PASSWORD') ?: "voice2sms"
         }
     }
 

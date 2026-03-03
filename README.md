@@ -107,6 +107,25 @@ keytool -genkey -v -keystore keystore/release.jks \
   -alias voice2sms -storepass voice2sms -keypass voice2sms
 ```
 
+### GitHub Actions (CI)
+
+Pushing a tag (`v*`) triggers a release build via GitHub Actions. The workflow builds the APK, signs it, and creates a GitHub Release with the artifact attached.
+
+Required repository secrets:
+
+| Secret | Value |
+|--------|-------|
+| `KEYSTORE_BASE64` | `base64 -w0 keystore/release.jks` |
+| `KEYSTORE_PASSWORD` | Keystore password |
+| `KEY_ALIAS` | Key alias |
+| `KEY_PASSWORD` | Key password |
+
+To trigger a release:
+```bash
+git tag -a v1.2.0 -m "Description of release"
+git push origin v1.2.0
+```
+
 ## Disclaimer
 
 This project relies on internal implementation details of Google Voice's web UI (Angular component structure, Zone.js listener internals, DOM selectors) and Gemini's accessibility tree (resource IDs, FloatyActivity layout). **Google may change any of these at any time without notice**, which could break functionality. This is a personal-use tool, not a supported product. If something stops working after a Google Voice or Gemini update, the relevant selectors and resource IDs will need to be re-discovered and updated.
