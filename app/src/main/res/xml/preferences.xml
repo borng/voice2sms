@@ -17,21 +17,10 @@
     </PreferenceCategory>
 
     <PreferenceCategory android:title="Auto-Send">
-        <SwitchPreferenceCompat
-            android:key="auto_send"
+        <Preference
+            android:key="auto_send_disabled"
             android:title="Auto-send messages"
-            android:summary="Automatically send after composing"
-            android:defaultValue="false" />
-
-        <SeekBarPreference
-            android:key="auto_send_delay"
-            android:title="Auto-send delay"
-            android:summary="2 seconds"
-            android:defaultValue="2"
-            android:max="5"
-            app:min="1"
-            app:showSeekBarValue="true"
-            android:dependency="auto_send" />
+            android:summary="Currently disabled" />
     </PreferenceCategory>
 
 </PreferenceScreen>

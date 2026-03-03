@@ -72,14 +72,15 @@ public class SettingsActivity extends AppCompatActivity {
                 });
             }
 
-            // Auto-send delay summary
-            SeekBarPreference delayPref = findPreference("auto_send_delay");
-            if (delayPref != null) {
-                delayPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                    preference.setSummary(newValue + " seconds");
+            // Auto-send disabled placeholder
+            Preference autoSendDisabled = findPreference("auto_send_disabled");
+            if (autoSendDisabled != null) {
+                autoSendDisabled.setOnPreferenceClickListener(pref -> {
+                    Toast.makeText(requireContext(),
+                            "Auto-send is disabled for now",
+                            Toast.LENGTH_SHORT).show();
                     return true;
                 });
-                delayPref.setSummary(delayPref.getValue() + " seconds");
             }
         }
 

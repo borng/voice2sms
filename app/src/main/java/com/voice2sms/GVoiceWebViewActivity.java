@@ -88,12 +88,12 @@ public class GVoiceWebViewActivity extends Activity {
         });
 
         if (app.isSpaLoaded() && recipient != null) {
-            // Warm start — SPA already loaded. Resume WebView first (it was
-            // paused in previous Activity's onPause), then inject.
-            // inject.js handles reset of any existing compose state.
-            Log.d(TAG, "Warm start: SPA loaded, resuming WebView and injecting");
+            // Warm start — SPA already loaded but may be on a stale view.
+            // Reload the page for a clean messages-list state.
+            // onPageFinished will inject the composer once ready.
+            Log.d(TAG, "Warm start: SPA loaded, reloading for clean state");
             webView.onResume();
-            injectComposer();
+            loadGoogleVoice();
         } else if (!app.isSpaLoaded()) {
             // Cold start — need to load the page
             CookieManager cookieManager = CookieManager.getInstance();
@@ -119,14 +119,13 @@ public class GVoiceWebViewActivity extends Activity {
 
         Log.d(TAG, "onNewIntent: recipient=" + recipient + ", body=" + (body != null ? "\"" + body + "\"" : "null"));
 
-        Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
-        if (app.isSpaLoaded() && recipient != null) {
-            Log.d(TAG, "Warm start (onNewIntent): injecting");
-            webView.onResume();
-            injectComposer();
-        } else if (!app.isSpaLoaded()) {
-            loadGoogleVoice();
-        }
+        webView.onResume();
+
+        // Always reload the page for a clean messages-list state.
+        // The SPA may be on a conversation thread or stale compose view.
+        // onPageFinished will inject the composer once the page is ready.
+        Log.d(TAG, "Warm start: reloading page for clean state");
+        loadGoogleVoice();
     }
 
     private void setupWebViewClient() {
@@ -145,9 +144,9 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
-                if (!injected) {
-                    injectFingerprintMask();
-                }
+                // Always inject fingerprint mask (includes dark mode CSS).
+                // Must run early before page renders to avoid flash of light mode.
+                injectFingerprintMask();
             }
 
             @Override
@@ -299,8 +298,7 @@ public class GVoiceWebViewActivity extends Activity {
         injected = true;
 
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean autoSend = getIntent().getBooleanExtra("force_auto_send",
-                prefs.getBoolean("auto_send", false));
+        boolean autoSend = getIntent().getBooleanExtra("force_auto_send", false);
         int autoSendDelay = prefs.getInt("auto_send_delay", 2) * 1000;
 
         try {
@@ -369,6 +367,15 @@ public class GVoiceWebViewActivity extends Activity {
                         Log.d(TAG, "Called showSoftInput(SHOW_FORCED)");
                     }
                 }, 50);
+            });
+        }
+
+        @JavascriptInterface
+        public void requestPageReload() {
+            Log.d(TAG, "JS requested page reload for warm start recompose");
+            runOnUiThread(() -> {
+                injected = false;
+                webView.loadUrl(GV_MESSAGES_URL);
             });
         }
 

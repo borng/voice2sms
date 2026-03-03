@@ -13,8 +13,17 @@
 function voice2sms(phone, body, autoSend, autoSendDelay) {
     'use strict';
 
-    var MAX_RETRIES = 30;
+    var MAX_RETRIES = 50;
     var POLL_INTERVAL = 500;
+
+    // Generation counter: cancels timers from previous injections so only
+    // the latest voice2sms() call drives the DOM.
+    window._v2sGeneration = (window._v2sGeneration || 0) + 1;
+    var myGeneration = window._v2sGeneration;
+
+    function isCancelled() {
+        return window._v2sGeneration !== myGeneration;
+    }
 
     /** Return a random integer between min and max (inclusive). */
     function randDelay(min, max) {
@@ -25,8 +34,33 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     var normalizedPhone = phone.replace(/[^\d+]/g, '');
     // Also create a digits-only version for matching
     var digitsOnly = phone.replace(/\D/g, '');
+    // Last 10 digits for matching formatted numbers like "(555) 123-4567"
+    var last10 = digitsOnly.length > 10 ? digitsOnly.slice(-10) : digitsOnly;
 
     console.log('[Voice2SMS] Starting compose for: ' + normalizedPhone);
+
+    /**
+     * Extract the zone object from a single Zone.js listener task.
+     */
+    function getZoneFromTask(task) {
+        // Check legacy .zone property
+        if (task.zone && typeof task.zone.run === 'function') {
+            return task.zone;
+        }
+        // Scan obfuscated task properties for zone-like object
+        var props = Object.getOwnPropertyNames(task);
+        var fallback = null;
+        for (var j = 0; j < props.length; j++) {
+            try {
+                var v = task[props[j]];
+                if (v && typeof v === 'object' && typeof v.run === 'function' && v.name) {
+                    if (v.name !== '<root>') return v;
+                    if (!fallback) fallback = v;
+                }
+            } catch(e) {}
+        }
+        return fallback;
+    }
 
     /**
      * Get Angular's zone reference from an element's Zone.js symbol properties.
@@ -34,29 +68,42 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      * Zone.js stores event listener tasks on elements as __zone_symbol__{event}{capture}.
      * Each task object has the Angular zone stored in an obfuscated property.
      * We find it by scanning for an object with a .run() method and .name property.
+     *
+     * IMPORTANT: fallbackZone is accumulated across ALL zone keys — a prior
+     * version had fallbackZone scoped inside the loop, causing premature return
+     * of <root> before checking keys that might hold the Angular zone.
      */
     function getAngularZone(el) {
         var zoneKeys = Object.keys(el).filter(function(k) {
             return k.indexOf('__zone_symbol__') === 0;
         });
+        var fallbackZone = null; // outside loop — accumulate across all keys
         for (var i = 0; i < zoneKeys.length; i++) {
             var listeners = el[zoneKeys[i]];
             if (!listeners || !listeners.length) continue;
-            var task = listeners[0];
-            // Check legacy .zone property first
-            if (task.zone && typeof task.zone.run === 'function') {
-                return task.zone;
+            // Check ALL listeners for this key, not just [0]
+            for (var li = 0; li < listeners.length; li++) {
+                var zone = getZoneFromTask(listeners[li]);
+                if (zone) {
+                    if (zone.name !== '<root>') return zone;
+                    if (!fallbackZone) fallbackZone = zone;
+                }
             }
-            // Scan task properties for the zone object (obfuscated name)
-            var props = Object.getOwnPropertyNames(task);
-            for (var j = 0; j < props.length; j++) {
-                try {
-                    var v = task[props[j]];
-                    if (v && typeof v === 'object' && typeof v.run === 'function' && v.name) {
-                        return v;
-                    }
-                } catch(e) {}
-            }
+        }
+        return fallbackZone;
+    }
+
+    /**
+     * Search page elements for Angular zone (broader than a single element).
+     * Used as last resort when the target element only has root zone.
+     */
+    function findAngularZoneGlobal() {
+        var candidates = document.querySelectorAll(
+            'button[aria-label], input, textarea, mat-chip-row button, a[href]'
+        );
+        for (var i = 0; i < Math.min(candidates.length, 30); i++) {
+            var zone = getAngularZone(candidates[i]);
+            if (zone && zone.name !== '<root>') return zone;
         }
         return null;
     }
@@ -181,8 +228,25 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             return false;
         }
 
-        // Find Angular zone from the task
-        var zone = getAngularZone(inp);
+        // Find Angular zone — try specific task first, then element, then global
+        var zone = getZoneFromTask(task);
+        var zoneSource = 'task';
+        if (!zone || zone.name === '<root>') {
+            var elZone = getAngularZone(inp);
+            if (elZone && elZone.name !== '<root>') {
+                zone = elZone;
+                zoneSource = 'element';
+            }
+        }
+        if (!zone || zone.name === '<root>') {
+            var globalZone = findAngularZoneGlobal();
+            if (globalZone) {
+                zone = globalZone;
+                zoneSource = 'global';
+            }
+        }
+        console.log('[Voice2SMS] Zone for chip creation: ' +
+            (zone ? zone.name : 'none') + ' (source: ' + zoneSource + ')');
 
         // Build mock MatChipInputTokenEndEvent
         var setter = nativeSetter;
@@ -228,6 +292,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      * Fallback: type char-by-char and click the dropdown suggestion.
      */
     function fillRecipient(retries) {
+        if (isCancelled()) return;
         if (retries <= 0) {
             console.log('[Voice2SMS] Gave up waiting for recipient field');
             return;
@@ -248,11 +313,15 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
         console.log('[Voice2SMS] Found recipient input');
 
+        // Record chip count before creation for count-based verification
+        var chipsBefore = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip').length;
+        console.log('[Voice2SMS] Chips before creation: ' + chipsBefore);
+
         // Primary: create chip directly (bypasses autocomplete dropdown)
         var created = createChipDirectly(recipientInput);
         if (created) {
             // Verify chip was actually created — use tight poll, no artificial delay
-            setTimeout(function() { verifyChipAndProceed(recipientInput, 10); }, 50);
+            setTimeout(function() { verifyChipAndProceed(recipientInput, 15, chipsBefore); }, 50);
         } else {
             // Fallback: type and use dropdown
             console.log('[Voice2SMS] Direct chip creation unavailable, falling back to typing');
@@ -303,29 +372,31 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
     /**
      * Verify that a chip was created, dismiss any overlays, and proceed to body.
+     * Uses count-based verification: chip count must increase from chipsBefore.
+     * This handles cases where the chip shows a contact name instead of digits.
      */
-    function verifyChipAndProceed(inp, retries) {
+    function verifyChipAndProceed(inp, retries, chipsBefore) {
+        if (isCancelled()) return;
         var chips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
-        // Verify the chip is for our recipient, not a leftover from previous compose
-        var hasOurChip = false;
-        for (var c = 0; c < chips.length; c++) {
-            var chipText = chips[c].textContent || '';
-            if (chipText.indexOf(digitsOnly) !== -1 ||
-                chipText.indexOf(normalizedPhone) !== -1) {
-                hasOurChip = true;
-                break;
+        var hasNewChip = chips.length > chipsBefore;
+
+        // Log chip details for diagnostics
+        if (retries === 15 || retries === 10 || retries === 0) {
+            for (var c = 0; c < chips.length; c++) {
+                var ct = (chips[c].textContent || '').replace(/\s+/g, ' ').trim();
+                console.log('[Voice2SMS]   chip[' + c + ']: "' + ct.substring(0, 60) + '"');
             }
         }
-        console.log('[Voice2SMS] Recipient chips: ' + chips.length + ', ours=' + hasOurChip);
+        console.log('[Voice2SMS] Chips: ' + chips.length + ' (was ' + chipsBefore + '), new=' + hasNewChip);
 
-        if (hasOurChip) {
+        if (hasNewChip) {
             dismissOverlays();
             fillBody(MAX_RETRIES);
         } else if (retries > 0) {
             // Chip might need a moment to render — tight poll
-            setTimeout(function() { verifyChipAndProceed(inp, retries - 1); }, 50);
+            setTimeout(function() { verifyChipAndProceed(inp, retries - 1, chipsBefore); }, 50);
         } else {
-            console.log('[Voice2SMS] Chip not created, falling back to typing');
+            console.log('[Voice2SMS] Chip not created after polling, falling back to typing');
             fillRecipientViaTyping(inp);
         }
     }
@@ -389,6 +460,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      * Wait for the autocomplete dropdown and click the first suggestion.
      */
     function waitForDropdownAndClick(inp, retries) {
+        if (isCancelled()) return;
         if (retries <= 0) {
             console.log('[Voice2SMS] Dropdown never appeared, proceeding to body');
             setTimeout(function() { fillBody(MAX_RETRIES); }, randDelay(300, 700));
@@ -471,6 +543,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      * Fill in the message body textarea.
      */
     function fillBody(retries) {
+        if (isCancelled()) return;
         if (retries <= 0) {
             console.log('[Voice2SMS] Gave up waiting for message textarea');
             return;
@@ -519,6 +592,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      * Click the send button.
      */
     function clickSend(retries) {
+        if (isCancelled()) return;
         if (retries <= 0) {
             console.log('[Voice2SMS] Could not find send button');
             return;
@@ -584,6 +658,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
      * Main entry: poll until the page is ready, then compose.
      */
     function start(retries) {
+        if (isCancelled()) return;
         if (retries <= 0) {
             console.log('[Voice2SMS] Page did not become ready in time');
             return;
@@ -609,25 +684,22 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         var existingChips = document.querySelectorAll('mat-chip-row, .mdc-evolution-chip');
         var fabButton = document.querySelector('button[aria-label*="new"]');
 
-        if (recipientInput && !fabButton) {
-            // Compose view is open — warm start with recipient input visible
-            console.log('[Voice2SMS] Compose view already open (warm start), chips=' + existingChips.length);
-            resetComposeState();
-            // Wait for chips to be removed, then fill new recipient
-            setTimeout(function() { fillRecipient(MAX_RETRIES); }, 200);
-            return;
-        }
+        console.log('[Voice2SMS] View state: recipientInput=' + !!recipientInput +
+            ', chips=' + existingChips.length + ', fab=' + !!fabButton +
+            ', url=' + window.location.pathname.substring(0, 40));
 
         if (!fabButton) {
-            // Not on messages list and not in compose — likely a conversation
-            // thread from a previous send. Navigate back to messages list.
-            console.log('[Voice2SMS] In conversation thread, navigating back to messages list');
-            window.history.back();
-            setTimeout(function() { start(retries - 1); }, 500);
+            // Not on messages list — stale compose or conversation thread.
+            // Java's onNewIntent always reloads the page, so this only happens
+            // if injection ran before the reload completed. Just keep polling.
+            console.log('[Voice2SMS] Waiting for messages list (no FAB yet)');
+            setTimeout(function() { start(retries - 1); }, POLL_INTERVAL);
             return;
         }
 
-        // Messages list (FAB visible): normal flow
+        // Messages list (FAB visible): normal flow — dismiss any stale overlays first
+        dismissOverlays();
+
         var existing = findExistingConversation();
         if (existing) {
             existing.click();
@@ -635,7 +707,8 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         } else {
             // Start a new conversation
             if (clickNewConversation()) {
-                setTimeout(function() { fillRecipient(MAX_RETRIES); }, 100);
+                // Give GV compose animation time to render before polling
+                setTimeout(function() { fillRecipient(MAX_RETRIES); }, 500);
             } else {
                 setTimeout(function() { start(retries - 1); }, POLL_INTERVAL);
             }

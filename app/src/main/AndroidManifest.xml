@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
     <application
+        android:name=".Voice2SmsApplication"
         android:allowBackup="true"
         android:hardwareAccelerated="true"
         android:icon="@android:drawable/sym_action_chat"

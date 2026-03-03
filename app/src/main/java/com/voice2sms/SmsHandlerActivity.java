@@ -86,12 +86,18 @@ public class SmsHandlerActivity extends Activity {
 
         if (data != null) {
             // Parse phone number from URI: sms:+15551234567 or smsto:+15551234567
+            // Some callers use '&' instead of '?' (e.g. sms:+1234&body=Hello)
             String ssp = data.getSchemeSpecificPart();
             if (ssp != null) {
-                // Remove query params if present (e.g. ?body=Hello)
+                // Strip query params at '?' or '&', whichever comes first
                 int qIdx = ssp.indexOf('?');
-                if (qIdx >= 0) {
-                    ssp = ssp.substring(0, qIdx);
+                int aIdx = ssp.indexOf('&');
+                int sepIdx = -1;
+                if (qIdx >= 0 && aIdx >= 0) sepIdx = Math.min(qIdx, aIdx);
+                else if (qIdx >= 0) sepIdx = qIdx;
+                else if (aIdx >= 0) sepIdx = aIdx;
+                if (sepIdx >= 0) {
+                    ssp = ssp.substring(0, sepIdx);
                 }
                 recipient = ssp.trim();
                 if (recipient.isEmpty()) {
@@ -152,17 +158,12 @@ public class SmsHandlerActivity extends Activity {
         if (body != null) {
             webIntent.putExtra("body", body);
         }
-        // Auto-send when both recipient and a non-empty body are present
-        // (e.g. Gemini "Edit" button with a pre-composed message)
-        if (recipient != null && body != null && !body.isEmpty()) {
-            webIntent.putExtra("force_auto_send", true);
-        }
-
-        // Forward explicit force_auto_send from source intent, but only allow
-        // opt-out (false). Never let a forwarded true override the empty-body guard above.
+        // Forward explicit force_auto_send if present in the source intent.
+        // Only RespondViaMessageService sets this — SmsHandlerActivity never
+        // infers it, since SENDTO/VIEW intents are "compose and review" actions.
         Intent src = getIntent();
-        if (src.hasExtra("force_auto_send") && !src.getBooleanExtra("force_auto_send", false)) {
-            webIntent.putExtra("force_auto_send", false);
+        if (src.hasExtra("force_auto_send")) {
+            webIntent.putExtra("force_auto_send", src.getBooleanExtra("force_auto_send", false));
         }
         startActivity(webIntent);
         finish();
