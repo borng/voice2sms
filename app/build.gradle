@@ -11,11 +11,21 @@ android {
         minSdk 24
         targetSdk 34
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("${rootProject.projectDir}/keystore/release.jks")
+            storePassword "voice2sms"
+            keyAlias "voice2sms"
+            keyPassword "voice2sms"
+        }
     }
 
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
