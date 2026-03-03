@@ -26,4 +26,5 @@ DEBUG-SESSION-*.md
 PLAN.md
 STARTUP-OPTIMIZATION.md
 benchmark*.sh
+setup-github-secrets.sh
 .claude-octopus/
