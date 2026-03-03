@@ -16,6 +16,22 @@
             android:summary="Not set" />
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="Gemini Integration">
+        <Preference
+            android:key="gemini_intercept_toggle"
+            android:title="Enable Gemini interception"
+            android:summary="Tap to open Accessibility Settings" />
+        <SwitchPreferenceCompat
+            android:key="gemini_auto_send"
+            android:title="Auto-send Gemini messages"
+            android:summary="Automatically send intercepted Gemini SMS via Google Voice"
+            android:defaultValue="true" />
+        <Preference
+            android:key="setup_wizard"
+            android:title="Run setup wizard"
+            android:summary="Reopen the first-install setup guide" />
+    </PreferenceCategory>
+
     <PreferenceCategory android:title="Auto-Send">
         <Preference
             android:key="auto_send_disabled"

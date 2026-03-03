@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FAFAFA"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- Header -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Voice2SMS Setup"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:textColor="#1A1A1A"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Route SMS through Google Voice.\nFollow these steps to get started."
+            android:textSize="15sp"
+            android:textColor="#666666"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Step 1: Default SMS App -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:text="1"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    android:background="@android:color/holo_blue_dark"
+                    android:gravity="center"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Set as Default SMS App"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A1A1A" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Voice2SMS must be the default SMS app so Android routes SMS intents through it."
+                android:textSize="14sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:id="@+id/step1_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Status: Not set"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btn_set_default_sms"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Set Default SMS App" />
+        </LinearLayout>
+
+        <!-- Step 2: Block Gemini Direct SMS -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:text="2"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    android:background="@android:color/holo_blue_dark"
+                    android:gravity="center"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Block Gemini Direct SMS"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A1A1A" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Prevents Gemini from sending SMS directly to your carrier. Run these ADB commands once from a computer:"
+                android:textSize="14sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/adb_commands"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="adb shell pm revoke com.google.android.googlequicksearchbox android.permission.SEND_SMS\n\nadb shell pm set-permission-flags com.google.android.googlequicksearchbox android.permission.SEND_SMS user-fixed\n\nadb shell appops set com.google.android.googlequicksearchbox SEND_SMS ignore"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:textColor="#333333"
+                android:background="#F0F0F0"
+                android:padding="12dp"
+                android:layout_marginBottom="8dp"
+                android:textIsSelectable="true" />
+
+            <Button
+                android:id="@+id/btn_copy_commands"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Copy Commands"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Shizuku support coming soon \u2014 will automate this step without a computer."
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:textStyle="italic" />
+        </LinearLayout>
+
+        <!-- Step 3: Enable Accessibility Service -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:text="3"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    android:background="@android:color/holo_blue_dark"
+                    android:gravity="center"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Enable Gemini Interception"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A1A1A" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="When you tap Send in Gemini, Voice2SMS intercepts the message and routes it through Google Voice instead."
+                android:textSize="14sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="This uses Android\u2019s Accessibility Service to detect Gemini\u2019s Send button and read the recipient and message."
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:id="@+id/step3_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Status: Not enabled"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btn_enable_accessibility"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Open Accessibility Settings" />
+        </LinearLayout>
+
+        <!-- Future: Shizuku -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#F5F5F5"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp"
+            android:alpha="0.7">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:text="*"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    android:background="#AAAAAA"
+                    android:gravity="center"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Coming Soon: Shizuku"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#999999" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Shizuku lets apps use ADB-level APIs without a computer. Once supported, Voice2SMS can block Gemini\u2019s SMS permission automatically \u2014 no ADB commands needed. Just install the Shizuku app, start it once via ADB or wireless debugging, and Voice2SMS handles the rest."
+                android:textSize="14sp"
+                android:textColor="#999999" />
+        </LinearLayout>
+
+        <!-- Done button -->
+        <Button
+            android:id="@+id/btn_done"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Done"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="You can reopen this setup from Settings at any time."
+            android:textSize="13sp"
+            android:textColor="#AAAAAA"
+            android:gravity="center"
+            android:layout_gravity="center_horizontal" />
+
+    </LinearLayout>
+</ScrollView>

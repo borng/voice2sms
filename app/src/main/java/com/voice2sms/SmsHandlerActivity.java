@@ -17,6 +17,13 @@ public class SmsHandlerActivity extends Activity {
 
     private static final int REQUEST_DEFAULT_SMS = 1001;
 
+    /**
+     * Timestamp of the last SENDTO intent received. Used by
+     * GeminiSmsInterceptService to avoid double-firing when the Edit
+     * button already sent a SENDTO intent to us.
+     */
+    static volatile long lastSendtoTimestamp = 0;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -37,6 +44,15 @@ public class SmsHandlerActivity extends Activity {
     }
 
     private void handleLauncherStart() {
+        // First launch? Show setup wizard
+        boolean setupDone = getSharedPreferences("voice2sms", MODE_PRIVATE)
+                .getBoolean("setup_completed", false);
+        if (!setupDone) {
+            startActivity(new Intent(this, SetupActivity.class));
+            finish();
+            return;
+        }
+
         // Offer to become default SMS app
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             RoleManager roleManager = getSystemService(RoleManager.class);
@@ -67,6 +83,8 @@ public class SmsHandlerActivity extends Activity {
     }
 
     private void handleSmsIntent(Intent intent) {
+        // Record timestamp so AccessibilityService can avoid double-fire
+        lastSendtoTimestamp = System.currentTimeMillis();
         // Dump all intent details for debugging
         android.util.Log.d("Voice2SMS", "SmsHandler intent: action=" + intent.getAction()
                 + ", data=" + intent.getData()
@@ -158,9 +176,9 @@ public class SmsHandlerActivity extends Activity {
         if (body != null) {
             webIntent.putExtra("body", body);
         }
-        // Forward explicit force_auto_send if present in the source intent.
-        // Only RespondViaMessageService sets this — SmsHandlerActivity never
-        // infers it, since SENDTO/VIEW intents are "compose and review" actions.
+        // Forward explicit force_auto_send if present (e.g. from
+        // GeminiSmsInterceptService or RespondViaMessageService).
+        // Modify/Edit button intents do NOT auto-send — user reviews first.
         Intent src = getIntent();
         if (src.hasExtra("force_auto_send")) {
             webIntent.putExtra("force_auto_send", src.getBooleanExtra("force_auto_send", false));

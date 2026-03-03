@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Voice2SMS</string>
+    <string name="gemini_intercept_description">Monitors Gemini\'s SMS compose screen. When you tap Send, Voice2SMS intercepts the message and routes it through Google Voice instead of your carrier.</string>
 </resources>

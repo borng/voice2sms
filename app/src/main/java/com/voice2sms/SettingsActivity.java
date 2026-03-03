@@ -1,20 +1,21 @@
 package com.voice2sms;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accounts.AccountManager;
 import android.app.role.RoleManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.view.accessibility.AccessibilityManager;
 import android.webkit.CookieManager;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.preference.EditTextPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceManager;
-import androidx.preference.SeekBarPreference;
 import androidx.preference.SwitchPreferenceCompat;
 
 public class SettingsActivity extends AppCompatActivity {
@@ -72,6 +73,38 @@ public class SettingsActivity extends AppCompatActivity {
                 });
             }
 
+            // Gemini interception toggle — opens Accessibility Settings
+            Preference geminiToggle = findPreference("gemini_intercept_toggle");
+            if (geminiToggle != null) {
+                updateGeminiInterceptStatus(geminiToggle);
+                geminiToggle.setOnPreferenceClickListener(pref -> {
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                    return true;
+                });
+            }
+
+            // Gemini auto-send toggle
+            SwitchPreferenceCompat geminiAutoSend = findPreference("gemini_auto_send");
+            if (geminiAutoSend != null) {
+                geminiAutoSend.setOnPreferenceChangeListener((pref, newValue) -> {
+                    boolean enabled = (Boolean) newValue;
+                    Toast.makeText(requireContext(),
+                            enabled ? "Gemini SMS will auto-send via Google Voice"
+                                    : "Gemini SMS will open for review before sending",
+                            Toast.LENGTH_SHORT).show();
+                    return true;
+                });
+            }
+
+            // Setup wizard shortcut
+            Preference setupWizard = findPreference("setup_wizard");
+            if (setupWizard != null) {
+                setupWizard.setOnPreferenceClickListener(pref -> {
+                    startActivity(new Intent(requireContext(), SetupActivity.class));
+                    return true;
+                });
+            }
+
             // Auto-send disabled placeholder
             Preference autoSendDisabled = findPreference("auto_send_disabled");
             if (autoSendDisabled != null) {
@@ -82,6 +115,35 @@ public class SettingsActivity extends AppCompatActivity {
                     return true;
                 });
             }
+        }
+
+        @Override
+        public void onResume() {
+            super.onResume();
+            Preference geminiToggle = findPreference("gemini_intercept_toggle");
+            if (geminiToggle != null) {
+                updateGeminiInterceptStatus(geminiToggle);
+            }
+        }
+
+        private void updateGeminiInterceptStatus(Preference pref) {
+            boolean enabled = isAccessibilityServiceEnabled();
+            pref.setSummary(enabled
+                    ? "Enabled \u2014 Gemini Send taps are intercepted"
+                    : "Tap to open Accessibility Settings");
+        }
+
+        private boolean isAccessibilityServiceEnabled() {
+            AccessibilityManager am = (AccessibilityManager)
+                    requireContext().getSystemService(android.content.Context.ACCESSIBILITY_SERVICE);
+            if (am == null) return false;
+            java.util.List<AccessibilityServiceInfo> enabled =
+                    am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC);
+            String targetId = requireContext().getPackageName() + "/.GeminiSmsInterceptService";
+            for (AccessibilityServiceInfo info : enabled) {
+                if (info.getId() != null && info.getId().equals(targetId)) return true;
+            }
+            return false;
         }
 
         private void requestDefaultSms() {
