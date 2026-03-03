@@ -15,3 +15,14 @@ keystore/
 node_modules/
 screenshot-*.png
 release/
+# Dev/test files — not for public repo
+test-*.js
+package.json
+package-lock.json
+gvoicedmp.txt
+RALPH-PROMPT.md
+DEBUG-SESSION-*.md
+PLAN.md
+STARTUP-OPTIMIZATION.md
+benchmark*.sh
+.claude-octopus/
