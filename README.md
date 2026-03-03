@@ -129,7 +129,7 @@ git push origin v1.2.0
 
 ## Acceptable Use
 
-This tool is intended for **personal use only** — routing your own SMS through your own Google Voice number. It is not designed for and must not be used for sending bulk or mass text messages. Use of this app must comply with the [Google Voice Acceptable Use Policy](https://support.google.com/voice/answer/9230450) and [Google Terms of Service](https://policies.google.com/terms).
+This tool is intended for **personal use only** — routing your own SMS through your own Google Voice number. It is not designed for and must not be used for sending bulk or mass text messages. The app sends one message at a time through Google Voice's standard web compose UI, so it shouldn't be capable of bulk sending regardless, but just to be clear: don't use it that way. Use of this app must comply with the [Google Voice Acceptable Use Policy](https://support.google.com/voice/answer/9230450) and [Google Terms of Service](https://policies.google.com/terms).
 
 ## Disclaimer
 
