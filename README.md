@@ -60,8 +60,10 @@ For detailed technical architecture, component descriptions, inject.js flow, and
 
 ## Install
 
+Download the latest APK from [GitHub Releases](../../releases/latest), then:
+
 ```bash
-adb install release/voice2sms-v1.1.0.apk
+adb install voice2sms-v*.apk
 ```
 
 Then open the app and:
