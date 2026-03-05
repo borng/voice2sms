@@ -94,7 +94,41 @@
         };
     }
 
-    // 8. Dark mode — inject CSS to invert colors for a dark theme.
+    // 8. Enter key → newline instead of send.
+    //    Google Voice sends the message on Enter. On Android soft keyboards,
+    //    Enter comes through the IME path as a 'beforeinput' event with
+    //    inputType 'insertParagraph' — standard keydown events are NOT fired.
+    //    We intercept beforeinput to cancel the paragraph insert, then
+    //    manually insert a newline character instead.
+    //    Also handle keydown for hardware keyboards / Chromebook / testing.
+    function isMessageField(el) {
+        if (!el) return false;
+        if (el.tagName === 'TEXTAREA') return true;
+        if (el.contentEditable === 'true') {
+            var label = (el.getAttribute('aria-label') || '').toLowerCase();
+            return label.indexOf('message') !== -1;
+        }
+        return false;
+    }
+
+    document.addEventListener('beforeinput', function(e) {
+        if (e.inputType === 'insertParagraph' && isMessageField(e.target)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            document.execCommand('insertLineBreak');
+        }
+    }, true);
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey &&
+            isMessageField(e.target)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            document.execCommand('insertLineBreak');
+        }
+    }, true);
+
+    // 9. Dark mode — inject CSS to invert colors for a dark theme.
     //    Uses invert + hue-rotate on html, then re-inverts images/videos
     //    so they look normal. Applied via a <style> tag for reliability.
     var darkStyle = document.createElement('style');
