@@ -36,3 +36,9 @@ All core features working. Three Gemini SMS interception paths confirmed on devi
 - Accessibility service monitors all packages (`packageNames = null`) — consider narrowing to Gemini packages only
 - Shizuku integration to replace ADB commands with in-app API calls
 - `SmsDeliverService`/`SendStatusReceiver` for deeper SMS routing control
+
+### Feature Backlog (Researched)
+
+- **Scheduled messaging with conditional send** — `AlarmManager.setAlarmClock()` + Room DB + three-layer change detection. Novel "auto-hold if conversation changed" feature.
+- **GBoard sticker support in WebView** — Implemented on `feature/gboard-sticker-bridge`. RichContentWebView subclass + commitContent interception + JS file input injection.
+- **API Replay hybrid (protobuf-over-HTTP)** — Send SMS via GV's internal API using WebView session cookies. Faster, less brittle for auto-send. Keep WebView for auth + review mode.

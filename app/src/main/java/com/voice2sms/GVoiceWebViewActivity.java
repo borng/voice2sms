@@ -17,17 +17,25 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import android.content.ClipData;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
+import android.util.Base64;
+
+import androidx.core.view.ViewCompat;
 import androidx.preference.PreferenceManager;
 
 import org.json.JSONArray;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 
@@ -43,11 +51,14 @@ public class GVoiceWebViewActivity extends Activity {
     private static final String TAG = "Voice2SMS";
     private static final String GV_MESSAGES_URL = "https://voice.google.com/u/0/messages";
     private static final int REQUEST_ACCOUNT_PICKER = 2001;
+    private static final int FILE_CHOOSER_REQUEST = 3001;
 
     private WebView webView;
     private String recipient;
     private String body;
     private boolean injected = false;
+    private ValueCallback<Uri[]> fileUploadCallback;
+    private volatile boolean stickerInjectionActive;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -85,7 +96,45 @@ public class GVoiceWebViewActivity extends Activity {
                 }
                 return super.onConsoleMessage(cm);
             }
+
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
+                                              FileChooserParams params) {
+                if (fileUploadCallback != null) {
+                    fileUploadCallback.onReceiveValue(null);
+                }
+
+                // If a sticker injection triggered this, just cancel the picker.
+                // The JS-side DataTransfer injection handles the actual file.
+                if (stickerInjectionActive) {
+                    Log.d(TAG, "Suppressing file picker — sticker injected via JS");
+                    callback.onReceiveValue(null);
+                    stickerInjectionActive = false;
+                    return true;
+                }
+
+                fileUploadCallback = callback;
+                try {
+                    startActivityForResult(params.createIntent(), FILE_CHOOSER_REQUEST);
+                } catch (Exception e) {
+                    Log.w(TAG, "File chooser launch failed", e);
+                    fileUploadCallback = null;
+                    return false;
+                }
+                return true;
+            }
         });
+
+        // Listen for rich content (stickers, GIFs) from GBoard
+        ViewCompat.setOnReceiveContentListener(webView, RichContentWebView.IMAGE_MIME_TYPES,
+            (view, payload) -> {
+                ClipData clip = payload.getClip();
+                if (clip == null || clip.getItemCount() == 0) return payload;
+                Uri uri = clip.getItemAt(0).getUri();
+                if (uri == null) return payload;
+                handleStickerImage(uri);
+                return null; // consumed
+            });
 
         if (app.isSpaLoaded() && recipient != null) {
             // Warm start — SPA already loaded but may be on a stale view.
@@ -254,6 +303,27 @@ public class GVoiceWebViewActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILE_CHOOSER_REQUEST) {
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null) {
+                // Modern photo picker returns via ClipData; fall back to getData()
+                if (data.getClipData() != null) {
+                    ClipData cd = data.getClipData();
+                    results = new Uri[cd.getItemCount()];
+                    for (int i = 0; i < cd.getItemCount(); i++) {
+                        results[i] = cd.getItemAt(i).getUri();
+                    }
+                } else if (data.getDataString() != null) {
+                    results = new Uri[]{Uri.parse(data.getDataString())};
+                }
+            }
+            if (fileUploadCallback != null) {
+                fileUploadCallback.onReceiveValue(results);
+                fileUploadCallback = null;
+            }
+            return;
+        }
+
         if (requestCode == REQUEST_ACCOUNT_PICKER) {
             if (resultCode == RESULT_OK && data != null) {
                 String accountName = data.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME);
@@ -420,6 +490,92 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /**
+     * Read a sticker/image from a content URI delivered by GBoard via commitContent,
+     * convert to a format GV web accepts, and inject into the page's file upload input.
+     */
+    private void handleStickerImage(Uri uri) {
+        new Thread(() -> {
+            try {
+                InputStream is = getContentResolver().openInputStream(uri);
+                if (is == null) {
+                    Log.w(TAG, "Could not open sticker URI: " + uri);
+                    return;
+                }
+                byte[] rawBytes = readAllBytes(is);
+                is.close();
+
+                String rawMime = getContentResolver().getType(uri);
+                if (rawMime == null) rawMime = "image/png";
+
+                // GV web accepts JPG/PNG/GIF but not WebP — convert if needed
+                final byte[] finalBytes;
+                final String finalMime;
+                if (rawMime.equals("image/webp")) {
+                    Bitmap bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.length);
+                    if (bitmap != null) {
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos);
+                        finalBytes = baos.toByteArray();
+                        finalMime = "image/png";
+                        bitmap.recycle();
+                    } else {
+                        finalBytes = rawBytes;
+                        finalMime = rawMime;
+                    }
+                } else {
+                    finalBytes = rawBytes;
+                    finalMime = rawMime;
+                }
+
+                String ext;
+                switch (finalMime) {
+                    case "image/gif":  ext = "gif";  break;
+                    case "image/jpeg": ext = "jpg";  break;
+                    default:           ext = "png";  break;
+                }
+
+                String fileName = "sticker." + ext;
+                String base64 = Base64.encodeToString(finalBytes, Base64.NO_WRAP);
+                // Use JSONObject.quote() to safely escape all arguments (prevents
+                // JS injection from malicious MIME types or filenames)
+                String js = "sendImageToGV("
+                        + org.json.JSONObject.quote(base64) + ","
+                        + org.json.JSONObject.quote(finalMime) + ","
+                        + org.json.JSONObject.quote(fileName) + ")";
+
+                runOnUiThread(() -> {
+                    if (webView != null) {
+                        stickerInjectionActive = true;
+                        Log.d(TAG, "Injecting sticker: " + finalMime + ", " + finalBytes.length + " bytes");
+                        webView.evaluateJavascript(js, null);
+                        // Auto-clear flag after 5s in case the JS path never
+                        // triggers onShowFileChooser (avoids permanently
+                        // suppressing the user's manual file picker)
+                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                            if (stickerInjectionActive) {
+                                stickerInjectionActive = false;
+                                Log.d(TAG, "Sticker injection flag auto-cleared");
+                            }
+                        }, 5000);
+                    }
+                });
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to handle sticker image", e);
+            }
+        }).start();
+    }
+
+    private static byte[] readAllBytes(InputStream is) throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buf = new byte[4096];
+        int n;
+        while ((n = is.read(buf)) != -1) {
+            baos.write(buf, 0, n);
+        }
+        return baos.toByteArray();
+    }
+
     private void tapAndType(float cssX, float cssY, String text) {
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
@@ -536,9 +692,18 @@ public class GVoiceWebViewActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        // Remove JS interface to break reference from singleton WebView → this Activity
+        // Cancel any pending file chooser callback so the WebView doesn't
+        // permanently disable its file upload input
+        if (fileUploadCallback != null) {
+            fileUploadCallback.onReceiveValue(null);
+            fileUploadCallback = null;
+        }
+
+        // Remove JS interface and content listener to break references from
+        // singleton WebView → this Activity
         if (webView != null) {
             webView.removeJavascriptInterface("V2SBridge");
+            ViewCompat.setOnReceiveContentListener(webView, RichContentWebView.IMAGE_MIME_TYPES, null);
         }
 
         // Detach WebView from our layout but do NOT destroy it
