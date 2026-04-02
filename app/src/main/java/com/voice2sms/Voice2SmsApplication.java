@@ -121,7 +121,7 @@ public class Voice2SmsApplication extends Application {
         if (singletonWebView == null) {
             Log.d(TAG, "Creating singleton WebView");
             contextWrapper = new MutableContextWrapper(getApplicationContext());
-            singletonWebView = new WebView(contextWrapper);
+            singletonWebView = new RichContentWebView(contextWrapper);
             setupWebViewSettings(singletonWebView);
 
             // Keep renderer alive when Activity is not visible

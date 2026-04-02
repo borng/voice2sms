@@ -18,6 +18,7 @@ screenshot-*.png
 release/
 # Dev/test files — not for public repo
 test-*.js
+RESEARCH-*.md
 package.json
 package-lock.json
 gvoicedmp.txt

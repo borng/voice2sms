@@ -10,6 +10,68 @@
  *
  * Usage: voice2sms('+15551234567', 'Hello world', false, 2000)
  */
+
+// ── Angular Zone Helpers (shared by voice2sms and sendImageToGV) ──────────
+
+/**
+ * Extract the zone object from a single Zone.js listener task.
+ */
+function _v2sGetZoneFromTask(task) {
+    if (task.zone && typeof task.zone.run === 'function') {
+        return task.zone;
+    }
+    var props = Object.getOwnPropertyNames(task);
+    var fallback = null;
+    for (var j = 0; j < props.length; j++) {
+        try {
+            var v = task[props[j]];
+            if (v && typeof v === 'object' && typeof v.run === 'function' && v.name) {
+                if (v.name !== '<root>') return v;
+                if (!fallback) fallback = v;
+            }
+        } catch(e) {}
+    }
+    return fallback;
+}
+
+/**
+ * Get Angular's zone reference from an element's Zone.js symbol properties.
+ */
+function _v2sGetAngularZone(el) {
+    var zoneKeys = Object.keys(el).filter(function(k) {
+        return k.indexOf('__zone_symbol__') === 0;
+    });
+    var fallbackZone = null;
+    for (var i = 0; i < zoneKeys.length; i++) {
+        var listeners = el[zoneKeys[i]];
+        if (!listeners || !listeners.length) continue;
+        for (var li = 0; li < listeners.length; li++) {
+            var zone = _v2sGetZoneFromTask(listeners[li]);
+            if (zone) {
+                if (zone.name !== '<root>') return zone;
+                if (!fallbackZone) fallbackZone = zone;
+            }
+        }
+    }
+    return fallbackZone;
+}
+
+/**
+ * Search page elements for Angular zone (broader than a single element).
+ */
+function _v2sFindAngularZoneGlobal() {
+    var candidates = document.querySelectorAll(
+        'button[aria-label], input, textarea, mat-chip-row button, a[href]'
+    );
+    for (var i = 0; i < Math.min(candidates.length, 30); i++) {
+        var zone = _v2sGetAngularZone(candidates[i]);
+        if (zone && zone.name !== '<root>') return zone;
+    }
+    return null;
+}
+
+// ── Main composer function ────────────────────────────────────────────────
+
 function voice2sms(phone, body, autoSend, autoSendDelay) {
     'use strict';
 
@@ -39,74 +101,6 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
     console.log('[Voice2SMS] Starting compose for: ' + normalizedPhone);
 
-    /**
-     * Extract the zone object from a single Zone.js listener task.
-     */
-    function getZoneFromTask(task) {
-        // Check legacy .zone property
-        if (task.zone && typeof task.zone.run === 'function') {
-            return task.zone;
-        }
-        // Scan obfuscated task properties for zone-like object
-        var props = Object.getOwnPropertyNames(task);
-        var fallback = null;
-        for (var j = 0; j < props.length; j++) {
-            try {
-                var v = task[props[j]];
-                if (v && typeof v === 'object' && typeof v.run === 'function' && v.name) {
-                    if (v.name !== '<root>') return v;
-                    if (!fallback) fallback = v;
-                }
-            } catch(e) {}
-        }
-        return fallback;
-    }
-
-    /**
-     * Get Angular's zone reference from an element's Zone.js symbol properties.
-     *
-     * Zone.js stores event listener tasks on elements as __zone_symbol__{event}{capture}.
-     * Each task object has the Angular zone stored in an obfuscated property.
-     * We find it by scanning for an object with a .run() method and .name property.
-     *
-     * IMPORTANT: fallbackZone is accumulated across ALL zone keys — a prior
-     * version had fallbackZone scoped inside the loop, causing premature return
-     * of <root> before checking keys that might hold the Angular zone.
-     */
-    function getAngularZone(el) {
-        var zoneKeys = Object.keys(el).filter(function(k) {
-            return k.indexOf('__zone_symbol__') === 0;
-        });
-        var fallbackZone = null; // outside loop — accumulate across all keys
-        for (var i = 0; i < zoneKeys.length; i++) {
-            var listeners = el[zoneKeys[i]];
-            if (!listeners || !listeners.length) continue;
-            // Check ALL listeners for this key, not just [0]
-            for (var li = 0; li < listeners.length; li++) {
-                var zone = getZoneFromTask(listeners[li]);
-                if (zone) {
-                    if (zone.name !== '<root>') return zone;
-                    if (!fallbackZone) fallbackZone = zone;
-                }
-            }
-        }
-        return fallbackZone;
-    }
-
-    /**
-     * Search page elements for Angular zone (broader than a single element).
-     * Used as last resort when the target element only has root zone.
-     */
-    function findAngularZoneGlobal() {
-        var candidates = document.querySelectorAll(
-            'button[aria-label], input, textarea, mat-chip-row button, a[href]'
-        );
-        for (var i = 0; i < Math.min(candidates.length, 30); i++) {
-            var zone = getAngularZone(candidates[i]);
-            if (zone && zone.name !== '<root>') return zone;
-        }
-        return null;
-    }
 
     /**
      * Set value on an input/textarea and trigger Angular change detection.
@@ -126,7 +120,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             el.value = value;
         }
 
-        var angularZone = getAngularZone(el);
+        var angularZone = _v2sGetAngularZone(el);
         var inputEvent = new InputEvent('input', {
             bubbles: true, inputType: 'insertText', data: value
         });
@@ -229,17 +223,17 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
         }
 
         // Find Angular zone — try specific task first, then element, then global
-        var zone = getZoneFromTask(task);
+        var zone = _v2sGetZoneFromTask(task);
         var zoneSource = 'task';
         if (!zone || zone.name === '<root>') {
-            var elZone = getAngularZone(inp);
+            var elZone = _v2sGetAngularZone(inp);
             if (elZone && elZone.name !== '<root>') {
                 zone = elZone;
                 zoneSource = 'element';
             }
         }
         if (!zone || zone.name === '<root>') {
-            var globalZone = findAngularZoneGlobal();
+            var globalZone = _v2sFindAngularZoneGlobal();
             if (globalZone) {
                 zone = globalZone;
                 zoneSource = 'global';
@@ -416,7 +410,7 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
             nativeSetter.set.call(inp, '');
         }
 
-        var angularZone = getAngularZone(inp);
+        var angularZone = _v2sGetAngularZone(inp);
         var i = 0;
 
         function typeNext() {
@@ -717,4 +711,153 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
     // Kick off
     start(MAX_RETRIES);
+}
+
+// ── Sticker/Image Bridge ──────────────────────────────────────────────────
+
+/**
+ * Send an image to Google Voice by injecting it into the file upload input.
+ * Called from Java when GBoard delivers a sticker via commitContent.
+ *
+ * Flow: decode base64 → open attachment menu → click upload → inject File
+ * into the hidden <input type="file"> → dispatch change event.
+ *
+ * @param {string} base64Data - Base64-encoded image bytes
+ * @param {string} mimeType  - MIME type (image/png, image/gif, image/jpeg)
+ * @param {string} fileName  - File name for the attachment
+ */
+function sendImageToGV(base64Data, mimeType, fileName) {
+    'use strict';
+
+    var MAX_POLLS = 25;
+    var POLL_MS = 120;
+
+    console.log('[Voice2SMS] sendImageToGV: ' + mimeType + ', ' + fileName);
+
+    // 1. Decode base64 to File object
+    var byteChars = atob(base64Data);
+    var byteArray = new Uint8Array(byteChars.length);
+    for (var i = 0; i < byteChars.length; i++) {
+        byteArray[i] = byteChars.charCodeAt(i);
+    }
+    var blob = new Blob([byteArray], { type: mimeType });
+    var file = new File([blob], fileName, { type: mimeType });
+
+    // 2. Find and click the attachment menu button
+    function findAttachButton() {
+        // Try multiple selectors — mobile and desktop variants
+        var selectors = [
+            'button[aria-label*="ttach"]',
+            'button[aria-label*="photo"]',
+            'button[aria-label*="image"]',
+            'button[aria-haspopup="menu"]'
+        ];
+        for (var s = 0; s < selectors.length; s++) {
+            var btns = document.querySelectorAll(selectors[s]);
+            for (var b = 0; b < btns.length; b++) {
+                // Filter to buttons near the compose area (avoid nav menus)
+                var rect = btns[b].getBoundingClientRect();
+                if (rect.bottom > window.innerHeight * 0.5) {
+                    return btns[b];
+                }
+            }
+        }
+        return null;
+    }
+
+    function openAttachMenu(retries) {
+        if (retries <= 0) {
+            console.log('[Voice2SMS] sendImageToGV: could not find attach button');
+            return;
+        }
+        var btn = findAttachButton();
+        if (!btn) {
+            setTimeout(function() { openAttachMenu(retries - 1); }, POLL_MS);
+            return;
+        }
+        console.log('[Voice2SMS] sendImageToGV: clicking attach button');
+        btn.click();
+        setTimeout(function() { clickUploadItem(MAX_POLLS); }, 200);
+    }
+
+    // 3. Click the "Upload" menu item — this triggers onShowFileChooser
+    //    on the Java side, which auto-supplies the sticker file (no picker shown).
+    //    We do NOT inject via DataTransfer — that would trigger a second file chooser.
+    function clickUploadItem(retries) {
+        if (retries <= 0) {
+            console.log('[Voice2SMS] sendImageToGV: could not find upload menu item');
+            return;
+        }
+        var items = document.querySelectorAll(
+            'button.mat-mdc-menu-item, .mat-menu-item, [role="menuitem"]'
+        );
+        var uploadItem = null;
+        for (var i = 0; i < items.length; i++) {
+            var text = (items[i].textContent || '').toLowerCase();
+            if (text.indexOf('upload') !== -1 || text.indexOf('photo') !== -1 ||
+                text.indexOf('image') !== -1 || text.indexOf('file') !== -1) {
+                uploadItem = items[i];
+                break;
+            }
+        }
+        if (!uploadItem && items.length > 0) {
+            uploadItem = items[0];
+        }
+        if (!uploadItem) {
+            setTimeout(function() { clickUploadItem(retries - 1); }, POLL_MS);
+            return;
+        }
+        console.log('[Voice2SMS] sendImageToGV: clicking upload item');
+        uploadItem.click();
+        // Java side suppresses the Google Photos picker via onShowFileChooser.
+        // We inject the file via DataTransfer after the input appears.
+        setTimeout(function() { injectFile(MAX_POLLS); }, 200);
+    }
+
+    // 4. Find the file input and inject our image via DataTransfer
+    function injectFile(retries) {
+        if (retries <= 0) {
+            console.log('[Voice2SMS] sendImageToGV: could not find file input');
+            return;
+        }
+        var fileInput = document.querySelector('input[type="file"]');
+        if (!fileInput) {
+            setTimeout(function() { injectFile(retries - 1); }, POLL_MS);
+            return;
+        }
+
+        console.log('[Voice2SMS] sendImageToGV: injecting file via DataTransfer');
+        var dt = new DataTransfer();
+        dt.items.add(file);
+        fileInput.files = dt.files;
+
+        // Dispatch events in Angular zone for change detection
+        var zone = _v2sFindAngularZoneGlobal();
+        var dispatchEvents = function() {
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+            fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+            console.log('[Voice2SMS] sendImageToGV: done, image should appear in compose');
+        };
+
+        if (zone && zone.name !== '<root>') {
+            zone.run(dispatchEvents);
+        } else {
+            dispatchEvents();
+        }
+    }
+
+    // Try direct file input injection first (no menu click = no picker).
+    // Fall back to menu-based approach if no file input exists in DOM.
+    function tryDirectInject() {
+        var fileInput = document.querySelector('input[type="file"]');
+        if (fileInput) {
+            console.log('[Voice2SMS] sendImageToGV: found existing file input, injecting directly');
+            injectFile(1); // already found, inject immediately
+        } else {
+            console.log('[Voice2SMS] sendImageToGV: no file input in DOM, using menu approach');
+            openAttachMenu(MAX_POLLS);
+        }
+    }
+
+    tryDirectInject();
 }
