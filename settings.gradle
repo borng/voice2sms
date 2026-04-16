@@ -1,2 +1,2 @@
 rootProject.name = 'voice2sms'
-include ':app'
+include ':app', ':wear'

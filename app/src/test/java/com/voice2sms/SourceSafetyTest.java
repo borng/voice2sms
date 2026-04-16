@@ -30,9 +30,18 @@ public class SourceSafetyTest {
     private static final Path MAIN =
             Paths.get("src/main/java/com/voice2sms");
 
+    // Gradle runs :app:test with cwd=app/, so wear/ sits one level up.
+    private static final Path WEAR_MODULE = Paths.get("..", "wear");
+
     private String read(String relative) throws IOException {
         Path p = MAIN.resolve(relative);
         assertTrue("source file missing: " + p, Files.exists(p));
+        return new String(Files.readAllBytes(p));
+    }
+
+    private String readWear(String relative) throws IOException {
+        Path p = WEAR_MODULE.resolve(relative);
+        assertTrue("wear source missing: " + p, Files.exists(p));
         return new String(Files.readAllBytes(p));
     }
 
@@ -312,6 +321,143 @@ public class SourceSafetyTest {
         assertTrue(
                 "SettingsActivity version stamp must reference BuildConfig.BUILD_DATE",
                 src.contains("BuildConfig.BUILD_DATE"));
+    }
+
+    // =========================================================================
+    //  Wear module regression guards (v1.5.x — Wear companion APK)
+    // =========================================================================
+    //
+    // These read the wear/ module's source files so phone + watch stay aligned
+    // on the protocol contract. The watch APK is a separate Gradle module but
+    // its shape must not drift from what the phone-side listener expects.
+
+    /**
+     * SendToReceiverActivity must remain a Theme.NoDisplay trampoline: it runs
+     * on Assistant's dispatch thread, must not render UI, and must finish()
+     * during onCreate. Introducing a real layout or deferring finish() would
+     * leave a ghost activity on the watch stack after every send.
+     */
+    @Test
+    public void wear_sendToReceiver_isNoDisplayTrampoline() throws IOException {
+        String manifest = readWear("src/main/AndroidManifest.xml");
+        assertTrue(
+                "SendToReceiverActivity manifest entry must set Theme.NoDisplay",
+                manifest.contains("SendToReceiverActivity")
+                        && manifest.contains("Theme.NoDisplay"));
+
+        String src = stripComments(readWear(
+                "src/main/java/com/voice2sms/wear/SendToReceiverActivity.java"));
+        assertTrue(
+                "SendToReceiverActivity must call finish() in onCreate to avoid lingering UI",
+                src.contains("finish()"));
+        // Trampoline must not couple into the phone WebView stack, mirroring the
+        // same rule we enforce for the phone-side WearSmsListenerService.
+        for (String forbidden : new String[]{
+                "GVoiceWebViewActivity", "V2SBridge", "Voice2SmsApplication"}) {
+            assertFalse(
+                    "SendToReceiverActivity references " + forbidden
+                            + " — wear/ must stay decoupled from the phone WebView stack",
+                    src.contains(forbidden));
+        }
+    }
+
+    /**
+     * Wear OS standalone flag is required for distribution. Without it the
+     * install fails silently on watches whose paired phone doesn't also carry
+     * the Voice2SMS app — which is precisely the state we expect for a while
+     * after a release bump.
+     */
+    @Test
+    public void wear_manifest_declaresStandalone() throws IOException {
+        String manifest = readWear("src/main/AndroidManifest.xml");
+        assertTrue(
+                "Wear manifest missing android.hardware.type.watch uses-feature",
+                manifest.contains("android.hardware.type.watch"));
+        assertTrue(
+                "Wear manifest missing com.google.android.wearable.standalone=true",
+                manifest.contains("com.google.android.wearable.standalone")
+                        && manifest.contains("android:value=\"true\""));
+    }
+
+    /**
+     * The intercept target is ACTION_SENDTO on smsto: (and legacy sms:). Dropping
+     * either scheme would leave us invisible in the resolver when Assistant uses
+     * the scheme we don't declare.
+     */
+    @Test
+    public void wear_manifest_declaresSendtoFilter() throws IOException {
+        String manifest = readWear("src/main/AndroidManifest.xml");
+        assertTrue(
+                "Wear manifest must declare ACTION_SENDTO intent filter",
+                manifest.contains("android.intent.action.SENDTO"));
+        assertTrue(
+                "Wear manifest must declare smsto scheme",
+                manifest.contains("android:scheme=\"smsto\""));
+        assertTrue(
+                "Wear manifest must declare sms scheme",
+                manifest.contains("android:scheme=\"sms\""));
+        assertTrue(
+                "Wear SENDTO activity must be exported for cross-app resolver pickup",
+                manifest.contains("android:exported=\"true\""));
+    }
+
+    /**
+     * GMS Data Layer scopes messages by matching applicationId + signing cert on
+     * both paired devices. A wear applicationId that drifts from the phone's
+     * would silently break the entire pipeline with no client-side error.
+     * Same rationale for the signing block referencing the root keystore.
+     */
+    @Test
+    public void wear_gradle_matchesPhoneApplicationId() throws IOException {
+        String gradle = new String(Files.readAllBytes(WEAR_MODULE.resolve("build.gradle")));
+        assertTrue(
+                "wear/build.gradle must set applicationId \"com.voice2sms\" to match :app",
+                gradle.contains("applicationId \"com.voice2sms\""));
+        // Must share the SAME keystore as :app — GMS trust depends on signature match.
+        assertTrue(
+                "wear/build.gradle must reference the root keystore.properties",
+                gradle.contains("rootProject.file('keystore.properties')"));
+        assertTrue(
+                "wear/build.gradle must reuse the keystore/release.jks path",
+                gradle.contains("keystore/release.jks"));
+        // Wear OS 3+ (minSdk 30) covers all supported Galaxy Watch generations.
+        assertTrue(
+                "wear/build.gradle must set minSdk 30 (Wear OS 3+)",
+                gradle.contains("minSdk 30"));
+    }
+
+    /**
+     * The watch-side validator is a deliberate duplicate of the phone-side. It
+     * must enforce the same rules: any drift on the regexes, size limits, or
+     * error-code strings would let the watch accept payloads the phone rejects
+     * (or vice versa) and break the protocol silently.
+     */
+    @Test
+    public void wear_validator_mirrorsPhoneSideRules() throws IOException {
+        String phone = stripComments(read("wear/WearPayloadValidator.java"));
+        String watch = stripComments(readWear(
+                "src/main/java/com/voice2sms/wear/WearPayloadValidator.java"));
+
+        for (String shared : new String[]{
+                "MAX_PAYLOAD_BYTES = 8192",
+                "MAX_BODY_LEN = 1600",
+                "^\\\\+?[0-9]{7,15}$",
+                "^[A-Za-z0-9_-]{1,64}$",
+                "missing_phone", "invalid_phone",
+                "missing_body", "empty_body", "body_too_long",
+                "missing_requestId", "invalid_requestId",
+                "empty_payload", "payload_too_large", "malformed_json"}) {
+            assertTrue(
+                    "phone-side WearPayloadValidator lost shared constant/code: " + shared,
+                    phone.contains(shared));
+            assertTrue(
+                    "watch-side WearPayloadValidator lost shared constant/code: " + shared,
+                    watch.contains(shared));
+        }
+        // Watch-only entrypoint — the factory the trampoline uses.
+        assertTrue(
+                "watch-side WearPayloadValidator must expose fromFields(...)",
+                watch.contains("public static Request fromFields("));
     }
 
     // --- helpers ---

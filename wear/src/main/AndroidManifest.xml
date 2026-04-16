@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Voice2SMS watch companion — intercepts ACTION_SENDTO on the watch and routes
+  to the phone's Voice2SMS → Google Voice pipeline via the Wearable Data Layer.
+
+  Deliberately no launcher activity: users discover the app via the SENDTO
+  resolver the first time Assistant fires "text <contact>". A launcher stub
+  may land in v1.1 once we know whether discoverability is a problem.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Required for Wear OS distribution. Filters the APK so the Play Store
+         only offers it on watches, not phones. -->
+    <uses-feature android:name="android.hardware.type.watch" />
+
+    <!-- Notification permission is requested as a nicety for future ack surfacing
+         (v1.1 WearAckListenerService). v1 uses a Toast; listed here so adding the
+         service doesn't require a manifest bump. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@android:drawable/sym_action_chat"
+        android:label="Voice2SMS"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <!-- standalone=true: app runs independently of a phone-side counterpart
+             at install time. It still requires the phone-side Voice2SMS build to
+             actually deliver; CapabilityClient detection is the v1.1 follow-up. -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="true" />
+
+        <!-- Intercept target. Theme.NoDisplay + finish() in onCreate — never
+             renders, runs on Assistant's thread, hands off to phone. -->
+        <activity
+            android:name=".SendToReceiverActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="smsto" />
+                <data android:scheme="sms" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>

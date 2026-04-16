@@ -1,0 +1,90 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Kept byte-for-byte identical in shape to app/build.gradle so drift between the
+// two modules is obvious in diff. SourceSafetyTest enforces that the
+// applicationId and signingConfig references match.
+def computeGitSha() {
+    try {
+        def out = new ByteArrayOutputStream()
+        def err = new ByteArrayOutputStream()
+        def result = exec {
+            commandLine 'git', 'rev-parse', '--short', 'HEAD'
+            standardOutput = out
+            errorOutput = err
+            ignoreExitValue = true
+        }
+        if (result.exitValue != 0) return 'unknown'
+        def sha = out.toString().trim()
+        return sha.isEmpty() ? 'unknown' : sha
+    } catch (Exception e) {
+        return 'unknown'
+    }
+}
+
+def computeBuildDate() {
+    return new Date().format('yyyy-MM-dd')
+}
+
+android {
+    namespace 'com.voice2sms.wear'
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        // MUST match phone applicationId — GMS Data Layer scopes messages by
+        // matching applicationId + signature on both paired devices.
+        applicationId "com.voice2sms"
+        // Wear OS 3+ covers all supported Galaxy Watch generations.
+        minSdk 30
+        targetSdk 34
+        versionCode project.hasProperty('VERSION_CODE') ? project.property('VERSION_CODE').toInteger() : 1
+        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "1.5.0"
+        buildConfigField 'String', 'GIT_SHA', "\"${computeGitSha()}\""
+        buildConfigField 'String', 'BUILD_DATE', "\"${computeBuildDate()}\""
+    }
+
+    signingConfigs {
+        release {
+            // CRITICAL: SAME keystore as :app. GMS DataLayer trust depends on
+            // matching application signature — two devices with the same
+            // applicationId but different signing certs cannot exchange data.
+            // Reads rootProject keystore.properties (gitignored) or env vars.
+            def props = new Properties()
+            def propsFile = rootProject.file('keystore.properties')
+            if (propsFile.exists()) props.load(new FileInputStream(propsFile))
+
+            storeFile file(System.getenv('KEYSTORE_PATH') ?: "${rootProject.projectDir}/keystore/release.jks")
+            storePassword System.getenv('KEYSTORE_PASSWORD') ?: props.getProperty('storePassword', '')
+            keyAlias System.getenv('KEY_ALIAS') ?: props.getProperty('keyAlias', 'voice2sms')
+            keyPassword System.getenv('KEY_PASSWORD') ?: props.getProperty('keyPassword', '')
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    // Wear core for watch-only resources and themes.
+    implementation 'androidx.wear:wear:1.3.0'
+    // Data Layer (DataClient / MessageClient / CapabilityClient).
+    implementation 'com.google.android.gms:play-services-wearable:18.2.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20231013'
+}
