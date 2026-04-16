@@ -1,43 +1,45 @@
 # Voice2SMS
 
+Route all Android SMS through Google Voice — from any app, Gemini, or your Wear OS watch.
+
 ## The Problem
 
-If you use Google Voice as your primary phone number, texting is broken on Android. Tapping a phone number in your contacts, sharing text from an app, or asking Gemini to "send a text" all fire standard Android SMS intents — which go straight to your carrier number, not Google Voice. There's no way to set Google Voice as the default SMS handler because it doesn't register as an SMS app. You're stuck copying numbers, switching to the GV app, pasting, and typing your message manually.
-
-This means:
-- **Tapping a phone number** to text goes to your carrier, not Google Voice
-- **Share > SMS** from any app sends via carrier
-- **"Hey Google, text Rachel"** sends via carrier (or Gemini tries `SmsManager` directly)
-- **Quick-reply from notifications** — carrier, not GV
-
-If your real number is your Google Voice number, none of the standard Android SMS workflows work.
+If you use Google Voice as your primary number, texting is broken on Android. Tapping a phone number, sharing text, asking Gemini to "send a text," or using Google Assistant on your watch — all fire standard SMS intents that go to your carrier number, not Google Voice. There's no way to set Google Voice as the default SMS handler.
 
 ## The Solution
 
 Voice2SMS registers as the default SMS app and intercepts all SMS intents. Instead of sending via carrier, it opens Google Voice's web UI in an embedded WebView and programmatically composes the message — creating the recipient chip, filling the body, and optionally auto-sending.
 
-**Without the AccessibilityService** (default), Voice2SMS handles all standard SMS intents — tapping a phone number, sharing text, or clicking "Modify/Edit" in Gemini will open Voice2SMS with the recipient and body pre-populated, ready for you to review and tap Send. However, if you tap Gemini's "Send" button directly, Gemini bypasses intents and uses your default carrier SMS provider.
+### What it intercepts
 
-**With the optional AccessibilityService enabled**, Voice2SMS can also intercept Gemini's "Send" button and voice confirmations ("Yes"), routing those through Google Voice automatically. This is the only way to get true hands-free auto-send when using Gemini as a voice assistant.
+- **Tapping a phone number** in any app
+- **Share > SMS** from any app
+- **"Hey Google, text Rachel"** from Gemini on your phone
+- **"Hey Google, text Rachel"** from Google Assistant on your watch (via Wear OS companion)
+- **Quick-reply from notifications**
+- **Gemini's Send button and voice confirmations** (with optional AccessibilityService)
 
 ## How It Works
 
 ```
-SMS Intent (sms:/smsto:)          Share Intent (text/plain)
-        |                                   |
-        v                                   v
-  SmsHandlerActivity ────── parses recipient + body ──────> GVoiceWebViewActivity
-                                                                    |
-                                                    loads voice.google.com/u/0/messages
-                                                                    |
-                                                        injects inject.js into WebView
-                                                                    |
-                                                    creates recipient chip via Angular
-                                                    internal matChipInputTokenEnd callback
-                                                                    |
-                                                        fills message body textarea
-                                                                    |
-                                                    shows keyboard / auto-sends
+Phone                                          Watch (Wear OS)
+─────                                          ──────────────
+SMS Intent (sms:/smsto:)                       Google Assistant
+Share Intent (text/plain)                        "Hey Google, text Alice hi"
+        |                                              |
+        v                                              v
+  SmsHandlerActivity                           SendToReceiverActivity
+  parses recipient + body                      validates + sends via
+        |                                      Wearable Data Layer
+        v                                              |
+  GVoiceWebViewActivity ◄════════════(BT/Wi-Fi)════════╝
+        |                              WearSmsListenerService
+  loads voice.google.com               receives + trampolines
+        |                              to SmsHandlerActivity
+  inject.js
+  creates recipient chip
+  fills body textarea
+  auto-sends or shows keyboard
 
 
 Gemini AI ("send a text to...")
@@ -45,35 +47,45 @@ Gemini AI ("send a text to...")
         v
   GeminiSmsInterceptService (AccessibilityService)
         |
-        +-- Send button tap --> resource ID match --> auto-send via GV
-        +-- Modify/Edit btn --> SENDTO intent ------> review mode (no auto-send)
-        +-- Voice "Yes" ------> watchdog timer ------> auto-send via GV
+        +── Send button tap ──> resource ID match ──> auto-send via GV
+        +── Modify/Edit btn ──> SENDTO intent ──────> review mode
+        +── Voice "Yes" ──────> watchdog timer ──────> auto-send via GV
 ```
-
-For detailed technical architecture, component descriptions, inject.js flow, and Gemini interception internals, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Requirements
 
-- Android 7.0+ (API 24)
+- **Phone**: Android 7.0+ (API 24)
+- **Watch** (optional): Wear OS 3+ (Galaxy Watch 4/5/6/7, Pixel Watch, etc.)
 - Google account signed into Google Voice
-- Set as default SMS app (prompted on first launch)
 
 ## Install
 
-Download the latest APK from [GitHub Releases](../../releases/latest), then:
+### Phone
+
+Download the latest `voice2sms-v*.apk` from [GitHub Releases](../../releases/latest):
 
 ```bash
 adb install voice2sms-v*.apk
 ```
 
-Then open the app and:
+Open the app and:
 1. Grant "Default SMS app" role when prompted
 2. Sign into your Google account (one-time; cookies persist)
-3. Test by sending an SMS from Gemini, contacts, or any app that fires `sms:` intents
+3. Test by sending an SMS from contacts or any app that fires `sms:` intents
+
+### Watch (optional)
+
+Download `voice2sms-wear-v*.apk` from the same release:
+
+```bash
+adb -s <watch-serial> install voice2sms-wear-v*.apk
+```
+
+Then say "Hey Google, text [contact] hello" on your watch. The first time, pick **Voice2SMS** in the app chooser and tap "Always." Messages route through Google Voice on your phone automatically.
 
 ### Gemini Integration Setup
 
-To route Gemini AI SMS through Google Voice, three additional steps are required (guided by the in-app setup wizard on first launch):
+To also route Gemini AI SMS through Google Voice, three additional steps are needed (guided by the in-app setup wizard):
 
 **Step 1: Set as default SMS app** (done above)
 
@@ -85,59 +97,62 @@ adb shell appops set com.google.android.googlequicksearchbox SEND_SMS ignore
 ```
 
 **Step 3: Enable the AccessibilityService**
-- Settings > Accessibility > Voice2SMS Gemini Intercept > Enable
+Settings > Accessibility > Voice2SMS Gemini Intercept > Enable
 
-The triple ADB command combo (`pm revoke` + `user-fixed` + `appops ignore`) persists across reboots. Future versions will use Shizuku to automate this step.
+The ADB commands persist across reboots.
+
+## Settings
+
+- **Gemini auto-send** — Automatically send intercepted Gemini SMS (vs. opening for review)
+- **Auto-send confirmation** — Show a "Sent via Google Voice" notification on auto-sends
+
+## Tested On
+
+| Device | Role | OS |
+|--------|------|-----|
+| Pixel 10 Pro Fold | Phone | Android 16 |
+| Galaxy Watch 6 (SM-R960) | Watch | Wear OS 5 |
 
 ## Building
 
 ```bash
-# Debug build
-ANDROID_HOME=/opt/android-sdk ./gradlew assembleDebug
+# Phone debug APK
+./gradlew assembleDebug
+# → app/build/outputs/apk/debug/app-debug.apk
 
-# Release build (signed)
-ANDROID_HOME=/opt/android-sdk ./gradlew assembleRelease
+# Watch debug APK
+./gradlew :wear:assembleDebug
+# → wear/build/outputs/apk/debug/wear-debug.apk
+
+# Release (both)
+./gradlew assembleRelease
+
+# Tests (JVM, no device needed)
+./gradlew test
 ```
 
-Release APK: `app/build/outputs/apk/release/app-release.apk`
+### CI/CD
 
-### Signing
-
-Release builds are signed with the keystore at `keystore/release.jks`. This keystore is gitignored. To create a new one:
+Pushing a `v*` tag triggers GitHub Actions to build, sign, and publish both APKs as a GitHub Release:
 
 ```bash
-keytool -genkey -v -keystore keystore/release.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 \
-  -alias voice2sms -storepass voice2sms -keypass voice2sms
+git tag -a v1.5.0 -m "Wear OS companion + auto-send notification"
+git push origin v1.5.0
 ```
 
-### GitHub Actions (CI)
+See `.github/workflows/release.yml` for details. Requires four repository secrets for APK signing (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`).
 
-Pushing a tag (`v*`) triggers a release build via GitHub Actions. The workflow builds the APK, signs it, and creates a GitHub Release with the artifact attached.
+## Architecture
 
-After creating the GitHub repo, configure 4 secrets for APK signing:
-
-```bash
-# Encode keystore as base64 and set secrets
-gh secret set KEYSTORE_BASE64 --repo owner/voice2sms --body "$(base64 -w0 keystore/release.jks)"
-gh secret set KEYSTORE_PASSWORD --repo owner/voice2sms --body "your-store-password"
-gh secret set KEY_ALIAS --repo owner/voice2sms --body "voice2sms"
-gh secret set KEY_PASSWORD --repo owner/voice2sms --body "your-key-password"
-```
-
-To trigger a release:
-```bash
-git tag -a v1.2.0 -m "Description of release"
-git push origin v1.2.0
-```
+For technical details — inject.js flow, Angular chip creation, Gemini interception internals, Wearable Data Layer protocol, singleton WebView guards — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Acceptable Use
 
-This tool is intended for **personal use only** — routing your own SMS through your own Google Voice number. It is not designed for and must not be used for sending bulk or mass text messages. The app sends one message at a time through Google Voice's standard web compose UI, so it shouldn't be capable of bulk sending regardless, but just to be clear: don't use it that way. Use of this app must comply with the [Google Voice Acceptable Use Policy](https://support.google.com/voice/answer/9230450) and [Google Terms of Service](https://policies.google.com/terms).
+This tool is for **personal use** — routing your own SMS through your own Google Voice number. It is not designed for bulk or mass messaging. Use must comply with the [Google Voice Acceptable Use Policy](https://support.google.com/voice/answer/9230450) and [Google Terms of Service](https://policies.google.com/terms).
 
 ## Disclaimer
 
-This project relies on internal implementation details of Google Voice's web UI (Angular component structure, Zone.js listener internals, DOM selectors) and Gemini's accessibility tree (resource IDs, FloatyActivity layout). **Google may change any of these at any time without notice**, which could break functionality. This is a personal-use tool, not a supported product. If something stops working after a Google Voice or Gemini update, the relevant selectors and resource IDs will need to be re-discovered and updated.
+This project relies on internal details of Google Voice's web UI (Angular component structure, Zone.js internals, DOM selectors) and Gemini's accessibility tree (resource IDs, FloatyActivity layout). **Google may change any of these at any time**, which could break functionality. This is a personal-use tool, not a supported product.
 
 ## License
 
@@ -145,22 +160,53 @@ MIT License. See [LICENSE](LICENSE).
 
 ## Version History
 
-### v1.1.0 (2026-03-03)
+### v1.5.0
 
-Gemini Accessibility Auto-Send Support.
+Wear OS companion APK + auto-send notifications.
 
-- AccessibilityService monitors Gemini's SMS compose overlay (FloatyActivity)
+- Wear OS companion APK (`wear/`) — catches `ACTION_SENDTO` from Google Assistant on the watch and routes through Google Voice on the phone via the Wearable Data Layer
+- "Sent via Google Voice" notification on all auto-send paths (watch, Gemini, respond-via-message), gated by a settings toggle
+- Phone-side `WearSmsListenerService` for receiving watch requests with dedup, rate limiting, and BAL-fallback notification
+- `SourceSafetyTest` guards for cross-module contract drift (applicationId, signing, protocol paths, validator parity)
+- Settings build stamp (version, build code, git SHA, date)
+
+### v1.4.0
+
+CI/CD + crash fixes.
+
+- GitHub Actions: PR CI, release pipeline gated on tests, Dependabot
+- Fix SMS-intent crash on malformed URIs
+- WebView race condition guards (`isActivityAlive()` on all async paths)
+- JVM source-safety test suite (no device required)
+
+### v1.3.0
+
+GBoard sticker support + foldable screen handling.
+
+- `RichContentWebView` subclass for GBoard sticker/image input
+- Enter key intercepted to insert newline (not send)
+- Foldable screen configuration change handling
+
+### v1.2.0
+
+Security hardening.
+
+- Static analysis fixes (singleTask, UI thread safety, memory leak)
+- Security hardening for public repository
+
+### v1.1.0
+
+Gemini integration.
+
+- `GeminiSmsInterceptService` (AccessibilityService) monitors Gemini's SMS compose overlay
 - Three interception paths: Send button, Modify/Edit, voice "Yes" confirm
-- Auto-send toggle in Settings (Gemini Integration category)
-- First-install setup wizard (default SMS, ADB commands, accessibility service)
-- Watchdog timer catches voice-confirm path
+- Auto-send toggle, first-install setup wizard, watchdog timer
 
-### v1.0.0 (2026-03-03)
+### v1.0.0
 
 Initial release.
 
 - SMS intent handling (`SENDTO`, `VIEW`, `SEND`) with recipient + body parsing
-- Google Voice WebView with singleton lifecycle and warm start support
+- Google Voice WebView with singleton lifecycle
 - Direct Angular chip creation via `matChipInputTokenEnd` callback
-- Auto-send, dark mode, anti-fingerprinting, async WebView startup
-- Settings: default SMS app role, Google account switching
+- Auto-send, dark mode, anti-fingerprinting
