@@ -1,6 +1,6 @@
 # Voice2SMS — Project Instructions
 
-## Current State: v1.2.0 — Static Analysis Fixes
+## Current State: v1.4.0 — Crash Fix + Race Audit + Test Suite
 
 All core features working. Three Gemini SMS interception paths confirmed on device:
 1. **Send button tap** — resource ID match → auto-send via GV
@@ -24,10 +24,22 @@ All core features working. Three Gemini SMS interception paths confirmed on devi
 
 - Build: `ANDROID_HOME=/opt/android-sdk ./gradlew assembleDebug`
 - Release: `ANDROID_HOME=/opt/android-sdk ./gradlew assembleRelease`
+- JVM source-safety tests: `./gradlew test` — runs `app/src/test/java/com/voice2sms/SourceSafetyTest.java` (regression guards, ~5s, no device)
+- On-device crash canary: `tests/smoke/test-sms-intent.sh` — fires SMS intents, fails on FATAL EXCEPTION (requires connected device)
+- **Pre-deploy gate**: run `./gradlew test` AND `tests/smoke/test-sms-intent.sh` before `assembleRelease` / tagging. Both must pass. See `tests/smoke/README.md`.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
+
+### Singleton WebView Guard Pattern
+
+The WebView lives in `Voice2SmsApplication` and outlives Activity instances. Any
+code that touches `webView` after a post (`runOnUiThread`, `postDelayed`, background
+Thread → UI) MUST short-circuit via `isActivityAlive()` — webView is nulled by
+`onRenderProcessGone`. `SourceSafetyTest` enforces this in V2SBridge, typing
+paths, and the auth callback — don't hide it behind a wrapper.
 
 ### Known Issues / Future Work
 
+- **Do not call `Profile.prefetchUrlAsync(GV_MESSAGES_URL, ...)`** in `Voice2SmsApplication` — races the Activity's live `loadUrl()` on the same URL, NPEs inside chromium's `WV.h22.run` (WebView 148 + androidx.webkit 1.15.0). Enforced by `SourceSafetyTest`.
 - `SHOW_FORCED` is deprecated on API 33+ — consider `SHOW_IMPLICIT` or `WindowInsetsController`
 - Dead `V2SBridge` methods (`requestType`, `requestTapAndType`, `requestFocusAndKeyboard`) — audit and remove if unused
 - Dead `resetComposeState()` function in inject.js — remove if no longer needed

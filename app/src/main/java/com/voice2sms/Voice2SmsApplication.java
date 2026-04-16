@@ -2,30 +2,23 @@ package com.voice2sms;
 
 import android.app.Application;
 import android.content.MutableContextWrapper;
-import android.os.CancellationSignal;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
-import androidx.webkit.OutcomeReceiverCompat;
-import androidx.webkit.PrefetchException;
 import androidx.webkit.ProcessGlobalConfig;
 import androidx.webkit.Profile;
 import androidx.webkit.ProfileStore;
 import androidx.webkit.WebViewFeature;
-
-import java.util.concurrent.Executor;
 
 /**
  * Application subclass that holds a singleton WebView instance.
  * The WebView survives Activity lifecycle — on warm starts the SPA
  * is already loaded so inject.js can run immediately (~0.5s vs ~2.3s).
  *
- * Tier 3: Also configures async WebView startup, warms up the renderer
- * process, and prefetches the GV URL before the Activity creates its WebView.
+ * Tier 3: Also configures async WebView startup and warms up the renderer
+ * process before the Activity creates its WebView.
  */
 public class Voice2SmsApplication extends Application {
 
@@ -43,8 +36,8 @@ public class Voice2SmsApplication extends Application {
         // Tier 3: Configure async WebView startup (MUST be before any WebView creation)
         configureAsyncStartup();
 
-        // Tier 3: Warm up renderer process and prefetch GV URL
-        warmUpAndPrefetch();
+        // Warm up renderer process (prefetch disabled — causes NPE race, see warmUpRenderer)
+        warmUpRenderer();
     }
 
     /**
@@ -69,11 +62,17 @@ public class Voice2SmsApplication extends Application {
     }
 
     /**
-     * Start the renderer process early and prefetch the GV URL into HTTP cache.
-     * Both run before the Activity creates its WebView, saving ~200-400ms on cold start.
+     * Start the renderer process early. Runs before the Activity creates its WebView,
+     * saving ~200ms on cold start.
+     *
+     * NOTE: We do NOT call profile.prefetchUrlAsync() for GV_MESSAGES_URL here.
+     * Prefetching the same URL that GVoiceWebViewActivity immediately loads causes
+     * an internal chromium race — a post-prefetch Runnable (WV.h22.run) NPEs on
+     * the main Handler 1-2ms after the prefetch's onResult callback, killing the
+     * process. Reproduced deterministically on WebView 148 with androidx.webkit 1.15.0.
      */
     @SuppressWarnings("RestrictedApi")
-    private void warmUpAndPrefetch() {
+    private void warmUpRenderer() {
         try {
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.WARM_UP_RENDERER_PROCESS)) {
                 Log.d(TAG, "Renderer warm-up not supported on this device");
@@ -83,33 +82,8 @@ public class Voice2SmsApplication extends Application {
             Profile profile = ProfileStore.getInstance().getOrCreateProfile("Default");
             profile.warmUpRendererProcess();
             Log.d(TAG, "Renderer warm-up started");
-
-            // Prefetch GV URL to populate HTTP cache
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.PROFILE_URL_PREFETCH)) {
-                Executor mainExecutor = command ->
-                        new Handler(Looper.getMainLooper()).post(command);
-
-                profile.prefetchUrlAsync(
-                        GV_MESSAGES_URL,
-                        new CancellationSignal(),
-                        mainExecutor,
-                        new OutcomeReceiverCompat<Void, PrefetchException>() {
-                            @Override
-                            public void onResult(Void result) {
-                                Log.d(TAG, "GV URL prefetch completed");
-                            }
-
-                            @Override
-                            public void onError(PrefetchException e) {
-                                Log.w(TAG, "GV URL prefetch failed: " + e.getMessage());
-                            }
-                        });
-                Log.d(TAG, "GV URL prefetch started");
-            } else {
-                Log.d(TAG, "URL prefetch not supported on this device");
-            }
         } catch (Exception e) {
-            Log.w(TAG, "Warm-up/prefetch failed: " + e.getMessage());
+            Log.w(TAG, "Warm-up failed: " + e.getMessage());
         }
     }
 

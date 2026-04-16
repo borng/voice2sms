@@ -281,6 +281,7 @@ public class GVoiceWebViewActivity extends Activity {
         am.getAuthToken(account, "weblogin:service=grandcentral",
                 null, this, future -> {
                     runOnUiThread(() -> {
+                        if (!isActivityAlive()) return;
                         try {
                             Bundle result = future.getResult();
                             String authUrl = result.getString(android.accounts.AccountManager.KEY_AUTHTOKEN);
@@ -346,6 +347,7 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     private void loadGoogleVoice() {
+        if (webView == null) return;
         webView.loadUrl(GV_MESSAGES_URL);
     }
 
@@ -411,35 +413,54 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /**
+     * True when this Activity is still usable — webView non-null and Activity not
+     * tearing down. All V2SBridge runnables must check this before touching webView,
+     * because the singleton WebView can be nulled by onRenderProcessGone.
+     */
+    private boolean isActivityAlive() {
+        return webView != null && !isFinishing() && !isDestroyed();
+    }
+
+    private void showKeyboardForWebView() {
+        if (!isActivityAlive()) return;
+        android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager)
+                        getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
+            Log.d(TAG, "Called showSoftInput(SHOW_FORCED)");
+        }
+    }
+
     private class V2SBridge {
         @JavascriptInterface
         public void requestTapAndType(float cssX, float cssY, String text) {
             Log.d(TAG, "JS requested tap(" + cssX + "," + cssY + ") + type: " + text);
-            runOnUiThread(() -> tapAndType(cssX, cssY, text));
+            runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
+                tapAndType(cssX, cssY, text);
+            });
         }
 
         @JavascriptInterface
         public void requestType(String text) {
             Log.d(TAG, "JS requested native typing: " + text);
-            runOnUiThread(() -> typeIntoWebView(text, 0));
+            runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
+                typeIntoWebView(text, 0);
+            });
         }
 
         @JavascriptInterface
         public void requestShowKeyboard() {
             Log.d(TAG, "JS requested showKeyboard");
             runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
                 webView.setFocusableInTouchMode(true);
                 webView.requestFocus();
-                Handler handler = new Handler(Looper.getMainLooper());
-                handler.postDelayed(() -> {
-                    android.view.inputmethod.InputMethodManager imm =
-                        (android.view.inputmethod.InputMethodManager)
-                            getSystemService(INPUT_METHOD_SERVICE);
-                    if (imm != null) {
-                        imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
-                        Log.d(TAG, "Called showSoftInput(SHOW_FORCED)");
-                    }
-                }, 50);
+                new Handler(Looper.getMainLooper())
+                        .postDelayed(GVoiceWebViewActivity.this::showKeyboardForWebView, 50);
             });
         }
 
@@ -447,6 +468,7 @@ public class GVoiceWebViewActivity extends Activity {
         public void requestPageReload() {
             Log.d(TAG, "JS requested page reload for warm start recompose");
             runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
                 injected = false;
                 webView.loadUrl(GV_MESSAGES_URL);
             });
@@ -456,6 +478,7 @@ public class GVoiceWebViewActivity extends Activity {
         public void requestFocusAndKeyboard(float cssX, float cssY) {
             Log.d(TAG, "JS requested focus+keyboard at CSS (" + cssX + "," + cssY + ")");
             runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
                 webView.setFocusableInTouchMode(true);
                 webView.requestFocus();
                 webView.requestFocusFromTouch();
@@ -476,16 +499,8 @@ public class GVoiceWebViewActivity extends Activity {
                 down.recycle();
                 up.recycle();
 
-                Handler handler = new Handler(Looper.getMainLooper());
-                handler.postDelayed(() -> {
-                    android.view.inputmethod.InputMethodManager imm =
-                        (android.view.inputmethod.InputMethodManager)
-                            getSystemService(INPUT_METHOD_SERVICE);
-                    if (imm != null) {
-                        imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED);
-                        Log.d(TAG, "Called showSoftInput after touch");
-                    }
-                }, 100);
+                new Handler(Looper.getMainLooper())
+                        .postDelayed(GVoiceWebViewActivity.this::showKeyboardForWebView, 100);
             });
         }
     }
@@ -545,20 +560,19 @@ public class GVoiceWebViewActivity extends Activity {
                         + org.json.JSONObject.quote(fileName) + ")";
 
                 runOnUiThread(() -> {
-                    if (webView != null) {
-                        stickerInjectionActive = true;
-                        Log.d(TAG, "Injecting sticker: " + finalMime + ", " + finalBytes.length + " bytes");
-                        webView.evaluateJavascript(js, null);
-                        // Auto-clear flag after 5s in case the JS path never
-                        // triggers onShowFileChooser (avoids permanently
-                        // suppressing the user's manual file picker)
-                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            if (stickerInjectionActive) {
-                                stickerInjectionActive = false;
-                                Log.d(TAG, "Sticker injection flag auto-cleared");
-                            }
-                        }, 5000);
-                    }
+                    if (!isActivityAlive()) return;
+                    stickerInjectionActive = true;
+                    Log.d(TAG, "Injecting sticker: " + finalMime + ", " + finalBytes.length + " bytes");
+                    webView.evaluateJavascript(js, null);
+                    // Auto-clear flag after 5s in case the JS path never
+                    // triggers onShowFileChooser (avoids permanently
+                    // suppressing the user's manual file picker)
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        if (stickerInjectionActive) {
+                            stickerInjectionActive = false;
+                            Log.d(TAG, "Sticker injection flag auto-cleared");
+                        }
+                    }, 5000);
                 });
             } catch (Exception e) {
                 Log.w(TAG, "Failed to handle sticker image", e);
@@ -577,6 +591,7 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     private void tapAndType(float cssX, float cssY, String text) {
+        if (!isActivityAlive()) return;
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
         webView.requestFocusFromTouch();
@@ -600,13 +615,17 @@ public class GVoiceWebViewActivity extends Activity {
 
         if (text != null && !text.isEmpty()) {
             Handler handler = new Handler(Looper.getMainLooper());
-            handler.postDelayed(() -> typeIntoWebView(text, 0), 2000);
+            handler.postDelayed(() -> {
+                if (!isActivityAlive()) return;
+                typeIntoWebView(text, 0);
+            }, 2000);
         } else {
             Log.d(TAG, "Tap-only (no text to type), keyboard should appear");
         }
     }
 
     private void typeIntoWebView(String text, long initialDelay) {
+        if (!isActivityAlive()) return;
         Handler handler = new Handler(Looper.getMainLooper());
 
         webView.setFocusableInTouchMode(true);
@@ -614,6 +633,7 @@ public class GVoiceWebViewActivity extends Activity {
         webView.requestFocusFromTouch();
 
         handler.postDelayed(() -> {
+            if (!isActivityAlive()) return;
             try {
                 new Thread(() -> {
                     try {
@@ -628,9 +648,11 @@ public class GVoiceWebViewActivity extends Activity {
                         }
                         Log.d(TAG, "Shell input typing complete");
                         runOnUiThread(() -> {
+                            if (!isActivityAlive()) return;
                             webView.evaluateJavascript(
                                 "document.querySelector('input[placeholder*=\"name or phone\"]')?.value || ''",
                                 value -> {
+                                    if (!isActivityAlive()) return;
                                     Log.d(TAG, "Input value after shell typing: " + value);
                                     webView.evaluateJavascript(
                                         "if(window._v2sOnTyped)window._v2sOnTyped()", null);
@@ -639,7 +661,10 @@ public class GVoiceWebViewActivity extends Activity {
                         });
                     } catch (Exception e) {
                         Log.w(TAG, "Shell input typing failed: " + e.getMessage());
-                        runOnUiThread(() -> typeViaInputConnection(text));
+                        runOnUiThread(() -> {
+                            if (!isActivityAlive()) return;
+                            typeViaInputConnection(text);
+                        });
                     }
                 }).start();
             } catch (Exception e) {
@@ -650,10 +675,12 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     private void typeViaInputConnection(String text) {
+        if (!isActivityAlive()) return;
         Handler handler = new Handler(Looper.getMainLooper());
         for (int i = 0; i < text.length(); i++) {
             final String ch = String.valueOf(text.charAt(i));
             handler.postDelayed(() -> {
+                if (!isActivityAlive()) return;
                 InputConnection ic = webView.onCreateInputConnection(new EditorInfo());
                 if (ic != null) {
                     ic.commitText(ch, 1);
@@ -663,6 +690,7 @@ public class GVoiceWebViewActivity extends Activity {
             }, i * 60L);
         }
         handler.postDelayed(() -> {
+            if (!isActivityAlive()) return;
             Log.d(TAG, "InputConnection typing complete, signaling JS");
             webView.evaluateJavascript("if(window._v2sOnTyped)window._v2sOnTyped()", null);
         }, text.length() * 60L + 300);
