@@ -1,11 +1,22 @@
 # Voice2SMS — Project Instructions
 
-## Current State: v1.4.0 — Crash Fix + Race Audit + Test Suite
+## Current State: v1.5.0 — Wearable Listener + Build Stamp
+
+Adds phone-side support for a future Voice2SMS Wear OS companion APK. Existing
+Gemini interception paths unchanged. See `GALAXY-WATCH-SMS.md` for the Wear
+protocol contract and the rationale for each design decision.
 
 All core features working. Three Gemini SMS interception paths confirmed on device:
 1. **Send button tap** — resource ID match → auto-send via GV
 2. **Modify/Edit button** — SENDTO intent → review mode (no auto-send)
 3. **Voice "Yes" confirm** — watchdog timer → auto-send via GV
+
+New in v1.5.0:
+4. **Wearable Data Layer receive** — `WearSmsListenerService` on path
+   `/voice2sms/requests/*` → `SmsHandlerActivity` trampoline with
+   `EXTRA_FORCE_AUTO_SEND=true`. Watch APK not yet implemented.
+5. **Settings build stamp** — `SettingsActivity` now shows
+   `v<name> · <code> · <git-sha> · <date>` (long-press to copy).
 
 ### Key Files
 
@@ -14,9 +25,11 @@ All core features working. Three Gemini SMS interception paths confirmed on devi
 | `app/src/main/assets/inject.js` | Main WebView injection script |
 | `app/src/main/java/com/voice2sms/GVoiceWebViewActivity.java` | WebView activity |
 | `app/src/main/java/com/voice2sms/GeminiSmsInterceptService.java` | AccessibilityService for Gemini SMS interception |
-| `app/src/main/java/com/voice2sms/SmsHandlerActivity.java` | SMS intent router + SENDTO dedup timestamp |
+| `app/src/main/java/com/voice2sms/SmsHandlerActivity.java` | SMS intent router; exports `EXTRA_FORCE_AUTO_SEND` constant |
 | `app/src/main/java/com/voice2sms/SetupActivity.java` | First-install setup wizard |
-| `app/src/main/java/com/voice2sms/SettingsActivity.java` | Preferences + Gemini toggle |
+| `app/src/main/java/com/voice2sms/SettingsActivity.java` | Preferences + Gemini toggle + build stamp |
+| `app/src/main/java/com/voice2sms/wear/WearSmsListenerService.java` | Receives `{phone,body,requestId}` from watch; trampolines to `SmsHandlerActivity` |
+| `app/src/main/java/com/voice2sms/wear/WearPayloadValidator.java` | Pure-JVM payload validator (tested by `WearPayloadValidatorTest`) |
 | `app/src/main/assets/fingerprint-mask.js` | Anti-detection + dark mode |
 | `app/src/main/res/xml/gemini_accessibility_config.xml` | AccessibilityService config |
 
@@ -28,6 +41,7 @@ All core features working. Three Gemini SMS interception paths confirmed on devi
 - On-device crash canary: `tests/smoke/test-sms-intent.sh` — fires SMS intents, fails on FATAL EXCEPTION (requires connected device)
 - **Pre-deploy gate**: run `./gradlew test` AND `tests/smoke/test-sms-intent.sh` before `assembleRelease` / tagging. Both must pass. See `tests/smoke/README.md`.
 - **CI**: `.github/workflows/ci.yml` runs `./gradlew test` + `assembleDebug` on every PR and `main` push. `.github/workflows/release.yml` triggers on `v*` tags — tests gate the build/sign/release job (`needs: test`), so a failing `SourceSafetyTest` blocks a release. No manual build push needed; just `git tag -a vX.Y.Z && git push origin vX.Y.Z`.
+- **Branch-protection status check names** (Settings → Branches): GitHub uses the job's display `name:`, not the YAML job id. Add `JVM source-safety tests` and `Debug APK builds` — NOT `unit-tests` / `build-debug`.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
 
 ### Singleton WebView Guard Pattern

@@ -39,4 +39,11 @@
             android:summary="Currently disabled" />
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="About">
+        <Preference
+            android:key="app_version"
+            android:title="Version"
+            android:selectable="true" />
+    </PreferenceCategory>
+
 </PreferenceScreen>

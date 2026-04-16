@@ -19,6 +19,9 @@ public class SmsHandlerActivity extends Activity {
     private static final String TAG = "Voice2SMS";
     private static final int REQUEST_DEFAULT_SMS = 1001;
 
+    /** Extra: skip the WebView review step and auto-send. Forwarded to GVoiceWebViewActivity. */
+    public static final String EXTRA_FORCE_AUTO_SEND = "force_auto_send";
+
     /**
      * Timestamp of the last SENDTO intent received. Used by
      * GeminiSmsInterceptService to avoid double-firing when the Edit

@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
+    <!-- Needed on Android 13+ so the Wearable listener can post the BAL-fallback
+         notification ("Send via Google Voice") when a watch send arrives.
+         Runtime grant happens on first use; the listener also guards nm.notify()
+         so a missing permission degrades gracefully instead of crashing. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".Voice2SmsApplication"
         android:allowBackup="true"
@@ -124,6 +130,36 @@
             android:name=".SetupActivity"
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
+        <!-- Wearable listener: receives SMS send requests from the Voice2SMS watch companion.
+             Transport is DataClient on /voice2sms/requests/* (durable) plus MessageClient on
+             /voice2sms/requests/* (low-latency). Phone acks on /voice2sms/ack. See
+             GALAXY-WATCH-SMS.md for the full protocol.
+
+             exported="true" is REQUIRED: Google Play Services invokes WearableListenerService
+             subclasses across UID boundary (GMS runs as its own UID), so the service must be
+             exported. Cross-app forgery is prevented by the GMS Data Layer itself —
+             DataClient items and MessageClient messages are scoped to matching applicationId
+             on both paired devices. Only a Voice2SMS build signed with our keystore on the
+             watch can reach this filter. -->
+        <service
+            android:name=".wear.WearSmsListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/voice2sms/requests/" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/voice2sms/requests/" />
+            </intent-filter>
+        </service>
 
     </application>
 

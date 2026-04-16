@@ -115,6 +115,29 @@ public class SettingsActivity extends AppCompatActivity {
                     return true;
                 });
             }
+
+            // Version + build (long-press to copy for bug reports)
+            Preference version = findPreference("app_version");
+            if (version != null) {
+                String suffix = BuildConfig.DEBUG ? " · debug" : "";
+                String versionText = "v" + BuildConfig.VERSION_NAME
+                        + " · " + BuildConfig.VERSION_CODE
+                        + " · " + BuildConfig.GIT_SHA
+                        + " · " + BuildConfig.BUILD_DATE
+                        + suffix;
+                version.setSummary(versionText);
+                version.setOnPreferenceClickListener(pref -> {
+                    android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                            requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                    if (cm != null) {
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText(
+                                "Voice2SMS version", versionText));
+                        Toast.makeText(requireContext(),
+                                "Copied: " + versionText, Toast.LENGTH_SHORT).show();
+                    }
+                    return true;
+                });
+            }
         }
 
         @Override
