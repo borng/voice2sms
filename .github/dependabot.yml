@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Gradle dependencies (androidx.webkit, appcompat, junit, etc.)
+  - package-ecosystem: gradle
+    directory: /app
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: [dependencies, gradle]
+    commit-message:
+      prefix: "deps"
+      include: scope
+
+  # GitHub Actions used in CI + release workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "ci"
+      include: scope

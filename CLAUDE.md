@@ -27,6 +27,7 @@ All core features working. Three Gemini SMS interception paths confirmed on devi
 - JVM source-safety tests: `./gradlew test` — runs `app/src/test/java/com/voice2sms/SourceSafetyTest.java` (regression guards, ~5s, no device)
 - On-device crash canary: `tests/smoke/test-sms-intent.sh` — fires SMS intents, fails on FATAL EXCEPTION (requires connected device)
 - **Pre-deploy gate**: run `./gradlew test` AND `tests/smoke/test-sms-intent.sh` before `assembleRelease` / tagging. Both must pass. See `tests/smoke/README.md`.
+- **CI**: `.github/workflows/ci.yml` runs `./gradlew test` + `assembleDebug` on every PR and `main` push. `.github/workflows/release.yml` triggers on `v*` tags — tests gate the build/sign/release job (`needs: test`), so a failing `SourceSafetyTest` blocks a release. No manual build push needed; just `git tag -a vX.Y.Z && git push origin vX.Y.Z`.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
 
 ### Singleton WebView Guard Pattern
@@ -54,3 +55,4 @@ paths, and the auth callback — don't hide it behind a wrapper.
 - **Scheduled messaging with conditional send** — `AlarmManager.setAlarmClock()` + Room DB + three-layer change detection. Novel "auto-hold if conversation changed" feature.
 - **GBoard sticker support in WebView** — Implemented on `feature/gboard-sticker-bridge`. RichContentWebView subclass + commitContent interception + JS file input injection.
 - **API Replay hybrid (protobuf-over-HTTP)** — Send SMS via GV's internal API using WebView session cookies. Faster, less brittle for auto-send. Keep WebView for auth + review mode.
+- **Emulator smoke test in CI** — run `tests/smoke/test-sms-intent.sh` against a `reactivecircus/android-emulator-runner@v2` Pixel on API 34 as a third job in `ci.yml` / `release.yml`. Adds ~4-5 min/run; skipped for now to keep PR feedback fast. Trade-off: real on-device smoke test stays manual until added.
