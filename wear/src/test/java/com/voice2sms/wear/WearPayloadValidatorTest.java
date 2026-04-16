@@ -11,14 +11,7 @@ import org.junit.Test;
 import com.voice2sms.wear.WearPayloadValidator.Request;
 import com.voice2sms.wear.WearPayloadValidator.ValidationException;
 
-/**
- * Watch-side mirror of the phone's WearPayloadValidatorTest. Both files exercise
- * the same rules — if one drifts, the two devices start accepting different
- * payloads and the protocol breaks. Intentional duplication; keep in lockstep.
- *
- * Additional coverage: {@link WearPayloadValidator#fromFields(String, String, String)}
- * which only exists on the watch side (used after intent parsing to skip JSON).
- */
+/** Lockstep mirror of the phone-side test; {@code SourceSafetyTest} guards drift. */
 public class WearPayloadValidatorTest {
 
     private static byte[] bytes(String s) {

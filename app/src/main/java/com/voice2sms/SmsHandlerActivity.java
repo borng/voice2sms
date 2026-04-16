@@ -173,12 +173,15 @@ public class SmsHandlerActivity extends Activity {
         if (body != null) {
             webIntent.putExtra("body", body);
         }
-        // Forward explicit force_auto_send if present (e.g. from
-        // GeminiSmsInterceptService or RespondViaMessageService).
-        // Modify/Edit button intents do NOT auto-send — user reviews first.
         Intent src = getIntent();
         if (src.hasExtra("force_auto_send")) {
-            webIntent.putExtra("force_auto_send", src.getBooleanExtra("force_auto_send", false));
+            boolean autoSend = src.getBooleanExtra("force_auto_send", false);
+            webIntent.putExtra("force_auto_send", autoSend);
+            // Post "Sent" confirmation for non-Wear auto-sends (Gemini, RESPOND_VIA_MESSAGE).
+            // Wear-originated sends already get a notification from WearSmsListenerService.
+            if (autoSend && !src.hasExtra("wear_request_id")) {
+                AutoSendNotifier.show(this, recipient, body);
+            }
         }
         startActivity(webIntent);
         finish();

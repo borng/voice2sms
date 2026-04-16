@@ -105,17 +105,6 @@ public class SettingsActivity extends AppCompatActivity {
                 });
             }
 
-            // Auto-send disabled placeholder
-            Preference autoSendDisabled = findPreference("auto_send_disabled");
-            if (autoSendDisabled != null) {
-                autoSendDisabled.setOnPreferenceClickListener(pref -> {
-                    Toast.makeText(requireContext(),
-                            "Auto-send is disabled for now",
-                            Toast.LENGTH_SHORT).show();
-                    return true;
-                });
-            }
-
             // Version + build (long-press to copy for bug reports)
             Preference version = findPreference("app_version");
             if (version != null) {

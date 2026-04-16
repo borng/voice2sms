@@ -7,13 +7,6 @@ import org.junit.Test;
 
 import com.voice2sms.wear.SendToIntentParser.Parsed;
 
-/**
- * Edge-case coverage for {@link SendToIntentParser}. These map the ways
- * Google Assistant / resolver pickers can shape ACTION_SENDTO intents the
- * Wear activity will see in the wild.
- *
- * Pure JVM — no Android runtime dependency.
- */
 public class SendToIntentParseTest {
 
     @Test
@@ -40,7 +33,6 @@ public class SendToIntentParseTest {
 
     @Test
     public void bodyExtraWinsOverQueryString() {
-        // If both are present the extra is the authoritative source.
         Parsed p = SendToIntentParser.parse(
                 "+15551234567?body=from-query", "from-extra");
         assertEquals("+15551234567", p.phone);
@@ -56,7 +48,6 @@ public class SendToIntentParseTest {
 
     @Test
     public void queryStringBody_trailingParamsIgnored() {
-        // Only the "body" key matters; trailing params shouldn't pollute it.
         Parsed p = SendToIntentParser.parse(
                 "+15551234567?body=hi&foo=bar", null);
         assertEquals("hi", p.body);
@@ -78,7 +69,6 @@ public class SendToIntentParseTest {
 
     @Test
     public void missingBody_returnsNull() {
-        // Validator turns this into "missing_body"; parser just doesn't invent one.
         Parsed p = SendToIntentParser.parse("+15551234567", null);
         assertEquals("+15551234567", p.phone);
         assertNull(p.body);
@@ -99,7 +89,6 @@ public class SendToIntentParseTest {
 
     @Test
     public void sspWithOnlyQuery_phoneNull() {
-        // "?body=hi" with no phone — parser shouldn't invent an empty phone.
         Parsed p = SendToIntentParser.parse("?body=hi", null);
         assertNull(p.phone);
         assertEquals("hi", p.body);

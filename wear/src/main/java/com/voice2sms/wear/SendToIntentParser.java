@@ -3,16 +3,9 @@ package com.voice2sms.wear;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 
-/**
- * Pure-JVM helper for extracting the phone number and body from an
- * {@code ACTION_SENDTO} intent's scheme-specific-part + body extra.
- *
- * Factored out so parsing can be unit-tested without an Android runtime.
- * {@link SendToReceiverActivity} is the thin Android wrapper.
- */
+/** Pure-JVM SENDTO-intent parser — split out so {@link SendToReceiverActivity} stays testable. */
 public final class SendToIntentParser {
 
-    /** Phone + body carrier. Either field may be null if missing from the source. */
     public static final class Parsed {
         public final String phone;
         public final String body;
@@ -22,21 +15,12 @@ public final class SendToIntentParser {
         }
     }
 
-    private SendToIntentParser() { /* static only */ }
+    private SendToIntentParser() {}
 
-    /**
-     * @param schemeSpecificPart URI.getSchemeSpecificPart() (e.g. "+15551234567"
-     *                           or "+15551234567?body=hi%20there"). May be null.
-     * @param bodyExtra          String body from intent extras (EXTRA_TEXT or
-     *                           legacy "sms_body"). Wins over URI-embedded body
-     *                           when both are present. May be null.
-     */
+    /** {@code bodyExtra} takes precedence over any {@code ?body=…} query string. */
     public static Parsed parse(String schemeSpecificPart, String bodyExtra) {
         String phone = extractPhone(schemeSpecificPart);
-        String body = bodyExtra;
-        if (body == null) {
-            body = extractBodyFromQuery(schemeSpecificPart);
-        }
+        String body = bodyExtra != null ? bodyExtra : extractBodyFromQuery(schemeSpecificPart);
         return new Parsed(phone, body);
     }
 
@@ -47,10 +31,7 @@ public final class SendToIntentParser {
         return raw.isEmpty() ? null : raw;
     }
 
-    /**
-     * Some opaque URIs encode the body as "smsto:+1...?body=...". Android's
-     * Uri.getQueryParameter() doesn't work on opaque URIs, so parse by hand.
-     */
+    /** Uri.getQueryParameter() throws UnsupportedOperationException on opaque URIs. */
     private static String extractBodyFromQuery(String ssp) {
         if (ssp == null) return null;
         int q = ssp.indexOf('?');
@@ -59,13 +40,12 @@ public final class SendToIntentParser {
         for (String pair : query.split("&")) {
             int eq = pair.indexOf('=');
             if (eq < 0) continue;
-            String key = pair.substring(0, eq);
-            if (!"body".equals(key)) continue;
+            if (!"body".equals(pair.substring(0, eq))) continue;
             String value = pair.substring(eq + 1);
             try {
                 return URLDecoder.decode(value, "UTF-8");
             } catch (UnsupportedEncodingException e) {
-                return value; // UTF-8 is always available; fall back to raw
+                return value;
             }
         }
         return null;

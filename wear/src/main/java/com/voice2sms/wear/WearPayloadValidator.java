@@ -7,25 +7,19 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * Watch-side mirror of the phone's {@code WearPayloadValidator}. Same rules,
- * same error strings — the phone's validator is the canonical contract. Kept
- * as a duplicate (not a shared module) while the wear/ surface is tiny; if a
- * third consumer appears, extract to a shared: module.
- *
- * SourceSafetyTest guards the duplication so the two files can't drift on
- * things that matter: regex, error codes, size limits, and sanitizer behavior.
- *
- * Watch side adds {@link #fromFields(String, String, String)} for the
- * post-intent-parse path that never needs JSON decode.
+ * Deliberate duplicate of the phone-side {@code com.voice2sms.wear.WearPayloadValidator}.
+ * The two files must stay lockstep — SourceSafetyTest guards the shared constants,
+ * regexes, and error codes.
  */
 public final class WearPayloadValidator {
 
     static final int MAX_PAYLOAD_BYTES = 8192;
+    /** SMS concat tops out around 1530 GSM chars; 1600 leaves headroom. */
     static final int MAX_BODY_LEN = 1600;
     static final Pattern PHONE_RE = Pattern.compile("^\\+?[0-9]{7,15}$");
     static final Pattern REQUEST_ID_RE = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
 
-    private WearPayloadValidator() { /* static only */ }
+    private WearPayloadValidator() {}
 
     public static final class ValidationException extends Exception {
         public ValidationException(String reason) { super(reason); }
@@ -42,7 +36,7 @@ public final class WearPayloadValidator {
         }
     }
 
-    /** JSON-payload entrypoint (parity with the phone-side validator, used by tests). */
+    /** JSON-payload entrypoint, kept for parity with the phone-side validator. */
     public static Request parse(byte[] payload) throws ValidationException {
         if (payload == null || payload.length == 0) {
             throw new ValidationException("empty_payload");
@@ -58,43 +52,35 @@ public final class WearPayloadValidator {
             throw new ValidationException("malformed_json");
         }
 
-        String phone = optNonEmpty(obj, "phone");
-        if (phone == null) throw new ValidationException("missing_phone");
-        if (!PHONE_RE.matcher(phone).matches()) throw new ValidationException("invalid_phone");
-
-        String rawBody = obj.optString("body", null);
-        if (rawBody == null) throw new ValidationException("missing_body");
-        String body = sanitizeBody(rawBody);
-        if (body.isEmpty()) throw new ValidationException("empty_body");
-        if (body.length() > MAX_BODY_LEN) throw new ValidationException("body_too_long");
-
-        String requestId = optNonEmpty(obj, "requestId");
-        if (requestId == null) throw new ValidationException("missing_requestId");
-        if (!REQUEST_ID_RE.matcher(requestId).matches()) throw new ValidationException("invalid_requestId");
-
-        return new Request(phone, body, requestId);
+        return validateFields(
+                optNonEmpty(obj, "phone"),
+                obj.optString("body", null),
+                optNonEmpty(obj, "requestId"));
     }
 
-    /**
-     * Builds a Request from already-separated fields. Used on the watch side
-     * after the intent has been parsed — we already have phone/body/requestId
-     * and want the same validation rules without the JSON decode step.
-     */
+    /** Watch-side entrypoint: fields are already separated, skip the JSON decode. */
     public static Request fromFields(String phone, String body, String requestId)
             throws ValidationException {
-        if (phone == null || phone.trim().isEmpty()) throw new ValidationException("missing_phone");
-        String p = phone.trim();
-        if (!PHONE_RE.matcher(p).matches()) throw new ValidationException("invalid_phone");
+        return validateFields(
+                phone == null ? null : phone.trim(),
+                body,
+                requestId);
+    }
+
+    private static Request validateFields(String phone, String body, String requestId)
+            throws ValidationException {
+        if (phone == null || phone.isEmpty()) throw new ValidationException("missing_phone");
+        if (!PHONE_RE.matcher(phone).matches()) throw new ValidationException("invalid_phone");
 
         if (body == null) throw new ValidationException("missing_body");
         String sanitized = sanitizeBody(body);
         if (sanitized.isEmpty()) throw new ValidationException("empty_body");
         if (sanitized.length() > MAX_BODY_LEN) throw new ValidationException("body_too_long");
 
-        if (requestId == null) throw new ValidationException("missing_requestId");
+        if (requestId == null || requestId.isEmpty()) throw new ValidationException("missing_requestId");
         if (!REQUEST_ID_RE.matcher(requestId).matches()) throw new ValidationException("invalid_requestId");
 
-        return new Request(p, sanitized, requestId);
+        return new Request(phone, sanitized, requestId);
     }
 
     private static String optNonEmpty(JSONObject obj, String key) {
@@ -104,6 +90,11 @@ public final class WearPayloadValidator {
         return v.isEmpty() ? null : v;
     }
 
+    /**
+     * Strips ASCII control chars (except tab/LF/CR), DEL, and Unicode bidi
+     * override codepoints (U+202A-202E, U+2066-2069) that could hide intent
+     * from a human reviewer.
+     */
     public static String sanitizeBody(String body) {
         if (body == null) return "";
         StringBuilder sb = new StringBuilder(body.length());

@@ -34,14 +34,12 @@ public class SourceSafetyTest {
     private static final Path WEAR_MODULE = Paths.get("..", "wear");
 
     private String read(String relative) throws IOException {
-        Path p = MAIN.resolve(relative);
-        assertTrue("source file missing: " + p, Files.exists(p));
-        return new String(Files.readAllBytes(p));
+        return read(MAIN, relative);
     }
 
-    private String readWear(String relative) throws IOException {
-        Path p = WEAR_MODULE.resolve(relative);
-        assertTrue("wear source missing: " + p, Files.exists(p));
+    private String read(Path base, String relative) throws IOException {
+        Path p = base.resolve(relative);
+        assertTrue("source file missing: " + p, Files.exists(p));
         return new String(Files.readAllBytes(p));
     }
 
@@ -339,13 +337,13 @@ public class SourceSafetyTest {
      */
     @Test
     public void wear_sendToReceiver_isNoDisplayTrampoline() throws IOException {
-        String manifest = readWear("src/main/AndroidManifest.xml");
+        String manifest = read(WEAR_MODULE, "src/main/AndroidManifest.xml");
         assertTrue(
                 "SendToReceiverActivity manifest entry must set Theme.NoDisplay",
                 manifest.contains("SendToReceiverActivity")
                         && manifest.contains("Theme.NoDisplay"));
 
-        String src = stripComments(readWear(
+        String src = stripComments(read(WEAR_MODULE,
                 "src/main/java/com/voice2sms/wear/SendToReceiverActivity.java"));
         assertTrue(
                 "SendToReceiverActivity must call finish() in onCreate to avoid lingering UI",
@@ -369,7 +367,7 @@ public class SourceSafetyTest {
      */
     @Test
     public void wear_manifest_declaresStandalone() throws IOException {
-        String manifest = readWear("src/main/AndroidManifest.xml");
+        String manifest = read(WEAR_MODULE, "src/main/AndroidManifest.xml");
         assertTrue(
                 "Wear manifest missing android.hardware.type.watch uses-feature",
                 manifest.contains("android.hardware.type.watch"));
@@ -386,7 +384,7 @@ public class SourceSafetyTest {
      */
     @Test
     public void wear_manifest_declaresSendtoFilter() throws IOException {
-        String manifest = readWear("src/main/AndroidManifest.xml");
+        String manifest = read(WEAR_MODULE, "src/main/AndroidManifest.xml");
         assertTrue(
                 "Wear manifest must declare ACTION_SENDTO intent filter",
                 manifest.contains("android.intent.action.SENDTO"));
@@ -435,7 +433,7 @@ public class SourceSafetyTest {
     @Test
     public void wear_validator_mirrorsPhoneSideRules() throws IOException {
         String phone = stripComments(read("wear/WearPayloadValidator.java"));
-        String watch = stripComments(readWear(
+        String watch = stripComments(read(WEAR_MODULE,
                 "src/main/java/com/voice2sms/wear/WearPayloadValidator.java"));
 
         for (String shared : new String[]{
@@ -458,6 +456,26 @@ public class SourceSafetyTest {
         assertTrue(
                 "watch-side WearPayloadValidator must expose fromFields(...)",
                 watch.contains("public static Request fromFields("));
+    }
+
+    /**
+     * The DataLayer path literal is the sole coordination point between phone and
+     * watch — a typo on either side silently partitions the protocol (data arrives
+     * on a path nobody is listening to). Constant can't be shared via a module
+     * dependency since :wear is standalone, so guard both literals textually.
+     */
+    @Test
+    public void wear_pathPrefix_matchesPhoneSide() throws IOException {
+        String phoneService = read("wear/WearSmsListenerService.java");
+        String watchActivity = read(WEAR_MODULE,
+                "src/main/java/com/voice2sms/wear/SendToReceiverActivity.java");
+        String path = "\"/voice2sms/requests/\"";
+        assertTrue(
+                "phone WearSmsListenerService lost the /voice2sms/requests/ path literal",
+                phoneService.contains(path));
+        assertTrue(
+                "watch SendToReceiverActivity lost the /voice2sms/requests/ path literal",
+                watchActivity.contains(path));
     }
 
     // --- helpers ---

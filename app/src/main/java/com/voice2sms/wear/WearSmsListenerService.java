@@ -195,11 +195,12 @@ public class WearSmsListenerService extends WearableListenerService {
     // =================================================================
 
     private void postSendNotification(WearPayloadValidator.Request req, Intent contentIntent) {
+        if (!androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+                .getBoolean("show_autosend_notification", true)) return;
+
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (nm == null) return;
 
-        // Android 13+: without POST_NOTIFICATIONS granted, nm.notify() silently no-ops,
-        // which would defeat the BAL fallback. Fail loudly in logcat so triage can see it.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -220,7 +221,7 @@ public class WearSmsListenerService extends WearableListenerService {
 
         Notification notif = new NotificationCompat.Builder(this, NOTIF_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.sym_action_chat)
-                .setContentTitle("Send via Google Voice")
+                .setContentTitle("Sent via Google Voice")
                 .setContentText(preview)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)

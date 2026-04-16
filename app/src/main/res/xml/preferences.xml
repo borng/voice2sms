@@ -32,11 +32,12 @@
             android:summary="Reopen the first-install setup guide" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="Auto-Send">
-        <Preference
-            android:key="auto_send_disabled"
-            android:title="Auto-send messages"
-            android:summary="Currently disabled" />
+    <PreferenceCategory android:title="Notifications">
+        <SwitchPreferenceCompat
+            android:key="show_autosend_notification"
+            android:title="Auto-send confirmation"
+            android:summary="Show a notification when a message is auto-sent"
+            android:defaultValue="true" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="About">
