@@ -106,7 +106,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release/voice2sms-v${{ steps.version.outputs.tag }}.apk
