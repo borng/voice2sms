@@ -84,5 +84,5 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     // org.json for unit-testing WearPayloadValidator off-device. Android ships the same
     // classes at runtime; using org.json in tests keeps validation logic JVM-testable.
-    testImplementation 'org.json:json:20231013'
+    testImplementation 'org.json:json:20251224'
 }
