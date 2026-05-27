@@ -146,6 +146,14 @@ public class SmsReceiver extends BroadcastReceiver {
     }
 
     private void postNotification(Context ctx, String address, String body) {
+        // User-facing opt-out. Default on so 2FA codes etc. surface live; toggling
+        // off keeps persistence (inbox row already written above) and just
+        // suppresses the heads-up.
+        if (!androidx.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+                .getBoolean("incoming_sms_notify", true)) {
+            return;
+        }
+
         // POST_NOTIFICATIONS is a runtime permission on Android 13+. We declare it
         // in the manifest; if the user hasn't granted it we silently skip — the
         // inbox row still got persisted so nothing is lost, just no live alert.
