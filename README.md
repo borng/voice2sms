@@ -180,7 +180,7 @@ MIT License. See [LICENSE](LICENSE).
 
 ### v1.5.1
 
-Incoming SMS no longer black-holed.
+Incoming SMS no longer black-holed + global auto-send rate limit.
 
 - Default SMS app now persists incoming carrier SMS to `content://sms` and posts
   a heads-up notification (BigTextStyle) — previously `SmsReceiver` was a no-op
@@ -190,6 +190,11 @@ Incoming SMS no longer black-holed.
   them; without this the corresponding appops stayed at the system default
   `ignore`, dropping `SMS_DELIVER` before the receiver could run
 - New "Incoming SMS notifications" setting (default on)
+- Global auto-send rate limiter (10 sends / 60s) covers every path — Gemini
+  interception, Wear companion, RESPOND_VIA_MESSAGE. On rate-limit hit the
+  composer still opens prefilled but skips the auto-send; a toast tells the
+  user to review and send manually. Wear's per-node limit (10/min/node) stays
+  as a separate layer.
 - MMS receive is still a known gap — `MmsReceiver` stays a no-op
 
 ### v1.5.0
