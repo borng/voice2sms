@@ -1,7 +1,10 @@
 package com.voice2sms;
 
 import android.app.Application;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.MutableContextWrapper;
+import android.os.Build;
 import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
@@ -38,6 +41,33 @@ public class Voice2SmsApplication extends Application {
 
         // Warm up renderer process (prefetch disabled — causes NPE race, see warmUpRenderer)
         warmUpRenderer();
+
+        // Notification channels (no-op pre-O). Created in Application.onCreate so
+        // they exist before the first SMS_DELIVER broadcast arrives — channels are
+        // sticky once registered, so this is cheap on subsequent launches.
+        ensureNotificationChannels();
+    }
+
+    /**
+     * Create static notification channels. Sticky after first creation, so callers
+     * don't need to re-create per notification.
+     *
+     * Channel: {@code incoming_sms} — used by {@link SmsReceiver} for every
+     * incoming text. Importance HIGH so 2FA OTPs heads-up.
+     */
+    private void ensureNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm == null) return;
+        if (nm.getNotificationChannel(SmsReceiver.NOTIF_CHANNEL_ID) == null) {
+            NotificationChannel ch = new NotificationChannel(
+                    SmsReceiver.NOTIF_CHANNEL_ID,
+                    "Incoming SMS",
+                    NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription(
+                    "Notifies on incoming text messages while Voice2SMS is the default SMS app.");
+            nm.createNotificationChannel(ch);
+        }
     }
 
     /**

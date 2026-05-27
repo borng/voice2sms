@@ -19,6 +19,16 @@ Voice2SMS registers as the default SMS app and intercepts all SMS intents. Inste
 - **Quick-reply from notifications**
 - **Gemini's Send button and voice confirmations** (with optional AccessibilityService)
 
+### What it handles inbound
+
+While Voice2SMS is the default SMS app, **incoming carrier SMS** are persisted to
+the system message store (`content://sms`) and surfaced as a heads-up notification
+(BigTextStyle, useful for copying 2FA codes). Persisting to the system store means
+your texts survive a future switch back to Google Messages — Messages reads from
+the same provider. Toggle the notification off in Settings if you don't want it.
+**MMS is currently not handled** — picture/group/long-MMS messages are dropped
+while Voice2SMS is default.
+
 ## How It Works
 
 ```
@@ -69,9 +79,16 @@ adb install voice2sms-v*.apk
 ```
 
 Open the app and:
-1. Grant "Default SMS app" role when prompted
+1. Grant "Default SMS app" role when prompted — this also auto-grants the SMS
+   permissions Voice2SMS needs to persist incoming texts and post notifications
 2. Sign into your Google account (one-time; cookies persist)
 3. Test by sending an SMS from contacts or any app that fires `sms:` intents
+
+> **Upgrading from v1.5.0 or earlier?** Earlier builds did not declare the SMS
+> permissions in the manifest, so incoming SMS were silently dropped. After
+> updating, if you still don't see inbound notifications, briefly switch the
+> default SMS app to something else and back to Voice2SMS — this refreshes the
+> role grant and clears the cached "permission ignored" appop state.
 
 ### Watch (optional)
 
@@ -105,6 +122,7 @@ The ADB commands persist across reboots.
 
 - **Gemini auto-send** — Automatically send intercepted Gemini SMS (vs. opening for review)
 - **Auto-send confirmation** — Show a "Sent via Google Voice" notification on auto-sends
+- **Incoming SMS notifications** — Show a heads-up notification for every received SMS (default on; useful for 2FA codes). Toggling off leaves the inbox-persistence path intact — only the live notification is suppressed.
 
 ## Tested On
 
@@ -159,6 +177,25 @@ This project relies on internal details of Google Voice's web UI (Angular compon
 MIT License. See [LICENSE](LICENSE).
 
 ## Version History
+
+### v1.5.1
+
+Incoming SMS no longer black-holed + global auto-send rate limit.
+
+- Default SMS app now persists incoming carrier SMS to `content://sms` and posts
+  a heads-up notification (BigTextStyle) — previously `SmsReceiver` was a no-op
+  stub that silently dropped every inbound text while Voice2SMS was default
+- Manifest now declares the SMS permissions (`RECEIVE_SMS`, `RECEIVE_MMS`,
+  `RECEIVE_WAP_PUSH`, `READ_SMS`, `SEND_SMS`) so the SMS role can auto-grant
+  them; without this the corresponding appops stayed at the system default
+  `ignore`, dropping `SMS_DELIVER` before the receiver could run
+- New "Incoming SMS notifications" setting (default on)
+- Global auto-send rate limiter (10 sends / 60s) covers every path — Gemini
+  interception, Wear companion, RESPOND_VIA_MESSAGE. On rate-limit hit the
+  composer still opens prefilled but skips the auto-send; a toast tells the
+  user to review and send manually. Wear's per-node limit (10/min/node) stays
+  as a separate layer.
+- MMS receive is still a known gap — `MmsReceiver` stays a no-op
 
 ### v1.5.0
 
