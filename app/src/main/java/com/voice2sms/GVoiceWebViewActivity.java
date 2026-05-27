@@ -376,6 +376,20 @@ public class GVoiceWebViewActivity extends Activity {
         boolean autoSend = getIntent().getBooleanExtra("force_auto_send", false);
         int autoSendDelay = prefs.getInt("auto_send_delay", 2) * 1000;
 
+        // Global auto-send rate limit (single chokepoint for Gemini, Wear,
+        // RESPOND_VIA_MESSAGE, and any future auto-send origin). When hit, fall
+        // through to manual review — the composer still opens prefilled, but
+        // doesn't fire the inject.js send sequence. Toast tells the user why.
+        if (autoSend && !AutoSendRateLimiter.allow()) {
+            Log.w(TAG, "Auto-send rate limit hit (" + AutoSendRateLimiter.recentCount()
+                    + "/" + AutoSendRateLimiter.MAX_PER_WINDOW + " in window) — falling back to manual review");
+            android.widget.Toast.makeText(this,
+                    "Auto-send rate limit (" + AutoSendRateLimiter.MAX_PER_WINDOW
+                            + "/min) — review and send manually",
+                    android.widget.Toast.LENGTH_LONG).show();
+            autoSend = false;
+        }
+
         try {
             InputStream is = getAssets().open("inject.js");
             BufferedReader reader = new BufferedReader(new InputStreamReader(is));

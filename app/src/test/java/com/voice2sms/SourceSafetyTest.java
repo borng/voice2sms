@@ -304,6 +304,34 @@ public class SourceSafetyTest {
     }
 
     /**
+     * Every auto-send path (Gemini, Wear, RESPOND_VIA_MESSAGE, future scheduled
+     * send) eventually lands in GVoiceWebViewActivity.injectComposer with
+     * force_auto_send=true. That method is the single chokepoint where the
+     * global rate limiter must consult AutoSendRateLimiter.allow() — otherwise
+     * a runaway sender (buggy accessibility match, repeating watch request,
+     * stuck retry loop) could fire SMS without bound. Don't add a new auto-send
+     * code path without keeping this chokepoint honest.
+     */
+    @Test
+    public void injectComposer_consultsAutoSendRateLimiter() throws IOException {
+        String src = stripComments(read("GVoiceWebViewActivity.java"));
+        // The check must read force_auto_send AND gate the resulting auto-send
+        // through AutoSendRateLimiter.allow() — bare existence of the symbol
+        // isn't enough if someone later moves the check past the JS injection.
+        int forceAutoSendIdx = src.indexOf("force_auto_send");
+        int limiterIdx = src.indexOf("AutoSendRateLimiter.allow()");
+        assertTrue("GVoiceWebViewActivity must read force_auto_send", forceAutoSendIdx >= 0);
+        assertTrue(
+                "GVoiceWebViewActivity.injectComposer must consult "
+                        + "AutoSendRateLimiter.allow() so every auto-send origin is rate-limited",
+                limiterIdx >= 0);
+        assertTrue(
+                "AutoSendRateLimiter.allow() must be invoked AFTER reading "
+                        + "force_auto_send so a rate-limited send can downgrade autoSend=false",
+                limiterIdx > forceAutoSendIdx);
+    }
+
+    /**
      * SettingsActivity surfaces version / build / commit / date for bug-report
      * triage. The build.gradle injects GIT_SHA and BUILD_DATE as BuildConfig
      * fields — if someone deletes the gradle lines without updating the
