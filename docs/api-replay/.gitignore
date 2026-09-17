@@ -1,0 +1,4 @@
+# Raw HARs contain cookies + SAPISID — never commit
+*.har
+# Exception: sanitized copies are committed
+!*.sanitized.har
