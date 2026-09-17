@@ -64,9 +64,12 @@ paths, and the auth callback — don't hide it behind a wrapper.
 - Shizuku integration to replace ADB commands with in-app API calls
 - `SmsDeliverService`/`SendStatusReceiver` for deeper SMS routing control
 
+### Shipped (was backlog)
+
+- **GBoard sticker support in WebView** — shipped in v1.3.0 (`RichContentWebView` + `OnReceiveContentListener` + JS file-input injection). The `feature/gboard-sticker-bridge` branch is fully merged into `main`; the branch name carries nothing extra.
+
 ### Feature Backlog (Researched)
 
 - **Scheduled messaging with conditional send** — `AlarmManager.setAlarmClock()` + Room DB + three-layer change detection. Novel "auto-hold if conversation changed" feature.
-- **GBoard sticker support in WebView** — Implemented on `feature/gboard-sticker-bridge`. RichContentWebView subclass + commitContent interception + JS file input injection.
 - **API Replay hybrid (protobuf-over-HTTP)** — Send SMS via GV's internal API using WebView session cookies. Faster, less brittle for auto-send. Keep WebView for auth + review mode.
 - **Emulator smoke test in CI** — run `tests/smoke/test-sms-intent.sh` against a `reactivecircus/android-emulator-runner@v2` Pixel on API 34 as a third job in `ci.yml` / `release.yml`. Adds ~4-5 min/run; skipped for now to keep PR feedback fast. Trade-off: real on-device smoke test stays manual until added.
