@@ -38,6 +38,11 @@
             android:title="Auto-send confirmation"
             android:summary="Show a notification when a message is auto-sent"
             android:defaultValue="true" />
+        <SwitchPreferenceCompat
+            android:key="incoming_sms_notify"
+            android:title="Incoming SMS notifications"
+            android:summary="Show a heads-up notification for every received SMS — useful for 2FA codes"
+            android:defaultValue="true" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="About">

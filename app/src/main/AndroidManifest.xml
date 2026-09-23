@@ -10,6 +10,21 @@
          so a missing permission degrades gracefully instead of crashing. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Default-SMS-app permissions. These are auto-granted (GRANTED_BY_ROLE) when
+         Voice2SMS holds android.app.role.SMS, but they MUST be declared here for
+         the role grant to apply — otherwise the corresponding appops stay at the
+         system default ("ignore"), which silently drops SMS_DELIVER before our
+         SmsReceiver runs. Without these the carrier ACKs the message, the
+         platform's raw-table row is cleared, and the SMS is permanently lost.
+         Discovered 2026-05-27: prior versions declared none of these because
+         Voice2SMS was send-only; the receiver stubs only existed to make the
+         app appear in the default-SMS-app picker. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
+    <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+
     <application
         android:name=".Voice2SmsApplication"
         android:allowBackup="true"

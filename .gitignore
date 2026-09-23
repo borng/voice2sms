@@ -32,3 +32,7 @@ STARTUP-OPTIMIZATION.md
 benchmark*.sh
 setup-github-secrets.sh
 .claude-octopus/
+# Plans and research notes stay local (carried in the handoff copy, not the repo)
+API-REPLAY-PLAN.md
+docs/research/
+.playwright-mcp/
