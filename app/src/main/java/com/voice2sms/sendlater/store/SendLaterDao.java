@@ -35,6 +35,11 @@ public interface SendLaterDao {
     @Query("SELECT * FROM scheduled_message WHERE status = :status ORDER BY scheduledFor, id")
     List<ScheduledMessageEntity> byStatus(String status);
 
+    /** UI M2 dedupe candidates: live rows for {@code e164} created at or after {@code sinceMs}, newest first. */
+    @Query("SELECT * FROM scheduled_message WHERE recipientE164 = :e164 AND createdAt >= :sinceMs "
+            + "AND status IN (:statuses) ORDER BY createdAt DESC, id DESC")
+    List<ScheduledMessageEntity> recentForRecipient(String e164, long sinceMs, List<String> statuses);
+
     @Query("SELECT * FROM scheduled_message WHERE status IN (:statuses) AND updatedAt >= :sinceMs ORDER BY updatedAt DESC, id DESC")
     List<ScheduledMessageEntity> byStatusesUpdatedSince(List<String> statuses, long sinceMs);
 

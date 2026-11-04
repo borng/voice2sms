@@ -11,8 +11,12 @@
     <string name="sendlater_sheet_pick_datetime">Pick date &amp; time ›</string>
     <string name="sendlater_sheet_picked">Picked: %1$s</string>
     <string name="sendlater_sheet_hold">Hold if they text first</string>
+    <!-- OD31 PQ6: TalkBack only; the visible label stays short. -->
+    <string name="sendlater_sheet_hold_desc">Hold if they text first. If they text you before the send time, a notification asks you first.</string>
     <string name="sendlater_sheet_if_late">If late</string>
     <string name="sendlater_sheet_if_late_default">Automatic (default)</string>
+    <!-- OD31 PQ5: %1$s is this message's budget, e.g. "10 min" or "2 h". -->
+    <string name="sendlater_sheet_if_late_default_budget">Automatic: sends up to %1$s late</string>
     <string name="sendlater_sheet_if_late_30">Send if within 30 min</string>
     <string name="sendlater_sheet_if_late_never">Never send late</string>
     <string name="sendlater_sheet_if_late_anyway">Send anyway (up to 24 h)</string>

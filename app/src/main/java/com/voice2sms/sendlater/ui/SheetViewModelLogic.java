@@ -1,8 +1,10 @@
 package com.voice2sms.sendlater.ui;
 
+import com.voice2sms.sendlater.domain.LatenessBudget;
 import com.voice2sms.sendlater.domain.LatenessPolicy;
 import com.voice2sms.sendlater.domain.PresetSlots;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
+import com.voice2sms.sendlater.domain.Watermark;
 import com.voice2sms.sendlater.voice.logic.PhoneNumbers;
 import com.voice2sms.sendlater.voice.logic.RecipientResolver;
 
@@ -46,6 +48,8 @@ public final class SheetViewModelLogic {
     private int selectedPresetIndex;
     private boolean holdIfReplied;
     private LatenessPolicy latenessPolicy = LatenessPolicy.DEFAULT;
+    /** Edit mode: the stored createdAt, the base of the lateness budget (never changes on edit). */
+    private long storedCreatedAtMs = -1L;
 
     private SheetViewModelLogic(boolean editMode, long nowMs, TimeZone zone, int[] slotMinutes,
                                 RecipientState state, String e164, List<String> candidates) {
@@ -102,6 +106,7 @@ public final class SheetViewModelLogic {
         m.holdIfReplied = existing.isHoldIfReplied();
         m.latenessPolicy = existing.getLatenessPolicy() != null
                 ? existing.getLatenessPolicy() : LatenessPolicy.DEFAULT;
+        m.storedCreatedAtMs = existing.getCreatedAt();
         m.selectedTimeMs = existing.getScheduledFor();
         m.selectedPresetIndex = m.indexOfPreset(existing.getScheduledFor());
         return m;
@@ -240,4 +245,32 @@ public final class SheetViewModelLogic {
     public LatenessPolicy getLatenessPolicy() { return latenessPolicy; }
 
     public void setLatenessPolicy(LatenessPolicy p) { if (p != null) latenessPolicy = p; }
+
+    /**
+     * OD31 PQ5: the "Automatic" budget for this message at the selected time. Capture mode measures
+     * the lead time from {@code nowMs} (the record's createdAt is the Schedule tap); edit mode from
+     * the stored createdAt, which a reschedule keeps (same rule as {@link LatenessBudget#budgetMs}).
+     */
+    public long automaticBudgetMs(long nowMs) {
+        long base = editMode && storedCreatedAtMs > 0 ? storedCreatedAtMs : nowMs;
+        return LatenessBudget.budgetMs(selectedTimeMs - base, LatenessPolicy.DEFAULT);
+    }
+
+    /** "10 min", "30 min", "2 h" (whole hours as hours, else minutes; never below 1 min). */
+    public static String budgetPhrase(long budgetMs) {
+        long min = Math.max(1L, (budgetMs + LatenessBudget.MINUTE_MS / 2) / LatenessBudget.MINUTE_MS);
+        if (min >= 60 && min % 60 == 0) return (min / 60) + " h";
+        return min + " min";
+    }
+
+    // ------------------------------------------------------------------ edit baseline (OD31 P2)
+
+    /**
+     * Whole-branch M2 / OD31 P2: every time edit (SCHEDULED or HELD) takes a fresh reply baseline,
+     * DEVICE_ONLY at {@code nowMs}, exactly like Snooze. The repository keeps the original
+     * watermark as the self-preemption baseline (OD22(1)).
+     */
+    public static Watermark editBaseline(long nowMs) {
+        return new Watermark(Watermark.Quality.DEVICE_ONLY, null, null, null, nowMs, null);
+    }
 }
