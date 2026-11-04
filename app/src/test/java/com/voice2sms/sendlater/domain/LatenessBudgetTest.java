@@ -43,8 +43,11 @@ public class LatenessBudgetTest {
     }
 
     @Test
-    public void sendAnyway_isUnbounded() {
+    public void sendAnyway_isCappedAt24Hours() {
+        // Orchestrator ruling 2026-11-04 (OD14, I2): the "Send anyway" late policy is UP_TO_24H,
+        // never unbounded. A tap on "Send anyway" in a hold notification bypasses the budget separately.
         long b = LatenessBudget.budgetMs(5 * MIN, LatenessPolicy.SEND_ANYWAY);
-        assertTrue("send-anyway budget must exceed any realistic delay, was " + b, b >= 365 * DAY);
+        assertTrue("send-anyway budget must be 24 h, was " + b, b == 24 * 60 * MIN);
+        assertTrue(LatenessBudget.budgetMs(5 * MIN, LatenessPolicy.UP_TO_24H) == 24 * 60 * MIN);
     }
 }
