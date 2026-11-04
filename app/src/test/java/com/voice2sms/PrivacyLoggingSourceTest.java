@@ -273,6 +273,8 @@ public class PrivacyLoggingSourceTest {
         org.junit.Assert.assertTrue("onConsoleMessage not found", i > 0);
         String body = src.substring(i, src.indexOf("return super.onConsoleMessage", i));
         org.junit.Assert.assertTrue("console relay must be guarded by BuildConfig.DEBUG",
-                body.contains("BuildConfig.DEBUG"));
+                body.contains("if (BuildConfig.DEBUG) Log.d(TAG, \"JS: \""));
+        org.junit.Assert.assertTrue("[Voice2SMS] console lines must be consumed (return true) so "
+                + "Chromium does not log them", body.contains("return true;"));
     }
 }

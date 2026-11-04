@@ -117,9 +117,11 @@ public class GVoiceWebViewActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
-                // I7: inject.js console lines carry recipient numbers; relay them only in debug builds.
-                if (BuildConfig.DEBUG && cm.message() != null && cm.message().contains("[Voice2SMS]")) {
-                    Log.d(TAG, "JS: " + cm.message());
+                // I7: inject.js console lines carry recipient numbers. Relay them only in debug
+                // builds, and consume them in every build so Chromium does not log them itself.
+                if (cm.message() != null && cm.message().contains("[Voice2SMS]")) {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "JS: " + cm.message());
+                    return true;
                 }
                 return super.onConsoleMessage(cm);
             }
