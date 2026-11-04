@@ -8,11 +8,19 @@
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowSoftInputMode">adjustResize</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="colorPrimary">@color/sendlater_accent</item>
-        <item name="colorOnPrimary">@color/sendlater_on_accent</item>
-        <item name="colorSecondary">@color/sendlater_accent</item>
-        <item name="colorOnSecondary">@color/sendlater_on_accent</item>
+        <!-- UI M3: primary is the text-safe accent (dark blue in light mode, light blue at night);
+             it colours text buttons, hints and the date/time pickers. -->
+        <item name="colorPrimary">@color/sendlater_accent_text</item>
+        <item name="colorOnPrimary">@color/sendlater_on_accent_text</item>
+        <item name="colorSecondary">@color/sendlater_accent_text</item>
+        <item name="colorOnSecondary">@color/sendlater_on_accent_text</item>
         <item name="colorPrimaryContainer">@color/sendlater_accent</item>
         <item name="colorOnPrimaryContainer">@color/sendlater_on_accent</item>
+    </style>
+
+    <!-- UI M3: the filled Schedule button keeps the light-blue fill with dark text (about 8:1). -->
+    <style name="ThemeOverlay.SendLater.FilledAccent" parent="">
+        <item name="colorPrimary">@color/sendlater_accent</item>
+        <item name="colorOnPrimary">@color/sendlater_on_accent</item>
     </style>
 </resources>

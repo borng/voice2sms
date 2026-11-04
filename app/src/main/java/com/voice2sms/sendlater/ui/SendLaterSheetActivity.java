@@ -96,6 +96,9 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     private Button pickDateTime;
     private CheckBox holdCheckbox;
     private Spinner ifLate;
+    private ArrayAdapter<String> ifLateAdapter;
+    private final List<String> ifLateLabels = new ArrayList<>();
+    private List<LatenessPolicy> ifLateOptions = new ArrayList<>();
     private TextView notifHint;
     private TextView error;
     private Button scheduleButton;
@@ -130,6 +133,13 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         Intent intent = getIntent();
         String action = intent != null ? intent.getAction() : null;
         if (SendLaterIntents.ACTION_CAPTURE.equals(action)) {
+            // UI M2: a second capture while one sheet is open closes at once (no second record).
+            if (savedInstanceState != null) {
+                CaptureSheetGuard.takeOver(this);
+            } else if (!CaptureSheetGuard.tryAcquire(this)) {
+                finish();
+                return;
+            }
             setupCapture(intent);
         } else if (SendLaterIntents.ACTION_EDIT.equals(action)) {
             setupEdit(intent.getLongExtra(SendLaterIntents.EXTRA_MESSAGE_ID, -1L));
@@ -140,6 +150,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        CaptureSheetGuard.release(this);
         io.shutdown(); // a persist already running still completes (and broadcasts) on its own.
         super.onDestroy();
     }
@@ -347,11 +358,13 @@ public class SendLaterSheetActivity extends AppCompatActivity {
             holdCheckbox.setChecked(logic.isHoldIfReplied());
 
             final List<LatenessPolicy> options = logic.getIfLateOptions();
-            List<String> labels = new ArrayList<>();
-            for (LatenessPolicy p : options) labels.add(getString(ifLateLabel(p)));
+            ifLateOptions = options;
+            ifLateLabels.clear();
+            for (LatenessPolicy p : options) ifLateLabels.add(ifLateLabel(p));
             ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                    android.R.layout.simple_spinner_item, labels);
+                    android.R.layout.simple_spinner_item, ifLateLabels);
             adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            ifLateAdapter = adapter;
             ifLate.setAdapter(adapter);
             ifLate.setSelection(Math.max(0, options.indexOf(logic.getLatenessPolicy())), false);
             ifLate.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -374,13 +387,29 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         render();
     }
 
-    private static int ifLateLabel(LatenessPolicy p) {
+    /** The row label; "Automatic" names its budget for this message at the selected time (OD31 PQ5). */
+    private String ifLateLabel(LatenessPolicy p) {
         switch (p) {
-            case WITHIN_30_MIN: return R.string.sendlater_sheet_if_late_30;
-            case NEVER_LATE: return R.string.sendlater_sheet_if_late_never;
-            case UP_TO_24H: return R.string.sendlater_sheet_if_late_anyway;
+            case WITHIN_30_MIN: return getString(R.string.sendlater_sheet_if_late_30);
+            case NEVER_LATE: return getString(R.string.sendlater_sheet_if_late_never);
+            case UP_TO_24H: return getString(R.string.sendlater_sheet_if_late_anyway);
             case DEFAULT:
-            default: return R.string.sendlater_sheet_if_late_default;
+            default:
+                return getString(R.string.sendlater_sheet_if_late_default_budget,
+                        SheetViewModelLogic.budgetPhrase(
+                                logic.automaticBudgetMs(System.currentTimeMillis())));
+        }
+    }
+
+    /** Re-labels "Automatic" when the selected time moves its budget (render). */
+    private void refreshIfLateLabels() {
+        if (ifLateAdapter == null) return;
+        int i = ifLateOptions.indexOf(LatenessPolicy.DEFAULT);
+        if (i < 0 || i >= ifLateLabels.size()) return;
+        String label = ifLateLabel(LatenessPolicy.DEFAULT);
+        if (!label.equals(ifLateLabels.get(i))) {
+            ifLateLabels.set(i, label);
+            ifLateAdapter.notifyDataSetChanged();
         }
     }
 
@@ -419,6 +448,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
             }
             scheduleButton.setEnabled(!busy && editable && logic.isScheduleEnabled() && !isDraftEmpty());
             cancelButton.setEnabled(!busy);
+            refreshIfLateLabels();
         } finally {
             binding = false;
         }
@@ -617,6 +647,14 @@ public class SendLaterSheetActivity extends AppCompatActivity {
             return;
         }
         ScheduledMessage stored = msg.toBuilder().id(id).build();
+        if (isExistingCapture(app, id, msg)) {
+            // UI M2: the repository returned the record an identical capture saved seconds ago.
+            // That sheet armed it and announced it; this one just closes.
+            runOnUiThread(() -> {
+                if (!isFinishing()) finish();
+            });
+            return;
+        }
         try {
             SendLaterScheduler.get(app).registerAlarms(stored);
         } catch (RuntimeException e) {
@@ -635,6 +673,19 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         runOnUiThread(() -> {
             if (!isFinishing()) finish();
         });
+    }
+
+    /**
+     * Worker thread. True when {@code id} is an earlier record (UI M2 dedupe): its createdAt is not
+     * this capture's. A failed read counts as new, so the normal arm-and-announce runs.
+     */
+    private static boolean isExistingCapture(Context app, long id, ScheduledMessage mine) {
+        try {
+            ScheduledMessage row = SendLaterRepository.get(app).get(id);
+            return row != null && row.getCreatedAt() != mine.getCreatedAt();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /** UI thread. Inline error; the sheet stays open and nothing else is touched (R21). */
@@ -661,7 +712,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         setBusy(true);
         io.execute(() -> {
             try {
-                updateArmAndAnnounce(id, when, hold, policy);
+                updateArmAndAnnounce(id, when, hold, policy, SheetViewModelLogic.editBaseline(now));
             } catch (RuntimeException e) {
                 // OD22(8): a DB or notification error shows the persist error; the sheet stays open.
                 Log.w(TAG, "update failed: " + e.getClass().getSimpleName());
@@ -670,10 +721,14 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         });
     }
 
-    /** Worker thread. Throws on a store or notification failure (caught by {@link #onUpdate}). */
-    private void updateArmAndAnnounce(long id, long when, boolean hold, LatenessPolicy policy) {
+    /**
+     * Worker thread. Throws on a store or notification failure (caught by {@link #onUpdate}).
+     * {@code baseline} is the fresh reply baseline every time edit takes (OD31 P2, whole-branch M2).
+     */
+    private void updateArmAndAnnounce(long id, long when, boolean hold, LatenessPolicy policy,
+                                      Watermark baseline) {
         SendLaterRepository repo = SendLaterRepository.get(app);
-        boolean ok = repo.reschedule(id, when, hold, policy, null);
+        boolean ok = repo.reschedule(id, when, hold, policy, baseline);
         if (!ok) {
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;

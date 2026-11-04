@@ -35,6 +35,12 @@ public final class SendLaterRepository {
     static final List<String> TERMINAL = names(Status.SENT_VERIFIED, Status.CANCELED,
             Status.SELF_PREEMPTED, Status.EXPIRED, Status.FAILED);
 
+    /**
+     * UI M2: a capture identical to a live one (same e164, text and source) saved this recently is
+     * the same tap twice; {@link #schedule} returns the existing id instead of a second row.
+     */
+    public static final long DEDUPE_WINDOW_MS = 10_000L;
+
     /** Injectable clock for updatedAt stamps. */
     public interface Clock { long nowMs(); }
 
@@ -71,6 +77,10 @@ public final class SendLaterRepository {
      * watermark when null) in one transaction, reads both back and returns the new id only when
      * the read-back matches. Any failure rolls back and throws: the caller then shows an error and
      * must not touch the source app's draft.
+     *
+     * <p>UI M2: when a live (SCHEDULED, HELD, IN_FLIGHT) row with the same e164, text and source
+     * was created within {@link #DEDUPE_WINDOW_MS}, nothing is inserted and that row's id is
+     * returned. The caller can tell by its createdAt, which is then not {@code message}'s.
      */
     public long schedule(ScheduledMessage message, Watermark watermark) throws PersistException {
         if (message == null) throw new PersistException("message is null");
@@ -78,7 +88,13 @@ public final class SendLaterRepository {
         final ScheduledMessage toInsert = message.toBuilder().id(0).watermark(wm).build();
         try {
             return db.runInTransaction(() -> {
-                ScheduledMessageEntity e = StoreMapping.toEntity(toInsert, clock.nowMs());
+                long now = clock.nowMs();
+                if (toInsert.getRecipientE164() != null) {
+                    ScheduledMessageEntity dup = findDuplicate(dao.recentForRecipient(
+                            toInsert.getRecipientE164(), now - DEDUPE_WINDOW_MS, LIVE), toInsert, now);
+                    if (dup != null) return dup.id; // UI M2: no second row for a double tap
+                }
+                ScheduledMessageEntity e = StoreMapping.toEntity(toInsert, now);
                 e.id = 0;
                 long id = dao.insertMessage(e);
                 if (id <= 0) throw new VerifyFailed("insert returned " + id);
@@ -95,6 +111,32 @@ public final class SendLaterRepository {
         } catch (RuntimeException ex) {
             throw new PersistException("schedule failed", ex);
         }
+    }
+
+    /**
+     * UI M2 (pure; JVM-tested): the newest of {@code candidates} that is a live row with the same
+     * e164, text and source as {@code incoming}, created within {@link #DEDUPE_WINDOW_MS} before
+     * {@code nowMs} (or later, for a clock step). Null when there is none.
+     */
+    static ScheduledMessageEntity findDuplicate(List<ScheduledMessageEntity> candidates,
+                                                ScheduledMessage incoming, long nowMs) {
+        if (candidates == null || incoming == null || incoming.getRecipientE164() == null
+                || incoming.getText() == null || incoming.getSource() == null) {
+            return null;
+        }
+        ScheduledMessageEntity best = null;
+        for (ScheduledMessageEntity e : candidates) {
+            if (e == null || !LIVE.contains(e.status)) continue;
+            if (e.createdAt < nowMs - DEDUPE_WINDOW_MS) continue;
+            if (!incoming.getRecipientE164().equals(e.recipientE164)) continue;
+            if (!incoming.getText().equals(e.text)) continue;
+            if (!incoming.getSource().name().equals(e.source)) continue;
+            if (best == null || e.createdAt > best.createdAt
+                    || (e.createdAt == best.createdAt && e.id > best.id)) {
+                best = e;
+            }
+        }
+        return best;
     }
 
     /** Field-by-field comparison ignoring the id (pure; JVM-tested). */

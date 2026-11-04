@@ -6,4 +6,9 @@
     <color name="sendlater_on_accent">#0B1D3A</color>
     <color name="sendlater_accent_soft">#338AB4F8</color>
     <color name="sendlater_scrim">#66000000</color>
+    <!-- UI M3: accent for TEXT and thin marks on the sheet's surface (text buttons, hints, picker
+         buttons and dial). Light mode needs a dark blue for 4.5:1; values-night uses the light
+         blue. Fills (tab, chip, Schedule button, picker chips) keep sendlater_accent. -->
+    <color name="sendlater_accent_text">#1A4F9C</color>
+    <color name="sendlater_on_accent_text">#FFFFFF</color>
 </resources>
