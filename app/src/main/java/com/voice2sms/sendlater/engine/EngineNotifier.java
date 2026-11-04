@@ -38,6 +38,14 @@ public interface EngineNotifier {
      */
     default void sendFailed(ScheduledMessage m) { remind(m, RemindReason.NO_SENDER); }
 
+    /**
+     * A send that typed nothing became a reminder (CANNOT_SHOW, OD23(3)); the words follow the
+     * sender's cause. The default files it under {@link RemindCause#reason()}.
+     */
+    default void remindCannotSend(ScheduledMessage m, RemindCause cause) {
+        remind(m, cause != null ? cause.reason() : RemindReason.LOCKED);
+    }
+
     /** Removes the message's notification (cancel, send under way). */
     default void dismiss(long id) {}
 }

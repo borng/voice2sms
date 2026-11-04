@@ -10,7 +10,8 @@ import android.content.Intent;
  * first unlock (no USER_UNLOCKED receiver needed). Process start ({@code onProcessStart}) has
  * already queued the IN_FLIGHT resolution on the same single-thread executor, so it runs first
  * (R23). The receiver is exported for the system broadcasts, so any other action (an explicit
- * intent from another app) is ignored.
+ * intent from another app) is ignored. While Send Later is off nothing is re-armed
+ * ({@link SendLaterScheduler#reregisterAll} checks the master switch, OD24).
  */
 public final class SendLaterBootReceiver extends BroadcastReceiver {
 

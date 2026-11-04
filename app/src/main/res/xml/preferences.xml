@@ -45,18 +45,85 @@
             android:defaultValue="true" />
     </PreferenceCategory>
 
-    <!-- sendlater:battery-guard start (R38) -->
-    <!-- The "Battery" row belongs in the Send Later category that upcoming-settings creates; when
-         both are present, keep this Preference inside that category and drop this wrapper. -->
-    <PreferenceCategory
-        android:key="sendlater_battery_category"
-        android:title="@string/sendlater_battery_category">
+    <!-- sendlater:upcoming-settings start (R36, R37) -->
+    <PreferenceCategory android:title="@string/sendlater_settings_category">
+        <SwitchPreferenceCompat
+            android:key="sendlater_enabled"
+            android:title="@string/sendlater_settings_enabled_title"
+            android:summaryOn="@string/sendlater_settings_enabled_on"
+            android:summaryOff="@string/sendlater_settings_enabled_off"
+            android:defaultValue="false" />
+        <Preference
+            android:key="sendlater_upcoming"
+            android:title="@string/sendlater_settings_upcoming_title"
+            android:summary="@string/sendlater_settings_upcoming_summary" />
+        <Preference
+            android:key="sendlater_slot_morning"
+            android:title="@string/sendlater_settings_slot_morning"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_slot_afternoon"
+            android:title="@string/sendlater_settings_slot_afternoon"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_slot_evening"
+            android:title="@string/sendlater_settings_slot_evening"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_slot_night"
+            android:title="@string/sendlater_settings_slot_night"
+            android:persistent="false" />
+        <ListPreference
+            android:key="sendlater_outbound_policy"
+            android:title="@string/sendlater_settings_outbound_title"
+            android:entries="@array/sendlater_settings_outbound_entries"
+            android:entryValues="@array/sendlater_settings_outbound_values"
+            android:defaultValue="STILL_SEND"
+            app:useSimpleSummaryProvider="true" />
+        <SwitchPreferenceCompat
+            android:key="sendlater_hold_default"
+            android:title="@string/sendlater_settings_hold_default_title"
+            android:summary="@string/sendlater_settings_hold_default_summary"
+            android:defaultValue="true" />
+        <SwitchPreferenceCompat
+            android:key="sendlater_clear_draft"
+            android:title="@string/sendlater_settings_clear_draft_title"
+            android:summary="@string/sendlater_settings_clear_draft_summary"
+            android:defaultValue="true" />
+        <Preference
+            android:key="sendlater_exact_alarm"
+            android:title="@string/sendlater_settings_exact_title"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_notifications"
+            android:title="@string/sendlater_settings_notifications_title"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_accessibility"
+            android:title="@string/sendlater_settings_accessibility_title"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_listener"
+            android:title="@string/sendlater_settings_listener_title"
+            android:summary="@string/sendlater_listener_summary"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_contacts"
+            android:title="@string/sendlater_settings_contacts_title"
+            android:persistent="false" />
+        <Preference
+            android:key="sendlater_help"
+            android:title="@string/sendlater_settings_help_title"
+            android:summary="@string/sendlater_settings_help_summary"
+            android:selectable="false"
+            android:persistent="false" />
+        <!-- sendlater:battery-guard row (R38), merged into the Send Later category -->
         <Preference
             android:key="sendlater_battery"
             android:title="@string/sendlater_battery_title"
             android:persistent="false" />
     </PreferenceCategory>
-    <!-- sendlater:battery-guard end -->
+    <!-- sendlater:upcoming-settings end -->
 
     <PreferenceCategory android:title="About">
         <Preference

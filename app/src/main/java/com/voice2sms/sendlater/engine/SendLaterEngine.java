@@ -47,6 +47,27 @@ public final class SendLaterEngine {
     /** At most this many automatic retries after a thread read showed no send (R31). */
     static final int MAX_RETRIES = 1;
 
+    /** Detail the sender passes with SENT_VERIFIED when it saw an inbound after the check (R31). */
+    public static final String DETAIL_LATE_REPLY = "late_reply";
+
+    /**
+     * "Replied just as your message sent" counts only inbound events timed in
+     * [checkTime, sendTime + verify window] (OD23(5)). The engine does not see when a queued
+     * attempt really starts (several messages due together are sent one after another, R30), but
+     * the sender reports its outcome when its verify window ends, so the outcome's arrival time is
+     * that end. The window is therefore [checkTime, outcome time + this slack]; the slack only
+     * absorbs clock differences between thread timestamps and the device. A later inbound is an
+     * ordinary reply to a sent message.
+     */
+    static final long LATE_REPLY_WINDOW_MS = 2 * 60_000L;
+
+    /**
+     * An outcome arriving more than this long after the thread check is stale (a stuck sender);
+     * its window end is capped at checkTime + this. Far above any queue of attempts (about 90 s
+     * each), so a queued send is never cut short.
+     */
+    static final long LATE_REPLY_MAX_SPAN_MS = 30 * 60_000L;
+
     private static final Object LOCK = new Object();
 
     private static volatile EngineDeps deps;
@@ -176,6 +197,8 @@ public final class SendLaterEngine {
             try {
                 synchronized (LOCK) {
                     doResolveInFlight(d, context);
+                    // OD24: Send Later off -> only the IN_FLIGHT resolution above; no sweep, no re-arm.
+                    if (!enabled(d)) return;
                     doSweepExpired(d);
                     schedulerOf(d).reregisterAll(context);
                 }
@@ -203,6 +226,7 @@ public final class SendLaterEngine {
     private static void onDue(final Context context, final long id, final boolean dueAlarm) {
         run(context, () -> {
             EngineDeps d = deps(context);
+            if (!enabled(d)) return; // OD24: off -> nothing sends automatically (alarm or network re-fire)
             ScheduledMessage m = d.store.get(id);
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
             if (d.marks.isReminded(id)) return;
@@ -235,6 +259,7 @@ public final class SendLaterEngine {
     public static void onLastCall(final Context context, final long id) {
         run(context, () -> {
             EngineDeps d = deps(context);
+            if (!enabled(d)) return;
             ScheduledMessage m = d.store.get(id);
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
             if (d.marks.isReminded(id)) return;
@@ -338,7 +363,7 @@ public final class SendLaterEngine {
         if (!started) {
             ScheduledMessage now = d.store.get(id);
             if (now != null && now.getStatus() == Status.IN_FLIGHT) {
-                handleOutcome(d, context, now, SendOutcome.CANNOT_SHOW, "sender_not_started");
+                handleOutcome(d, context, now, SendOutcome.CANNOT_SHOW, null);
             }
         }
     }
@@ -364,10 +389,19 @@ public final class SendLaterEngine {
      * reminded so no later DUE (boot, time change, stray alarm) auto-sends it (I6).
      */
     private static void remind(EngineDeps d, ScheduledMessage m, RemindReason reason) {
+        remind(d, m, reason, null);
+    }
+
+    /** As {@link #remind(EngineDeps, ScheduledMessage, RemindReason)}; a cause picks the words. */
+    private static void remind(EngineDeps d, ScheduledMessage m, RemindReason reason, RemindCause cause) {
         long id = m.getId();
         d.marks.setReminded(id, true);
         schedulerOf(d).cancelAlarms(id);
-        d.notifier.remind(m, reason);
+        if (cause != null) {
+            d.notifier.remindCannotSend(m, cause);
+        } else {
+            d.notifier.remind(m, reason);
+        }
         d.broadcaster.stateChanged(id, m.getRecipientE164());
         schedulerOf(d).registerExpiry(m);
     }
@@ -396,6 +430,14 @@ public final class SendLaterEngine {
      * arrived between the thread check and the send (R31).
      */
     private static void sentVerified(EngineDeps d, ScheduledMessage m, List<ThreadEvent> events) {
+        sentVerified(d, m, events, null);
+    }
+
+    /**
+     * {@code detail} is the sender's; {@link #DETAIL_LATE_REPLY} counts only while the outcome
+     * arrives inside the late-reply window (OD23(5)), so a stale one is ignored.
+     */
+    private static void sentVerified(EngineDeps d, ScheduledMessage m, List<ThreadEvent> events, String detail) {
         long id = m.getId();
         Long checkTime = checkTimes.remove(id);
         retried.remove(id);
@@ -403,7 +445,7 @@ public final class SendLaterEngine {
         d.marks.clear(id);
         schedulerOf(d).cancelAll(id);
         ScheduledMessage sent = reload(d, m);
-        if (checkTime != null && inboundAfter(events, checkTime)) {
+        if (checkTime != null && repliedJustAsSent(events, detail, checkTime, d.conditions.nowMs())) {
             d.notifier.repliedDuringSend(sent);
         } else {
             d.notifier.sent(sent);
@@ -411,12 +453,28 @@ public final class SendLaterEngine {
         d.broadcaster.stateChanged(id, m.getRecipientE164());
     }
 
-    private static boolean inboundAfter(List<ThreadEvent> events, long sinceMs) {
-        if (events == null) return false;
-        for (ThreadEvent e : events) {
-            if (e != null && e.isInbound() && e.getTimeMs() > sinceMs) return true;
+    /**
+     * R31 / OD23(5): an inbound timed in [checkTime, end], or the sender's
+     * {@link #DETAIL_LATE_REPLY} reported no later than {@link #LATE_REPLY_MAX_SPAN_MS} after the
+     * check. {@code end} is the outcome's arrival ({@code nowMs}, the end of the sender's verify
+     * window), capped at checkTime + {@link #LATE_REPLY_MAX_SPAN_MS}, plus
+     * {@link #LATE_REPLY_WINDOW_MS} slack.
+     */
+    static boolean repliedJustAsSent(List<ThreadEvent> events, String detail, long checkTime, long nowMs) {
+        long end = lateReplyWindowEnd(checkTime, nowMs);
+        if (events != null) {
+            for (ThreadEvent e : events) {
+                if (e != null && e.isInbound() && e.getTimeMs() >= checkTime && e.getTimeMs() <= end) return true;
+            }
         }
-        return false;
+        return DETAIL_LATE_REPLY.equals(detail) && nowMs >= checkTime
+                && nowMs - checkTime <= LATE_REPLY_MAX_SPAN_MS;
+    }
+
+    /** End of the late-reply window for an outcome arriving at {@code nowMs}. */
+    static long lateReplyWindowEnd(long checkTime, long nowMs) {
+        long outcomeAt = Math.max(checkTime, Math.min(nowMs, checkTime + LATE_REPLY_MAX_SPAN_MS));
+        return outcomeAt + LATE_REPLY_WINDOW_MS;
     }
 
     private static ScheduledMessage reload(EngineDeps d, ScheduledMessage fallback) {
@@ -637,7 +695,9 @@ public final class SendLaterEngine {
      *       {@link OutboundCapableSource}, one retry within budget decided on the thread just read
      *       (I5), else FAILED + reminder. Without such a source: HELD(UNVERIFIED) + "may have
      *       already sent" (OD21).</li>
-     *   <li>CANNOT_SHOW: nothing was typed; back to SCHEDULED + REMIND(LOCKED).</li>
+     *   <li>CANNOT_SHOW: nothing was typed; back to SCHEDULED + a reminder worded by the
+     *       detail ({@link RemindCause#fromDetail}: no_session gets Sign in, daily_cap, user_busy,
+     *       else locked).</li>
      * </ul>
      */
     public static void onSendOutcome(final Context context, final long id, final SendOutcome outcome,
@@ -657,7 +717,7 @@ public final class SendLaterEngine {
         long now = d.conditions.nowMs();
         switch (outcome) {
             case SENT_VERIFIED: {
-                sentVerified(d, m, readThread(d, m));
+                sentVerified(d, m, readThread(d, m), detail);
                 return;
             }
             case SENT_UNVERIFIED: {
@@ -674,9 +734,10 @@ public final class SendLaterEngine {
                 // Nothing was typed: the release must not use up the retry after a real failure
                 // (the store counts it in attemptCount; the engine subtracts these).
                 checkTimes.remove(id);
+                RemindCause cause = RemindCause.fromDetail(detail);
                 if (d.store.releaseForRetry(id, "cannot_show")) {
                     d.marks.addFreeRelease(id);
-                    remind(d, reload(d, m), RemindReason.LOCKED);
+                    remind(d, reload(d, m), cause.reason(), cause);
                 }
                 return;
             }
@@ -738,6 +799,8 @@ public final class SendLaterEngine {
         retried.add(id);
         ScheduledMessage released = d.store.get(id);
         if (released == null || released.getStatus() != Status.SCHEDULED) return;
+        // OD24: off -> stays SCHEDULED without alarms; turning Send Later on re-arms it.
+        if (!enabled(d)) return;
         Decision decision = LadderEvaluator.evaluate(released, released.getRung(), events, now,
                 d.conditions.session(), d.conditions.network(), d.conditions.listenerEnabled(),
                 d.conditions.outboundPolicy());
@@ -786,6 +849,40 @@ public final class SendLaterEngine {
             retryAfterRead(d, context, m, events, now, "restart");
         } else {
             hold(d, m, HoldReason.UNVERIFIED, now, true);
+        }
+    }
+
+    // ================================================================== master switch (OD24, AC11)
+
+    /**
+     * Send Later was switched off: under the engine lock, cancels every alarm (expiry included)
+     * and network waiter of each SCHEDULED and HELD row and dismisses its notification. Records
+     * are kept; IN_FLIGHT rows finish their attempt. Turning it on again re-arms through
+     * {@link SendLaterScheduler#reregisterAll}.
+     */
+    public static void onDisabled(final Context context) {
+        run(context, () -> {
+            EngineDeps d = deps(context);
+            List<ScheduledMessage> live = new ArrayList<>();
+            List<ScheduledMessage> pending = d.store.allPending();
+            if (pending != null) live.addAll(pending);
+            List<ScheduledMessage> held = d.store.allHeld();
+            if (held != null) live.addAll(held);
+            SendLaterScheduler s = schedulerOf(d);
+            for (ScheduledMessage m : live) {
+                long id = m.getId();
+                s.cancelAll(id);
+                d.networkWaiter.cancel(id);
+                d.notifier.dismiss(id);
+            }
+        });
+    }
+
+    private static boolean enabled(EngineDeps d) {
+        try {
+            return d.conditions.sendLaterEnabled();
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 
