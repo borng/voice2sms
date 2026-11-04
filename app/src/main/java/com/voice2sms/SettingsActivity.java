@@ -18,6 +18,7 @@ import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceManager;
 import androidx.preference.SwitchPreferenceCompat;
 
+import com.voice2sms.sendlater.ui.SendLaterSettingsController;
 import com.voice2sms.sendlater.battery.BatteryAdvice;
 import com.voice2sms.sendlater.battery.BatteryHealth;
 import com.voice2sms.sendlater.battery.BatteryStatus;
@@ -45,12 +46,15 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     public static class SettingsFragment extends PreferenceFragmentCompat {
+        /** "Send Later" category rows (R36); summaries refreshed in onResume. */
+        private SendLaterSettingsController sendLater;
         /** Send Later "Battery" row (R38); summary refreshed in onResume. */
         private static final String KEY_SENDLATER_BATTERY = "sendlater_battery";
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
             setPreferencesFromResource(R.xml.preferences, rootKey);
+            sendLater = new SendLaterSettingsController(this);
 
             // Set default SMS app button
             Preference defaultSmsBtn = findPreference("set_default_sms");
@@ -152,6 +156,9 @@ public class SettingsActivity extends AppCompatActivity {
             Preference geminiToggle = findPreference("gemini_intercept_toggle");
             if (geminiToggle != null) {
                 updateGeminiInterceptStatus(geminiToggle);
+            }
+            if (sendLater != null) {
+                sendLater.refresh();
             }
             Preference battery = findPreference(KEY_SENDLATER_BATTERY);
             if (battery != null) {

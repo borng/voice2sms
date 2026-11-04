@@ -195,6 +195,20 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
+        <!-- sendlater:upcoming-settings start -->
+        <!-- Send Later Upcoming list (R35): Settings, the chip and notifications open it with
+             SendLaterIntents.ACTION_UPCOMING (setPackage'd) and an optional EXTRA_E164 filter. -->
+        <activity
+            android:name=".sendlater.ui.UpcomingActivity"
+            android:exported="false"
+            android:label="@string/sendlater_upcoming_title"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.UPCOMING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- sendlater:upcoming-settings end -->
         <!-- sendlater:battery-guard start -->
         <!-- Once-a-day battery warning on the app-internal SCHEDULED broadcast (R39). -->
         <receiver
