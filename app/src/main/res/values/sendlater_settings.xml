@@ -5,7 +5,7 @@
     <string name="sendlater_settings_category">Send Later</string>
     <string name="sendlater_settings_enabled_title">Send Later</string>
     <string name="sendlater_settings_enabled_on">On. Schedule texts from Google Voice and they go out at the time you pick.</string>
-    <string name="sendlater_settings_enabled_off">Off. Nothing is scheduled and nothing is sent. Your saved messages are kept.</string>
+    <string name="sendlater_settings_enabled_off">Off. Scheduled messages wait and nothing is sent automatically. Your saved messages are kept.</string>
 
     <string name="sendlater_settings_slot_morning">Morning time</string>
     <string name="sendlater_settings_slot_afternoon">Afternoon time</string>
@@ -51,8 +51,9 @@
     <string name="sendlater_settings_help_title">Toggle greyed out?</string>
     <string name="sendlater_settings_help_summary">On Samsung and some other phones, if the accessibility or notification access toggle is greyed out, open App info for Voice2SMS, tap the menu (three dots) and choose Allow restricted settings, then try again.</string>
 
-    <string name="sendlater_settings_disabled_toast">Send Later is off. Alarms cancelled; your messages are kept.</string>
+    <string name="sendlater_settings_disabled_toast">Send Later is off. Scheduled messages wait; nothing is sent automatically.</string>
     <string name="sendlater_settings_enabled_toast">Send Later is on.</string>
+    <string name="sendlater_settings_onboarding_listener_fallback">Open Settings &gt; Notifications &gt; Notification access</string>
 
     <!-- Onboarding (SetupActivity) -->
     <string name="sendlater_settings_onboarding_title">Optional: Send Later</string>

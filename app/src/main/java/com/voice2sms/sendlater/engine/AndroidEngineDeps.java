@@ -186,6 +186,9 @@ final class AndroidEngineDeps {
         @Override public void lastCall(ScheduledMessage m) { SendLaterNotifications.lastCall(app, m); }
         @Override public void hold(ScheduledMessage m, HoldReason r, long nowMs) { SendLaterNotifications.hold(app, m, r, nowMs); }
         @Override public void remind(ScheduledMessage m, RemindReason r) { SendLaterNotifications.remind(app, m, r); }
+        @Override public void remindCannotSend(ScheduledMessage m, RemindCause cause) {
+            SendLaterNotifications.remindCannotSend(app, m, cause);
+        }
         @Override public void sent(ScheduledMessage m) { SendLaterNotifications.sent(app, m); }
         @Override public void repliedDuringSend(ScheduledMessage m) { SendLaterNotifications.repliedDuringSend(app, m); }
         @Override public void selfPreempted(ScheduledMessage m) { SendLaterNotifications.selfPreempted(app, m); }
@@ -260,6 +263,15 @@ final class AndroidEngineDeps {
         @Override public boolean listenerEnabled() {
             try {
                 return SendLaterListenerStatus.isAvailable(app);
+            } catch (RuntimeException e) {
+                return false;
+            }
+        }
+
+        /** Fails closed: unreadable preferences count as off (nothing sends automatically). */
+        @Override public boolean sendLaterEnabled() {
+            try {
+                return SendLaterSettings.isEnabled(app);
             } catch (RuntimeException e) {
                 return false;
             }

@@ -2,7 +2,6 @@
 <!-- Send Later battery health copy (R38, R39, D25). The row summary and notification body come
      from BatteryAdvice (pure JVM, unit-tested); keep the two in step. -->
 <resources>
-    <string name="sendlater_battery_category">Send Later</string>
     <string name="sendlater_battery_title">Battery</string>
     <string name="sendlater_battery_warning_title">Scheduled messages may be late</string>
     <string name="sendlater_battery_fix">Fix</string>

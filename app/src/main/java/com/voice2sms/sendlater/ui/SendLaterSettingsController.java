@@ -31,6 +31,7 @@ import com.voice2sms.R;
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
+import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.engine.SendLaterScheduler;
 import com.voice2sms.sendlater.listener.SendLaterListenerStatus;
 import com.voice2sms.sendlater.store.SendLaterRepository;
@@ -45,8 +46,8 @@ import java.util.List;
  * status rows. Every status summary is recomputed in {@link #refresh()}, which the fragment
  * calls from onResume, so a row never shows a stale "allowed".
  *
- * <p>Turning Send Later off cancels every alarm of pending and held messages (records are
- * kept) and broadcasts {@link SendLaterIntents#ACTION_STATE_CHANGED} to this package so the
+ * <p>Turning Send Later off cancels every alarm and network waiter of pending and held messages
+ * and dismisses their notifications (records are kept) and broadcasts {@link SendLaterIntents#ACTION_STATE_CHANGED} to this package so the
  * chip and edge tab hide. Turning it on re-registers the alarms.
  */
 public final class SendLaterSettingsController {
@@ -181,29 +182,43 @@ public final class SendLaterSettingsController {
 
     // ------------------------------------------------------------------ enable / disable (AC11)
 
-    /** Off: cancel every alarm, keep records. On: re-register. Then tell the chip and tab. */
+    /**
+     * Off: {@link SendLaterEngine#onDisabled} cancels every alarm and network waiter under the
+     * engine lock and dismisses the notifications; records are kept (OD24). On: re-register.
+     * Then tell the chip and tab.
+     */
     static void applyEnabled(final Context app, final boolean on) {
         new Thread(() -> {
             try {
-                SendLaterScheduler scheduler = SendLaterScheduler.get(app);
                 if (on) {
-                    scheduler.reregisterAll(app);
+                    SendLaterScheduler.get(app).reregisterAll(app);
                 } else {
-                    SendLaterRepository repo = SendLaterRepository.get(app);
-                    List<ScheduledMessage> live = new ArrayList<>();
-                    List<ScheduledMessage> pending = repo.allPending();
-                    if (pending != null) live.addAll(pending);
-                    List<ScheduledMessage> held = repo.allHeld();
-                    if (held != null) live.addAll(held);
-                    for (ScheduledMessage m : live) scheduler.cancelAll(m.getId());
+                    SendLaterEngine.onDisabled(app);
                 }
             } catch (RuntimeException e) {
                 Log.w(TAG, "alarm update failed: " + e.getClass().getSimpleName());
+                if (!on) cancelAlarmsFallback(app);
             }
             Intent changed = new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
                     .setPackage(app.getPackageName());
             app.sendBroadcast(changed);
         }, "sendlater-settings").start();
+    }
+
+    /** Last resort when the engine call failed: cancel the alarms directly (records kept). */
+    private static void cancelAlarmsFallback(Context app) {
+        try {
+            SendLaterScheduler scheduler = SendLaterScheduler.get(app);
+            SendLaterRepository repo = SendLaterRepository.get(app);
+            List<ScheduledMessage> live = new ArrayList<>();
+            List<ScheduledMessage> pending = repo.allPending();
+            if (pending != null) live.addAll(pending);
+            List<ScheduledMessage> held = repo.allHeld();
+            if (held != null) live.addAll(held);
+            for (ScheduledMessage m : live) scheduler.cancelAll(m.getId());
+        } catch (RuntimeException e) {
+            Log.w(TAG, "alarm cancel fallback failed: " + e.getClass().getSimpleName());
+        }
     }
 
     // ------------------------------------------------------------------ slot pickers

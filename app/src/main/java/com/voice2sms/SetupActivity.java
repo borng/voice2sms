@@ -139,7 +139,7 @@ public class SetupActivity extends Activity {
             try {
                 startActivity(SendLaterListenerStatus.openSettingsIntent());
             } catch (android.content.ActivityNotFoundException e) {
-                Toast.makeText(this, "Open Settings > Notifications > Notification access",
+                Toast.makeText(this, R.string.sendlater_settings_onboarding_listener_fallback,
                         Toast.LENGTH_LONG).show();
             }
         });

@@ -24,6 +24,8 @@ public final class SendLaterScheduler {
     private final EngineNotifier notifier;
     private final EngineClock clock;
     private final EngineMarks marks;
+    /** The clock when it is the engine's conditions: carries the Send Later master switch. */
+    private final EngineConditions conditions;
 
     public SendLaterScheduler(AlarmSink alarms, EngineStore store, EngineNotifier notifier, EngineClock clock) {
         this(alarms, store, notifier, clock, new EngineMarks.InMemory());
@@ -36,6 +38,12 @@ public final class SendLaterScheduler {
         this.notifier = notifier;
         this.clock = clock;
         this.marks = marks != null ? marks : new EngineMarks.InMemory();
+        this.conditions = clock instanceof EngineConditions ? (EngineConditions) clock : null;
+    }
+
+    /** OD24: false when Send Later is switched off (no conditions: on). */
+    boolean enabled() {
+        return conditions == null || conditions.sendLaterEnabled();
     }
 
     /** The scheduler wired to the engine's production (or installed test) dependencies. */
@@ -90,9 +98,11 @@ public final class SendLaterScheduler {
      * Boot, time or time-zone change, exact-alarm permission change: re-registers T-5/T for every
      * SCHEDULED message that was not reminded, and only the expiry alarm of every reminded or
      * HELD one. A reminded message never gets a due alarm back: it must not auto-send after the
-     * user was told to send it by hand (I6).
+     * user was told to send it by hand (I6). Does nothing while Send Later is off (OD24): boot,
+     * time changes and process start must not bring alarms back.
      */
     public void reregisterAll(Context context) {
+        if (!enabled()) return;
         List<ScheduledMessage> pending = store.allPending();
         if (pending != null) {
             for (ScheduledMessage m : pending) {
