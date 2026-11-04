@@ -62,9 +62,13 @@ public final class WebViewScheduledSender implements ScheduledSender {
         final Context app = context.getApplicationContext();
         final long id = message.getId();
         if (message.getRecipientE164() == null || message.getText() == null) return false;
-
-        LaunchPlanner.Result plan = LaunchPlanner.plan(isOwnAccessibilityServiceEnabled(app),
-                isKeyguardLocked(app), isScreenOn(app), canUseFullScreenIntent(app));
+        // Nothing that cannot launch may use up a queue slot (spacing, daily cap).
+        if (!rowIsSendable(app, message)) return false;
+        LaunchPlanner.Result plan = currentPlan(app);
+        if (plan == LaunchPlanner.Result.CANNOT_SHOW && !ScheduledSendController.isBusy()) {
+            // CANNOT_SHOW: nothing attempted; the engine records the LOCKED reminder.
+            return false;
+        }
 
         long delayMs = ScheduledSendQueue.get(app).acquireSlot(System.currentTimeMillis());
         if (delayMs == ScheduledSendQueue.REFUSED) {
@@ -76,24 +80,45 @@ public final class WebViewScheduledSender implements ScheduledSender {
 
         final long checkTime = System.currentTimeMillis();
         final String token = LaunchClaims.INSTANCE.issue(id);
-        if (ScheduledSendController.offer(id, token, checkTime, delayMs)) {
-            watchClaim(app, id, token, delayMs);
-            return true;
-        }
-        switch (plan) {
+        MAIN.postDelayed(() -> launch(app, id, token, checkTime), delayMs);
+        watchClaim(app, id, token, delayMs);
+        return true;
+    }
+
+    /**
+     * At the slot's time: hand the launch to a live activity that is already sending (messages
+     * due together queue behind it there), else open GVoiceWebViewActivity as
+     * {@link LaunchPlanner} decides NOW (the screen may have changed during the queue delay).
+     */
+    private static void launch(Context app, long id, String token, long checkTime) {
+        if (!LaunchClaims.INSTANCE.isPending(id)) return;
+        if (ScheduledSendController.offer(id, token, checkTime, 0L)) return;
+        switch (currentPlan(app)) {
             case DIRECT:
-                MAIN.postDelayed(() -> launchDirect(app, id, token, checkTime), delayMs);
-                watchClaim(app, id, token, delayMs);
-                return true;
+                launchDirect(app, id, token, checkTime);
+                return;
             case FULL_SCREEN_INTENT:
-                MAIN.postDelayed(() -> postFullScreenIntent(app, id, token, checkTime), delayMs);
-                watchClaim(app, id, token, delayMs);
-                return true;
+                postFullScreenIntent(app, id, token, checkTime);
+                return;
             case CANNOT_SHOW:
             default:
-                LaunchClaims.INSTANCE.take(id, token);
-                return false;
+                // Nothing was typed: the engine releases it with the LOCKED reminder.
+                if (LaunchClaims.INSTANCE.take(id, token)) {
+                    SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW, "cannot_show");
+                }
         }
+    }
+
+    private static LaunchPlanner.Result currentPlan(Context app) {
+        return LaunchPlanner.plan(isOwnAccessibilityServiceEnabled(app),
+                isKeyguardLocked(app), isScreenOn(app), canUseFullScreenIntent(app));
+    }
+
+    /** Cheap pre-check before a slot is taken: the row is IN_FLIGHT with this text. */
+    private static boolean rowIsSendable(Context app, ScheduledMessage message) {
+        ScheduledMessage stored = SendLaterRepository.get(app).get(message.getId());
+        return stored != null && stored.getStatus() == ScheduledMessage.Status.IN_FLIGHT
+                && message.getText().equals(stored.getText());
     }
 
     /**

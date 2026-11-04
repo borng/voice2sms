@@ -75,11 +75,60 @@ public final class WebViewThreadEventSource implements OutboundCapableSource {
         List<ThreadBubble> bubbles = got.get();
         if (bubbles == null) throw new IllegalStateException("web thread not readable");
         long since = sinceMs(wm);
+        long now = System.currentTimeMillis();
+        ThreadBaseline baseline = takePostSendBaseline(ref.getE164(), now);
+        List<ThreadEvent> events = baseline != null
+                ? ThreadBaseline.stamp(bubbles, baseline.newStart(bubbles), now)
+                : toEvents(bubbles, now);
         List<ThreadEvent> out = new ArrayList<>();
-        for (ThreadEvent e : toEvents(bubbles, System.currentTimeMillis())) {
+        for (ThreadEvent e : events) {
             if (e.getTimeMs() >= since) out.add(e);
         }
         return out;
+    }
+
+    // ================================================================== post-send read
+
+    /** An armed baseline is used by the next read of its thread within this long, else dropped. */
+    static final long POST_SEND_ARM_MS = 15_000L;
+
+    private static final Object ARM_LOCK = new Object();
+    private static String armedE164;
+    private static ThreadBaseline armedBaseline;
+    private static long armedUntilMs;
+
+    /**
+     * Called by the controller right before it reports an outcome the engine answers with one
+     * read of this thread (SENT_VERIFIED / SENT_UNVERIFIED). That one read stamps the bubbles that
+     * were there before the send as old (an untimed old reply is not "replied just as your
+     * message sent", an identical old outbound is not this send). One-shot and short-lived, so
+     * the engine's thread checks for other messages keep the conservative "untimed = recent".
+     */
+    static void armPostSendRead(String e164, ThreadBaseline baseline, long nowMs) {
+        synchronized (ARM_LOCK) {
+            armedE164 = baseline != null ? e164 : null;
+            armedBaseline = e164 != null ? baseline : null;
+            armedUntilMs = nowMs + POST_SEND_ARM_MS;
+        }
+    }
+
+    static void disarmPostSendRead() {
+        synchronized (ARM_LOCK) {
+            armedE164 = null;
+            armedBaseline = null;
+        }
+    }
+
+    static ThreadBaseline takePostSendBaseline(String e164, long nowMs) {
+        synchronized (ARM_LOCK) {
+            ThreadBaseline b = armedBaseline;
+            boolean hit = b != null && e164 != null && e164.equals(armedE164) && nowMs <= armedUntilMs;
+            if (hit || (b != null && nowMs > armedUntilMs)) {
+                armedE164 = null;
+                armedBaseline = null;
+            }
+            return hit ? b : null;
+        }
     }
 
     /**

@@ -173,10 +173,10 @@ public class GVoiceWebViewActivity extends Activity {
 
             if (cookies != null && cookies.contains("SID")) {
                 loadGoogleVoice();
-            } else if (scheduledLaunch) {
+            } else if (scheduledSend.isActive()) {
                 // No web session: never open the account picker over the lock screen.
                 scheduledSend.onWebFailure("no_session");
-            } else {
+            } else if (!scheduledLaunch || !scheduledSend.isOverKeyguard()) {
                 attemptAccountAuth();
             }
         }
@@ -473,7 +473,7 @@ public class GVoiceWebViewActivity extends Activity {
             return;
         }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        int delayMs = prefs.getInt("auto_send_delay", 2) * 1000;
+        long delayMs = ScheduledSendController.sendDelayMs(prefs.getInt("auto_send_delay", 2) * 1000L);
         script += "\nvoice2sms(" + jsonEncode(recipient) + ", " + jsonEncode(body != null ? body : "")
                 + ", true, " + delayMs + ");";
         webView.evaluateJavascript(script, null);
@@ -537,6 +537,17 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /**
+     * True when the message box (inject.js fillBody's selectors) still holds text. Answers a
+     * boolean only, never the text.
+     */
+    private static final String SCHEDULED_COMPOSER_PROBE_JS = "(function(){var t=document.querySelector("
+            + "'textarea[placeholder=\"Type a message\"], textarea[placeholder*=\"message\"], "
+            + "textarea[placeholder*=\"text\"], textarea[aria-label*=\"message\"], "
+            + "[contenteditable=\"true\"][aria-label*=\"message\"]');"
+            + "if(!t)return false;var v=t.isContentEditable?t.textContent:t.value;"
+            + "return !!(v&&v.trim().length>0);})()";
+
     /** Activity access for the scheduled branch; every WebView touch is behind isActivityAlive(). */
     private class ScheduledHost implements ScheduledSendController.Host {
         @Override
@@ -563,6 +574,20 @@ public class GVoiceWebViewActivity extends Activity {
         @Override
         public void readThread(String e164, int limit, ThreadReadCallback cb) {
             GVoiceWebViewActivity.this.readThread(e164, limit, cb);
+        }
+
+        @Override
+        public void probeComposer(ScheduledSendController.ComposerProbe cb) {
+            runOnUiThread(() -> {
+                if (!isActivityAlive()) {
+                    cb.onProbe(null);
+                    return;
+                }
+                // Only "is there text in the message box", never the text itself.
+                webView.evaluateJavascript(SCHEDULED_COMPOSER_PROBE_JS,
+                        value -> cb.onProbe("true".equals(value) ? Boolean.TRUE
+                                : "false".equals(value) ? Boolean.FALSE : null));
+            });
         }
 
         @Override

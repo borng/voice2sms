@@ -2,14 +2,19 @@ package com.voice2sms.sendlater.send;
 
 import android.app.Activity;
 import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.WindowManager;
 
+import androidx.core.content.ContextCompat;
+
+import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.domain.ThreadEvent;
@@ -32,14 +37,18 @@ import java.util.concurrent.Executors;
  * <p>Flow for one launch carrying {@link #EXTRA_SCHEDULED_MESSAGE_ID}: show over the keyguard and
  * turn the screen on (never dismiss the keyguard), take the launch token ({@link LaunchClaims}),
  * load the IN_FLIGHT row off the main thread, ask the activity to open the composer for
- * {e164, text}; once inject.js auto-send is injected, poll the open thread with readThread and
- * {@link SendVerifier}: own bubble -> SENT_VERIFIED (with a late-reply detail when an inbound
- * landed between the check and the send), nothing within the window -> SENT_UNVERIFIED (the
- * engine holds it and never re-sends unread, I5), WebView/auth failure -> FAILED. The outcome
- * goes to {@link SendLaterEngine#onSendOutcome}, which owns every status change. Launches that
- * arrive while one is running queue behind it (several messages due together). When the activity
- * was launched over the keyguard it finishes once the queue is empty, so the GV page is not left
- * on the lock screen.
+ * {e164, text}; once inject.js auto-send is injected, poll the open thread with readThread plus a
+ * composer probe ({@link SendWatch}): the first read taken while our text is still unsent is the
+ * baseline, and only a NEW outbound bubble with the body hash beyond it verifies
+ * ({@link ThreadBaseline}, {@link SendVerifier}): -> SENT_VERIFIED (with a late-reply detail when
+ * an inbound landed between the check and the send); nothing new within the window ->
+ * SENT_UNVERIFIED (the engine holds it and never re-sends unread, I5); WebView/auth failure ->
+ * FAILED. An identical older bubble never proves a send. The outcome goes to
+ * {@link SendLaterEngine#onSendOutcome}, which owns every status change. Launches that arrive
+ * while one is running queue behind it (several messages due together). When the activity was
+ * launched over the keyguard it finishes once the queue is empty and the engine has finished its
+ * own post-send read of the thread (its state broadcast, or {@link #FINISH_GRACE_MS}), so the GV
+ * page is not left on the lock screen.
  *
  * <p>Never uses the Wear/Gemini auto-send extra or the global auto-send rate limiter: the
  * scheduled queue is the limiter (R30).
@@ -62,13 +71,27 @@ public final class ScheduledSendController {
     static final long COMPOSE_TIMEOUT_MS = 40_000L;
     /**
      * After injection: inject.js may poll the page for up to ~25 s before it clicks Send, then
-     * about 20 s for the bubble to show. No own bubble by then -> SENT_UNVERIFIED.
+     * about 20 s for the bubble to show. No new own bubble by then -> SENT_UNVERIFIED.
      */
     static final long VERIFY_WINDOW_MS = 45_000L;
-    static final long FIRST_READ_AFTER_SEND_MS = 3_000L;
-    static final long READ_INTERVAL_MS = 2_000L;
-    /** Lets the engine's own post-send read of the open thread finish before the activity goes. */
-    static final long FINISH_GRACE_MS = 2_000L;
+    /** Poll interval until the pre-send baseline is taken (the thread opens, then Send follows). */
+    static final long BASELINE_POLL_MS = 300L;
+    static final long READ_INTERVAL_MS = 1_000L;
+    /**
+     * Minimum inject.js auto-send delay on the scheduled path: leaves the polls time to read the
+     * opened thread before Send is tapped (a late baseline only ever errs to unverified).
+     */
+    static final long MIN_SEND_DELAY_MS = 3_000L;
+    /**
+     * Upper bound on staying over the keyguard after the last outcome. The engine answers it with
+     * its own read of this thread (up to {@link WebViewThreadEventSource#WAIT_MS}); the activity
+     * normally finishes on the engine's state broadcast, well before this.
+     */
+    static final long FINISH_GRACE_MS = WebViewThreadEventSource.WAIT_MS + 5_000L;
+    /** Over the keyguard with nothing reported (stale or replayed launch). */
+    static final long IDLE_FINISH_MS = 2_000L;
+    /** After the engine's state broadcast for the last outcome. */
+    static final long ENGINE_DONE_FINISH_MS = 300L;
     static final int READ_LIMIT = 30;
 
     /** What the controller needs from the activity. Every WebView touch is behind isAlive(). */
@@ -85,8 +108,19 @@ public final class ScheduledSendController {
         /** GVoiceWebViewActivity.readThread. */
         void readThread(String e164, int limit, ThreadReadCallback cb);
 
+        /**
+         * Main thread callback: TRUE when the message box still holds text (Send not tapped yet),
+         * FALSE when it is empty or missing, null when the page could not be asked.
+         */
+        void probeComposer(ComposerProbe cb);
+
         /** Activity.finish(). */
         void finish();
+    }
+
+    /** Answer of {@link Host#probeComposer}. */
+    public interface ComposerProbe {
+        void onProbe(Boolean pending);
     }
 
     private static final class Job {
@@ -94,6 +128,7 @@ public final class ScheduledSendController {
         final long checkTimeMs;
         String e164;
         String bodyHash;
+        SendWatch watch;
         boolean injected;
         long deadlineMs;
 
@@ -114,6 +149,9 @@ public final class ScheduledSendController {
     private Job current;
     private volatile boolean busy;
     private boolean overKeyguard;
+    /** Id of the last outcome reported over the keyguard; its engine broadcast lets us finish. */
+    private long awaitingEngineId = -1L;
+    private BroadcastReceiver engineDone;
 
     public ScheduledSendController(Activity activity, Host host) {
         this.activity = activity;
@@ -129,6 +167,12 @@ public final class ScheduledSendController {
         ScheduledSendController c = live.get();
         if (c == null || !c.host.isAlive()) return null;
         return c.host.mainFrameUrl();
+    }
+
+    /** A live GVoiceWebViewActivity is running or queuing scheduled sends. Any thread. */
+    static boolean isBusy() {
+        ScheduledSendController c = live.get();
+        return c != null && c.busy && c.host.isAlive();
     }
 
     /**
@@ -188,13 +232,19 @@ public final class ScheduledSendController {
         return current != null && current.e164 != null && !current.injected;
     }
 
+    /** inject.js auto-send delay for a scheduled send: the user's setting, at least the minimum. */
+    public static long sendDelayMs(long preferredMs) {
+        return Math.max(MIN_SEND_DELAY_MS, preferredMs);
+    }
+
     /** The activity injected inject.js auto-send for the running job. */
     public void onComposerInjected(long autoSendDelayMs) {
         final Job job = current;
         if (job == null || job.injected || job.e164 == null) return;
         job.injected = true;
+        job.watch = new SendWatch(job.bodyHash);
         job.deadlineMs = System.currentTimeMillis() + Math.max(0L, autoSendDelayMs) + VERIFY_WINDOW_MS;
-        main.postDelayed(() -> readOnce(job), Math.max(0L, autoSendDelayMs) + FIRST_READ_AFTER_SEND_MS);
+        main.postDelayed(() -> readOnce(job), BASELINE_POLL_MS);
     }
 
     /** The page could not be used (no web session, sign-in page, script missing). */
@@ -208,6 +258,8 @@ public final class ScheduledSendController {
     public void onOtherIntent() {
         main.removeCallbacksAndMessages(null);
         abandonAll("other_intent");
+        stopListeningForEngine();
+        awaitingEngineId = -1L;
         overKeyguard = false;
         applyLockFlags(false);
     }
@@ -216,6 +268,12 @@ public final class ScheduledSendController {
         if (live.get() == this) live = new WeakReference<>(null);
         main.removeCallbacksAndMessages(null);
         abandonAll("activity_gone");
+        stopListeningForEngine();
+    }
+
+    /** Over the keyguard, a stale launch must not open the account picker either. */
+    public boolean isOverKeyguard() {
+        return overKeyguard;
     }
 
     // ================================================================== one send
@@ -273,20 +331,28 @@ public final class ScheduledSendController {
         }, COMPOSE_TIMEOUT_MS);
     }
 
+    /** One poll: read the thread, THEN probe the composer (a pending probe dates the read). */
     private void readOnce(final Job job) {
         if (current != job) return;
         if (!host.isAlive()) {
             report(job, SendOutcome.SENT_UNVERIFIED, "activity_gone");
             return;
         }
-        host.readThread(job.e164, READ_LIMIT, bubbles -> onThreadRead(job, bubbles));
+        host.readThread(job.e164, READ_LIMIT, bubbles -> {
+            if (current != job) return;
+            if (!host.isAlive()) {
+                report(job, SendOutcome.SENT_UNVERIFIED, "activity_gone");
+                return;
+            }
+            host.probeComposer(pending -> onThreadRead(job, bubbles, Boolean.TRUE.equals(pending)));
+        });
     }
 
-    private void onThreadRead(final Job job, List<ThreadBubble> bubbles) {
+    private void onThreadRead(final Job job, List<ThreadBubble> bubbles, boolean pending) {
         if (current != job) return;
         long now = System.currentTimeMillis();
-        if (bubbles != null) {
-            List<ThreadEvent> events = WebViewThreadEventSource.toEvents(bubbles, now);
+        List<ThreadEvent> events = job.watch.onPoll(bubbles, pending, now);
+        if (events != null) {
             SendVerifier.Result r = SendVerifier.verify(job.bodyHash, events, job.checkTimeMs, now);
             if (r == SendVerifier.Result.VERIFIED) {
                 report(job, SendOutcome.SENT_VERIFIED, null);
@@ -301,13 +367,19 @@ public final class ScheduledSendController {
             report(job, SendOutcome.SENT_UNVERIFIED, "no_match");
             return;
         }
-        main.postDelayed(() -> readOnce(job), READ_INTERVAL_MS);
+        main.postDelayed(() -> readOnce(job),
+                job.watch.baseline() == null ? BASELINE_POLL_MS : READ_INTERVAL_MS);
     }
 
     /** Hands the outcome to the engine (the only status writer), then the next job or settle. */
     private void report(Job job, SendOutcome outcome, String detail) {
         if (current != job) return;
         current = null;
+        if (job.watch != null && (outcome == SendOutcome.SENT_VERIFIED || outcome == SendOutcome.SENT_UNVERIFIED)) {
+            // The engine answers these with one read of this thread: date it against the baseline.
+            WebViewThreadEventSource.armPostSendRead(job.e164, job.watch.baseline(), System.currentTimeMillis());
+        }
+        awaitingEngineId = job.id;
         SendLaterEngine.onSendOutcome(app, job.id, outcome, detail);
         afterOutcome();
     }
@@ -321,15 +393,51 @@ public final class ScheduledSendController {
         settle();
     }
 
-    /** Nothing left to send: leave the lock screen (finish) or drop the lock-screen flags. */
+    /**
+     * Nothing left to send: leave the lock screen (finish) or drop the lock-screen flags. Over the
+     * keyguard the finish waits for the engine's state broadcast for the last outcome (it reads
+     * this thread first), at most {@link #FINISH_GRACE_MS}.
+     */
     private void settle() {
         if (overKeyguard) {
+            if (awaitingEngineId > 0) listenForEngine();
             main.postDelayed(() -> {
                 if (!isActive() && !activity.isFinishing()) host.finish();
-            }, FINISH_GRACE_MS);
+            }, awaitingEngineId > 0 ? FINISH_GRACE_MS : IDLE_FINISH_MS);
         } else {
+            awaitingEngineId = -1L;
             applyLockFlags(false);
         }
+    }
+
+    private void listenForEngine() {
+        if (engineDone != null) return;
+        engineDone = new BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent i) {
+                long id = i.getLongExtra(SendLaterIntents.EXTRA_MESSAGE_ID, -1L);
+                if (id <= 0 || id != awaitingEngineId || isActive()) return;
+                awaitingEngineId = -1L;
+                main.postDelayed(() -> {
+                    if (!isActive() && !activity.isFinishing()) host.finish();
+                }, ENGINE_DONE_FINISH_MS);
+            }
+        };
+        try {
+            ContextCompat.registerReceiver(activity, engineDone,
+                    new IntentFilter(SendLaterIntents.ACTION_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED);
+        } catch (RuntimeException e) {
+            engineDone = null;   // the grace timer still finishes
+        }
+    }
+
+    private void stopListeningForEngine() {
+        if (engineDone == null) return;
+        try {
+            activity.unregisterReceiver(engineDone);
+        } catch (RuntimeException ignored) {
+            // not registered
+        }
+        engineDone = null;
     }
 
     /** Ends the running and queued jobs: typed -> SENT_UNVERIFIED, untyped -> CANNOT_SHOW. */
