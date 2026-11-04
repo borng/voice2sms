@@ -53,6 +53,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
     static final String NOTIFICATION_TAG = "sendlater_send";
     /** The activity must take the launch token within this, else CANNOT_SHOW. */
     static final long CLAIM_TIMEOUT_MS = 30_000L;
+    /** CANNOT_SHOW detail when the scheduled queue's daily cap refused the slot (G4). */
+    public static final String DETAIL_DAILY_CAP = "daily_cap";
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
@@ -64,6 +66,10 @@ public final class WebViewScheduledSender implements ScheduledSender {
         if (message.getRecipientE164() == null || message.getText() == null) return false;
         // Nothing that cannot launch may use up a queue slot (spacing, daily cap).
         if (!rowIsSendable(app, message)) return false;
+        if (!ScheduledSendController.isBusy() && ForegroundUse.isUserBusy(System.currentTimeMillis())) {
+            // OD23: the user is typing in the voice2sms WebView; never take it over. Reminder.
+            return notStarted(app, id, ForegroundUse.DETAIL_USER_BUSY);
+        }
         LaunchPlanner.Result plan = currentPlan(app);
         if (plan == LaunchPlanner.Result.CANNOT_SHOW && !ScheduledSendController.isBusy()) {
             // CANNOT_SHOW: nothing attempted; the engine records the LOCKED reminder.
@@ -74,7 +80,7 @@ public final class WebViewScheduledSender implements ScheduledSender {
         if (delayMs == ScheduledSendQueue.REFUSED) {
             // Daily cap reached: nothing attempted; the engine reminds the user to send by hand.
             Log.w(TAG, "scheduled queue refused id " + id);
-            return false;
+            return notStarted(app, id, DETAIL_DAILY_CAP);
         }
         if (!markInFlight(app, message)) return false;
 
@@ -86,6 +92,17 @@ public final class WebViewScheduledSender implements ScheduledSender {
     }
 
     /**
+     * Nothing was attempted: reports CANNOT_SHOW with {@code detail} (so the engine can word the
+     * reminder), then returns false as {@link ScheduledSender#start} requires. Called on the
+     * engine's thread, the report is handled before start returns; the engine's own
+     * "not started" handling then finds the row released and does nothing more.
+     */
+    private static boolean notStarted(Context app, long id, String detail) {
+        SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW, detail);
+        return false;
+    }
+
+    /**
      * At the slot's time: hand the launch to a live activity that is already sending (messages
      * due together queue behind it there), else open GVoiceWebViewActivity as
      * {@link LaunchPlanner} decides NOW (the screen may have changed during the queue delay).
@@ -93,6 +110,13 @@ public final class WebViewScheduledSender implements ScheduledSender {
     private static void launch(Context app, long id, String token, long checkTime) {
         if (!LaunchClaims.INSTANCE.isPending(id)) return;
         if (ScheduledSendController.offer(id, token, checkTime, 0L)) return;
+        if (ForegroundUse.isUserBusy(System.currentTimeMillis())) {
+            // OD23: the user started using the WebView during the queue delay.
+            if (LaunchClaims.INSTANCE.take(id, token)) {
+                SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY);
+            }
+            return;
+        }
         switch (currentPlan(app)) {
             case DIRECT:
                 launchDirect(app, id, token, checkTime);

@@ -11,6 +11,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.inputmethod.EditorInfo;
@@ -35,6 +36,7 @@ import androidx.preference.PreferenceManager;
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.OriginGuard;
+import com.voice2sms.sendlater.send.ForegroundUse;
 import com.voice2sms.sendlater.send.ScheduledSendController;
 import com.voice2sms.sendlater.web.SendLaterWebHooks;
 import com.voice2sms.sendlater.web.ThreadReadCallback;
@@ -212,6 +214,11 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                // send-lock-cover: over the keyguard only the target thread may load.
+                if (request.isForMainFrame() && scheduledSend != null && !scheduledSend.allowsNavigation(url)) {
+                    Log.d(TAG, "Blocking navigation while a scheduled send is covered");
+                    return true;
+                }
                 if (OriginGuard.isAllowedNavigation(request.getUrl().getScheme(), request.getUrl().getHost())) {
                     return false;
                 }
@@ -594,6 +601,11 @@ public class GVoiceWebViewActivity extends Activity {
         public void finish() {
             GVoiceWebViewActivity.this.finish();
         }
+
+        @Override
+        public View pageView() {
+            return isActivityAlive() ? webView : null;
+        }
     }
 
     private static String jsonEncode(String s) {
@@ -652,6 +664,8 @@ public class GVoiceWebViewActivity extends Activity {
             Log.d(TAG, "JS requested showKeyboard");
             runOnUiThread(() -> {
                 if (!isActivityAlive()) return;
+                // send-lock-cover: no keyboard over the keyguard while the page is covered.
+                if (scheduledSend != null && scheduledSend.isCovered()) return;
                 webView.setFocusableInTouchMode(true);
                 webView.requestFocus();
                 new Handler(Looper.getMainLooper())
@@ -955,6 +969,8 @@ public class GVoiceWebViewActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        ForegroundUse.noteResumed(false);
+        if (scheduledSend != null) scheduledSend.onPauseOrStop(false);
         if (sendLaterHooks != null) sendLaterHooks.onPause();
         CookieManager.getInstance().flush();
         if (webView != null) {
@@ -965,6 +981,8 @@ public class GVoiceWebViewActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        ForegroundUse.noteResumed(true);
+        if (scheduledSend != null) scheduledSend.onResume();
         if (sendLaterHooks != null) sendLaterHooks.onResume();
         if (webView != null) {
             webView.onResume();
@@ -972,7 +990,39 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        super.onStop();
+        if (scheduledSend != null) scheduledSend.onPauseOrStop(true);
+    }
+
+    /**
+     * send-lock-cover: while a scheduled send is covered over the keyguard, every touch is
+     * consumed here (the WebView underneath only gets inject.js's own events). Otherwise records
+     * the touch so a due send does not take the page over from an active user (OD23).
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (scheduledSend != null && scheduledSend.isCovered()) return true;
+        ForegroundUse.noteTouch(System.currentTimeMillis());
+        return super.dispatchTouchEvent(ev);
+    }
+
+    /** send-lock-cover: keys (and back) are consumed while covered. */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (scheduledSend != null && scheduledSend.isCovered()) return true;
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent ev) {
+        if (scheduledSend != null && scheduledSend.isCovered()) return true;
+        return super.dispatchGenericMotionEvent(ev);
+    }
+
+    @Override
     public void onBackPressed() {
+        if (scheduledSend != null && scheduledSend.isCovered()) return;   // back is consumed while covered
         finish();
     }
 
