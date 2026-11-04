@@ -33,6 +33,7 @@ import android.util.Base64;
 import androidx.core.view.ViewCompat;
 import androidx.preference.PreferenceManager;
 
+import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.OriginGuard;
@@ -560,6 +561,18 @@ public class GVoiceWebViewActivity extends Activity {
         public void readThread(String e164, int limit, ThreadReadCallback cb) {
             GVoiceWebViewActivity.this.readThread(e164, limit, cb);
         }
+
+        @Override
+        public void onSendLaterSwitch(boolean enabled) {
+            // R40: the composer probe runs only while Send Later is on (it feeds ForegroundUse
+            // for scheduled sends, which never start while the switch is off).
+            composerProbeHandler.removeCallbacks(composerProbe);
+            if (enabled && isActivityAlive() && ForegroundUse.isResumed()) {
+                composerProbeHandler.post(composerProbe);
+            } else {
+                ForegroundUse.noteComposer(false, System.currentTimeMillis());
+            }
+        }
     }
 
     /**
@@ -985,15 +998,21 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     /**
-     * send-hardening R5: while resumed, probe whether the message box holds text (a draft typed
-     * on the soft keyboard sends no touches here). Answers a boolean only, never the text. While
-     * a scheduled send owns the page the text is ours, so it does not count.
+     * send-hardening R5: while resumed and Send Later is on, probe whether the message box holds
+     * text (a draft typed on the soft keyboard sends no touches here). Answers a boolean only,
+     * never the text. While a scheduled send owns the page the text is ours, so it does not
+     * count. With the switch off the probe stops itself (R40); SendLaterWebHooks restarts it via
+     * Host.onSendLaterSwitch when the switch goes on.
      */
     private final Handler composerProbeHandler = new Handler(Looper.getMainLooper());
     private final Runnable composerProbe = new Runnable() {
         @Override
         public void run() {
             if (!isActivityAlive()) return;
+            if (!SendLaterSettings.isEnabled(GVoiceWebViewActivity.this)) {
+                ForegroundUse.noteComposer(false, System.currentTimeMillis());
+                return;
+            }
             if (scheduledSend != null && (scheduledSend.isActive() || scheduledSend.isCovered())) {
                 ForegroundUse.noteComposer(false, System.currentTimeMillis());
             } else {

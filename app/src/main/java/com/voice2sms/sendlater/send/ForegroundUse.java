@@ -15,7 +15,7 @@ public final class ForegroundUse {
     /** CANNOT_SHOW detail when the user is in the WebView. */
     public static final String DETAIL_USER_BUSY = "user_busy";
 
-    /** The activity probes its message box this often while resumed (R5). */
+    /** The activity probes its message box this often while resumed and Send Later is on (R5, R40). */
     public static final long COMPOSER_PROBE_INTERVAL_MS = 2_000L;
     /** A composer sample older than this says nothing (the probe stopped). */
     public static final long COMPOSER_SAMPLE_MAX_AGE_MS = 5_000L;
@@ -29,6 +29,11 @@ public final class ForegroundUse {
 
     public static void noteResumed(boolean isResumed) {
         resumed = isResumed;
+    }
+
+    /** Whether GVoiceWebViewActivity is resumed (as last noted). */
+    public static boolean isResumed() {
+        return resumed;
     }
 
     public static void noteTouch(long nowMs) {

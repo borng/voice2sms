@@ -877,6 +877,10 @@ function sendImageToGV(base64Data, mimeType, fileName) {
 var V2S_SL_ACCENT = '#8AB4F8';      // shared Send Later accent (A4 / OD9)
 var V2S_SL_ON_ACCENT = '#0B1D3A';   // text/icon colour on the accent
 var V2S_SL_Z = 2147483000;
+// R40: no fast polling. Ticks come from input, resize and Java's v2sSendLaterRefresh
+// (SPA navigation, state changes, resume); this timer runs only while Send Later is on
+// and a 1:1 thread is open (it keeps the tab/chip placed and the chip fresh).
+var V2S_SL_TICK_MS = 2000;
 
 function v2sSendLaterInit() {
     if (typeof V2SBridge === 'undefined') return;
@@ -893,19 +897,23 @@ function v2sSendLaterInit() {
         title: null,         // {e164, title, at, confirmed} header pairing for R4
         prevTitle: '',       // header text of the previous thread (stale-header guard)
         pairs: {},           // e164 -> confirmed header title
-        directorySig: ''
+        directorySig: '',
+        timer: null,         // V2S_SL_TICK_MS interval, only while on and a 1:1 thread is open
+        followUps: []        // bounded one-shot ticks after a forced tick (thread list renders late)
     };
-    document.addEventListener('input', function() { _v2sSlTick(); }, true);
-    window.addEventListener('resize', function() { _v2sSlTick(); });
-    setInterval(function() { _v2sSlTick(); }, 700);
-    _v2sSlTick();
+    document.addEventListener('input', function() { _v2sSlTick(false); }, true);
+    window.addEventListener('resize', function() { _v2sSlTick(false); });
+    _v2sSlTick(true);
 }
 
-/** Java -> page on ACTION_STATE_CHANGED: re-read the chip for the open thread (R17). */
+/**
+ * Java -> page on ACTION_STATE_CHANGED, SPA navigation and resume: re-read the chip for
+ * the open thread (R17). This is also how a switched-off page learns it is on again.
+ */
 window.v2sSendLaterRefresh = function() {
     var st = window._v2sSl;
     if (!st) return;
-    _v2sSlRefreshChip(st);
+    _v2sSlTick(true);
 };
 
 /**
@@ -1012,16 +1020,21 @@ function _v2sSlSetInputValue(el, value, focus) {
     }
 }
 
-function _v2sSlTick() {
+/**
+ * One pass: thread change, chip freshness, R4 pairing/scrape, layout. While Send Later
+ * is off only a forced tick (from Java) runs; page events then cost nothing.
+ */
+function _v2sSlTick(force) {
     var st = window._v2sSl;
-    if (!st || document.hidden) return;
+    if (!st) return;
+    if (!force && (!st.enabled || document.hidden)) return;
     var e164 = _v2sSlThreadE164();
     if (e164 !== st.e164) {
         st.prevTitle = st.title ? st.title.title : '';
         st.e164 = e164;
         st.title = null;
         _v2sSlRefreshChip(st);
-    } else if (Date.now() - st.chipAt > 15000) {
+    } else if (force || Date.now() - st.chipAt > 15000) {
         _v2sSlRefreshChip(st);
     }
     if (st.enabled) {
@@ -1031,6 +1044,22 @@ function _v2sSlTick() {
         _v2sSlScrapeDirectory(st);
     }
     _v2sSlLayout(st);
+    if (force) _v2sSlFollowUp(st);
+}
+
+/**
+ * After a forced tick (page load, SPA navigation, state change) the GV thread list may
+ * still be rendering: two one-shot ticks catch it for the R4 scrape. Bounded, not a poll;
+ * only while on and no 1:1 thread is open (the timer covers that case).
+ */
+function _v2sSlFollowUp(st) {
+    for (var i = 0; i < st.followUps.length; i++) clearTimeout(st.followUps[i]);
+    st.followUps = [];
+    if (!st.enabled || st.e164) return;
+    var delays = [V2S_SL_TICK_MS, 3 * V2S_SL_TICK_MS];
+    for (var j = 0; j < delays.length; j++) {
+        st.followUps.push(setTimeout(function() { _v2sSlTick(false); }, delays[j]));
+    }
 }
 
 /** Re-reads V2SBridge.sendLaterChipState for the open thread (R17). */
@@ -1051,7 +1080,19 @@ function _v2sSlRefreshChip(st) {
         st.pairs = {};
         st.directorySig = '';
     }
+    _v2sSlSchedule(st);
     _v2sSlLayout(st);
+}
+
+/** Runs the V2S_SL_TICK_MS timer only while Send Later is on and a 1:1 thread is open (R40). */
+function _v2sSlSchedule(st) {
+    var want = !!(st && st.enabled && st.e164);
+    if (want && !st.timer) {
+        st.timer = setInterval(function() { _v2sSlTick(false); }, V2S_SL_TICK_MS);
+    } else if (!want && st.timer) {
+        clearInterval(st.timer);
+        st.timer = null;
+    }
 }
 
 /** Outermost ancestor (up to 5 levels) of the composer that still looks like one row. */

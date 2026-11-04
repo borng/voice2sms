@@ -18,13 +18,19 @@ import java.util.Locale;
  * origin {@code https://voice.google.com}.
  *
  * <p>{@link #isAllowedNavigation} is the {@code shouldOverrideUrlLoading} allowlist: https only,
- * host google.com, googleapis.com or gstatic.com or a subdomain of one of them.
+ * host google.com, googleapis.com or gstatic.com or a subdomain of one of them, or exactly
+ * accounts.youtube.com (Google sign-in redirect).
  */
 public final class OriginGuard {
 
     static final String GV_HOST = "voice.google.com";
     private static final String HTTPS = "https";
     private static final String[] NAV_DOMAINS = {"google.com", "googleapis.com", "gstatic.com"};
+    /**
+     * Exact hosts outside those domains that Google's web sign-in passes the main frame through
+     * (SetSID cookie hop; integration-gate F8). Exact match only: no other youtube.com host.
+     */
+    private static final String[] NAV_EXACT_HOSTS = {"accounts.youtube.com"};
 
     private OriginGuard() {}
 
@@ -63,6 +69,9 @@ public final class OriginGuard {
         String h = host.toLowerCase(Locale.ROOT);
         for (String d : NAV_DOMAINS) {
             if (h.equals(d) || h.endsWith("." + d)) return true;
+        }
+        for (String e : NAV_EXACT_HOSTS) {
+            if (h.equals(e)) return true;
         }
         return false;
     }
