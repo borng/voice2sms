@@ -1,0 +1,466 @@
+package com.voice2sms.sendlater.web;
+
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.util.Log;
+
+import androidx.core.content.ContextCompat;
+
+import com.voice2sms.sendlater.SendLaterIntents;
+import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.domain.ScheduledMessage;
+import com.voice2sms.sendlater.store.SendLaterRepository;
+import com.voice2sms.sendlater.store.ThreadDirectory;
+
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.lang.ref.WeakReference;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
+import java.util.TimeZone;
+
+/**
+ * Send Later wiring for {@code GVoiceWebViewActivity} (R4, R10, R11, R17, R18): the activity's
+ * edits stay thin and delegate here. This class never holds the WebView; every page touch goes
+ * through {@link Host}, whose implementation runs on the UI thread behind isActivityAlive().
+ *
+ * <p>Threads: methods named {@code bridge*} run on the JavaBridge (binder) thread and may read the
+ * repository; {@code on*}, {@link #openSheet}, {@link #beginThreadRead} and the receiver run on
+ * the main thread. Never logs drafts, names or numbers.
+ */
+public final class SendLaterWebHooks {
+
+    private static final String TAG = "Voice2SMS-SL";
+
+    /** The page must answer a v2sReadThread request within this time, or the callback gets null. */
+    static final long THREAD_READ_TIMEOUT_MS = 5000;
+    /** Undo is accepted this long after the clear (the bar shows for 10 s). */
+    static final long UNDO_WINDOW_MS = 12000;
+    /** A capture older than this no longer matches an ACTION_SCHEDULED broadcast. */
+    static final long CAPTURE_MATCH_MS = 30 * 60 * 1000L;
+
+    /** What the activity provides; every method is safe to call when the activity is gone. */
+    public interface Host {
+        /** Evaluate {@code js} on the UI thread, skipped when the activity is no longer alive. */
+        void evaluate(String js);
+
+        /** Current WebView URL; main thread only; null when the activity is gone. */
+        String currentUrl();
+
+        /** {@code GVoiceWebViewActivity.readThread}. */
+        void readThread(String e164, int limit, ThreadReadCallback cb);
+    }
+
+    private static volatile WeakReference<SendLaterWebHooks> active = new WeakReference<>(null);
+
+    private final Activity activity;
+    private final Context app;
+    private final Host host;
+    private final Handler main = new Handler(Looper.getMainLooper());
+
+    // Guarded by `this`.
+    private CapturePayload lastCapture;
+    private long lastCaptureAt;
+    private PendingClear pendingClear;
+    private long undoMessageId = -1;
+    private long undoUntil;
+    private final List<PendingRead> reads = new ArrayList<>();
+
+    // Main thread only.
+    private boolean resumed;
+    private boolean receiverRegistered;
+    private boolean sheetOpen;
+    private String moduleScript;
+
+    private static final class PendingClear {
+        final long messageId;
+        final String draft;
+        final String label;
+
+        PendingClear(long messageId, String draft, String label) {
+            this.messageId = messageId;
+            this.draft = draft;
+            this.label = label;
+        }
+    }
+
+    private static final class PendingRead {
+        final String e164;
+        final ThreadReadCallback cb;
+
+        PendingRead(String e164, ThreadReadCallback cb) {
+            this.e164 = e164;
+            this.cb = cb;
+        }
+    }
+
+    public SendLaterWebHooks(Activity activity, Host host) {
+        this.activity = activity;
+        this.app = activity.getApplicationContext();
+        this.host = host;
+        active = new WeakReference<>(this);
+    }
+
+    /** Hooks of the live GVoiceWebViewActivity, or null (for the send path). */
+    public static SendLaterWebHooks active() {
+        return active.get();
+    }
+
+    /** Reads the open thread's newest bubbles; see {@link ThreadReadCallback}. */
+    public void readThread(String e164, int limit, ThreadReadCallback cb) {
+        host.readThread(e164, limit, cb);
+    }
+
+    // ------------------------------------------------------------------ page load
+
+    /** inject.js plus {@code v2sSendLaterInit()}; evaluated by the activity from onPageFinished. */
+    public String moduleScript() {
+        if (moduleScript == null) {
+            try (InputStream is = activity.getAssets().open("inject.js")) {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+                moduleScript = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                Log.w(TAG, "inject.js unreadable; Send Later module not installed");
+                return null;
+            }
+        }
+        return moduleScript + "\n;if (typeof v2sSendLaterInit === 'function') v2sSendLaterInit();";
+    }
+
+    // ------------------------------------------------------------------ lifecycle (main thread)
+
+    public void onResume() {
+        resumed = true;
+        sheetOpen = false;
+        register();
+        PendingClear c;
+        synchronized (this) {
+            c = pendingClear;
+            pendingClear = null;
+        }
+        if (c != null) applyClear(c);
+        else refreshChip();
+    }
+
+    public void onPause() {
+        resumed = false;
+        // While our own sheet is on top the ACTION_SCHEDULED broadcast must still reach us so the
+        // composer can be cleared on return; the receiver is dropped on the next pause or destroy.
+        if (!sheetOpen) unregister();
+    }
+
+    public void onDestroy() {
+        resumed = false;
+        unregister();
+        List<PendingRead> failed;
+        synchronized (this) {
+            failed = new ArrayList<>(reads);
+            reads.clear();
+        }
+        for (PendingRead r : failed) r.cb.onThreadRead(null);
+        if (active.get() == this) active = new WeakReference<>(null);
+    }
+
+    private void register() {
+        if (receiverRegistered) return;
+        IntentFilter f = new IntentFilter();
+        f.addAction(SendLaterIntents.ACTION_SCHEDULED);
+        f.addAction(SendLaterIntents.ACTION_STATE_CHANGED);
+        ContextCompat.registerReceiver(activity, receiver, f, ContextCompat.RECEIVER_NOT_EXPORTED);
+        receiverRegistered = true;
+    }
+
+    private void unregister() {
+        if (!receiverRegistered) return;
+        try {
+            activity.unregisterReceiver(receiver);
+        } catch (IllegalArgumentException ignored) {
+            // already gone
+        }
+        receiverRegistered = false;
+    }
+
+    private final BroadcastReceiver receiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (SendLaterIntents.ACTION_SCHEDULED.equals(action)) {
+                onScheduled(intent);
+            } else if (SendLaterIntents.ACTION_STATE_CHANGED.equals(action)) {
+                refreshChip();
+            }
+        }
+    };
+
+    private void refreshChip() {
+        host.evaluate("if (window.v2sSendLaterRefresh) window.v2sSendLaterRefresh();");
+    }
+
+    /** ACTION_SCHEDULED: clear the composer when this WebView captured that draft (R11). */
+    private void onScheduled(Intent intent) {
+        String source = intent.getStringExtra(SendLaterIntents.EXTRA_SOURCE);
+        String e164 = intent.getStringExtra(SendLaterIntents.EXTRA_E164);
+        long id = intent.getLongExtra(SendLaterIntents.EXTRA_MESSAGE_ID, -1);
+        PendingClear clear = null;
+        synchronized (this) {
+            CapturePayload cap = lastCapture;
+            boolean fresh = cap != null && SystemClock.elapsedRealtime() - lastCaptureAt < CAPTURE_MATCH_MS;
+            boolean ours = fresh && id > 0 && cap.getE164().equals(e164)
+                    && (source == null || ScheduledMessage.Source.WEBVIEW.name().equals(source));
+            if (ours) {
+                lastCapture = null;
+                if (SendLaterSettings.clearDraft(app)) {
+                    clear = new PendingClear(id, cap.getDraftText(), labelOf(intent));
+                }
+            }
+        }
+        if (clear == null) {
+            refreshChip();
+            return;
+        }
+        if (resumed) {
+            applyClear(clear);
+        } else {
+            synchronized (this) {
+                pendingClear = clear;
+            }
+        }
+    }
+
+    private void applyClear(PendingClear c) {
+        synchronized (this) {
+            undoMessageId = c.messageId;
+            undoUntil = SystemClock.elapsedRealtime() + UNDO_WINDOW_MS;
+        }
+        host.evaluate("if (window.v2sSendLaterClear) window.v2sSendLaterClear("
+                + c.messageId + ", " + JSONObject.quote(c.draft) + ", " + JSONObject.quote(c.label) + ");");
+    }
+
+    private static String labelOf(Intent intent) {
+        String label = intent.getStringExtra(SendLaterIntents.EXTRA_LABEL);
+        if (label != null && !label.trim().isEmpty()) return label;
+        long at = intent.getLongExtra(SendLaterIntents.EXTRA_SCHEDULED_FOR, -1);
+        if (at <= 0) return "later";
+        SimpleDateFormat f = new SimpleDateFormat("EEE h:mm a", Locale.getDefault());
+        f.setTimeZone(TimeZone.getDefault());
+        return f.format(new Date(at));
+    }
+
+    // ------------------------------------------------------------------ capture (R10)
+
+    /** Binder thread: validated payload, or null (bad JSON, Send Later off). */
+    public CapturePayload bridgeAcceptCapture(String json) {
+        CapturePayload p = CapturePayload.parse(json);
+        if (p == null) {
+            Log.w(TAG, "capture rejected: invalid payload");
+            return null;
+        }
+        if (!SendLaterSettings.isEnabled(app)) return null;
+        return p;
+    }
+
+    /**
+     * Main thread: opens the sheet with {@link SendLaterIntents#ACTION_CAPTURE} when the WebView
+     * still shows the captured thread (the page cannot pick another recipient).
+     */
+    public void openSheet(CapturePayload p, String currentUrl) {
+        if (!ThreadUrl.isThreadOf(currentUrl, p.getE164())) {
+            Log.w(TAG, "capture dropped: page no longer shows that thread");
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Intent i = new Intent(SendLaterIntents.ACTION_CAPTURE)
+                .setPackage(app.getPackageName())
+                .putExtra(SendLaterIntents.EXTRA_SOURCE, ScheduledMessage.Source.WEBVIEW.name())
+                .putExtra(SendLaterIntents.EXTRA_E164, p.getE164())
+                .putExtra(SendLaterIntents.EXTRA_CANDIDATES, new String[]{p.getE164()})
+                .putExtra(SendLaterIntents.EXTRA_DRAFT, p.getDraftText())
+                .putExtra(SendLaterIntents.EXTRA_THREAD_ITEM_ID, p.threadItemId())
+                .putExtra(SendLaterIntents.EXTRA_WATERMARK_QUALITY, p.getWatermarkQuality().name())
+                .putExtra(SendLaterIntents.EXTRA_WATERMARK_CAPTURED_AT, now);
+        if (p.getDisplayName() != null) i.putExtra(SendLaterIntents.EXTRA_DISPLAY_NAME, p.getDisplayName());
+        if (p.getNewestMessageId() != null) {
+            i.putExtra(SendLaterIntents.EXTRA_WATERMARK_NEWEST_ID, p.getNewestMessageId());
+        }
+        if (p.getNewestMessageTimeMs() != null) {
+            i.putExtra(SendLaterIntents.EXTRA_WATERMARK_NEWEST_TS, p.getNewestMessageTimeMs().longValue());
+        }
+        synchronized (this) {
+            lastCapture = p;
+            lastCaptureAt = SystemClock.elapsedRealtime();
+        }
+        if (start(i)) sheetOpen = true;
+    }
+
+    private boolean start(Intent i) {
+        try {
+            activity.startActivity(i);
+            return true;
+        } catch (ActivityNotFoundException e) {
+            Log.w(TAG, "no Send Later activity for " + i.getAction());
+            return false;
+        }
+    }
+
+    // ------------------------------------------------------------------ chip (R17, R18)
+
+    /** Binder thread: chip JSON for the thread (see {@link ChipState}). */
+    public String bridgeChipState(String e164) {
+        if (!SendLaterSettings.isEnabled(app)) return ChipState.disabled();
+        if (!ThreadDirectory.isE164(e164)) return ChipState.toJson(true, null, null, TimeZone.getDefault());
+        try {
+            SendLaterRepository repo = SendLaterRepository.get(app);
+            return ChipState.toJson(true, repo.pendingForThread(e164), repo.heldForThread(e164),
+                    TimeZone.getDefault());
+        } catch (RuntimeException e) {
+            Log.w(TAG, "chip state unavailable: " + e.getClass().getSimpleName());
+            return ChipState.toJson(true, null, null, TimeZone.getDefault());
+        }
+    }
+
+    /** Binder thread: one message -> edit mode, several -> Upcoming filtered to the thread. */
+    public void bridgeChipTap(String e164) {
+        if (!SendLaterSettings.isEnabled(app) || !ThreadDirectory.isE164(e164)) return;
+        final Intent i;
+        try {
+            SendLaterRepository repo = SendLaterRepository.get(app);
+            List<ScheduledMessage> pending = repo.pendingForThread(e164);
+            List<ScheduledMessage> held = repo.heldForThread(e164);
+            long only = ChipState.singleMessageId(pending, held);
+            if (only > 0) {
+                i = new Intent(SendLaterIntents.ACTION_EDIT).putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, only);
+            } else if (pending.size() + held.size() > 1) {
+                i = new Intent(SendLaterIntents.ACTION_UPCOMING).putExtra(SendLaterIntents.EXTRA_E164, e164);
+            } else {
+                return;
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "chip tap failed: " + e.getClass().getSimpleName());
+            return;
+        }
+        i.setPackage(app.getPackageName());
+        main.post(() -> {
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+            start(i);
+        });
+    }
+
+    // ------------------------------------------------------------------ undo (R11, I4)
+
+    /**
+     * Binder thread: cancels the message just cleared from the composer. Only the most recent
+     * clear, within its undo window, and only while it is still SCHEDULED or HELD. The page
+     * restores the draft itself, and only when this returns true.
+     */
+    public boolean bridgeUndo(long messageId) {
+        synchronized (this) {
+            if (messageId <= 0 || messageId != undoMessageId
+                    || SystemClock.elapsedRealtime() > undoUntil) {
+                return false;
+            }
+            undoMessageId = -1;
+        }
+        try {
+            SendLaterRepository repo = SendLaterRepository.get(app);
+            ScheduledMessage m = repo.get(messageId);
+            if (m == null || (m.getStatus() != ScheduledMessage.Status.SCHEDULED
+                    && m.getStatus() != ScheduledMessage.Status.HELD)) {
+                return false;
+            }
+            if (!repo.cancel(messageId)) return false;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "undo failed: " + e.getClass().getSimpleName());
+            return false;
+        }
+        app.sendBroadcast(new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
+                .setPackage(app.getPackageName())
+                .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, messageId)
+                .putExtra(SendLaterIntents.EXTRA_STATUS, ScheduledMessage.Status.CANCELED.name()));
+        return true;
+    }
+
+    // ------------------------------------------------------------------ thread read
+
+    /**
+     * Main thread: registers {@code cb} and returns the JS that asks the page for the newest
+     * {@code limit} bubbles. The callback gets null after {@link #THREAD_READ_TIMEOUT_MS}.
+     */
+    public String beginThreadRead(String e164, int limit, ThreadReadCallback cb) {
+        final PendingRead r = new PendingRead(e164, cb);
+        synchronized (this) {
+            reads.add(r);
+        }
+        main.postDelayed(() -> {
+            boolean removed;
+            synchronized (SendLaterWebHooks.this) {
+                removed = reads.remove(r);
+            }
+            if (removed) r.cb.onThreadRead(null);
+        }, THREAD_READ_TIMEOUT_MS);
+        String q = JSONObject.quote(e164);
+        int n = Math.max(1, Math.min(limit, ThreadBubble.MAX_BUBBLES));
+        return "if (window.v2sReadThread) { window.v2sReadThread(" + q + ", " + n + "); }"
+                + " else if (window.V2SBridge) { V2SBridge.onThreadRead(JSON.stringify({e164: " + q
+                + ", bubbles: null})); }";
+    }
+
+    /** Binder thread: delivers a page answer to every waiting reader of that thread. */
+    public void bridgeThreadRead(String json) {
+        ThreadBubble.Report report = ThreadBubble.parseReport(json);
+        if (report == null) return;
+        final List<PendingRead> ready = new ArrayList<>();
+        synchronized (this) {
+            Iterator<PendingRead> it = reads.iterator();
+            while (it.hasNext()) {
+                PendingRead r = it.next();
+                if (r.e164.equals(report.e164)) {
+                    ready.add(r);
+                    it.remove();
+                }
+            }
+        }
+        if (ready.isEmpty()) return;
+        final List<ThreadBubble> bubbles = report.bubbles;
+        main.post(() -> {
+            for (PendingRead r : ready) r.cb.onThreadRead(bubbles);
+        });
+    }
+
+    // ------------------------------------------------------------------ thread directory (R4)
+
+    /** Binder thread: upserts the (name, number) pairs the page saw in its thread list. */
+    public void bridgeThreadDirectory(String json) {
+        // Nothing is stored for a feature that is switched off (default: off).
+        if (!SendLaterSettings.isEnabled(app)) return;
+        List<DirectoryReport.Entry> entries = DirectoryReport.parse(json);
+        if (entries.isEmpty()) return;
+        try {
+            ThreadDirectory dir = ThreadDirectory.get(app);
+            long now = System.currentTimeMillis();
+            int n = 0;
+            for (DirectoryReport.Entry e : entries) {
+                if (dir.upsert(e.displayName, e.e164, now)) n++;
+            }
+            if (com.voice2sms.BuildConfig.DEBUG) Log.d(TAG, "thread directory upserted " + n);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "thread directory upsert failed: " + e.getClass().getSimpleName());
+        }
+    }
+}

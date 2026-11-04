@@ -32,6 +32,12 @@ import android.util.Base64;
 import androidx.core.view.ViewCompat;
 import androidx.preference.PreferenceManager;
 
+import com.voice2sms.sendlater.web.CapturePayload;
+import com.voice2sms.sendlater.web.ChipState;
+import com.voice2sms.sendlater.web.SendLaterWebHooks;
+import com.voice2sms.sendlater.web.ThreadReadCallback;
+import com.voice2sms.sendlater.web.ThreadUrl;
+
 import org.json.JSONArray;
 
 import java.io.BufferedReader;
@@ -59,6 +65,8 @@ public class GVoiceWebViewActivity extends Activity {
     private boolean injected = false;
     private ValueCallback<Uri[]> fileUploadCallback;
     private volatile boolean stickerInjectionActive;
+    /** Send Later wiring (R10/R11/R17/R18); see SendLaterWebHooks. */
+    private SendLaterWebHooks sendLaterHooks;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -86,6 +94,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         // Set up WebViewClient and JS interface (re-set each time since
         // the bridge closure captures `this` Activity)
+        sendLaterHooks = new SendLaterWebHooks(this, new SendLaterHost());
         setupWebViewClient();
         webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
         webView.setWebChromeClient(new WebChromeClient() {
@@ -205,6 +214,8 @@ public class GVoiceWebViewActivity extends Activity {
                 Log.d(TAG, "onPageFinished: " + url);
 
                 CookieManager.getInstance().flush();
+                // Send Later module (v2sSendLaterInit), once per page load.
+                if (url.startsWith("https://voice.google.com") && sendLaterHooks != null) installSendLater();
 
                 if (url.startsWith("https://voice.google.com") && !injected && recipient != null) {
                     // Mark SPA as loaded for future warm starts
@@ -415,6 +426,51 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /** Installs the inject.js Send Later module (v2sSendLaterInit) once per page load. */
+    private void installSendLater() {
+        if (!isActivityAlive() || sendLaterHooks == null) return;
+        String js = sendLaterHooks.moduleScript();
+        if (js != null) webView.evaluateJavascript(js, null);
+    }
+
+    /**
+     * Reads the newest {@code limit} bubbles of the open GV web thread for the send path. Calls
+     * back (main thread) with null when the WebView is not showing that 1:1 thread. Never
+     * navigates.
+     */
+    public void readThread(String e164, int limit, ThreadReadCallback cb) {
+        if (cb == null) return;
+        runOnUiThread(() -> {
+            if (!isActivityAlive() || sendLaterHooks == null
+                    || !ThreadUrl.isThreadOf(webView.getUrl(), e164)) {
+                cb.onThreadRead(null);
+                return;
+            }
+            webView.evaluateJavascript(sendLaterHooks.beginThreadRead(e164, limit, cb), null);
+        });
+    }
+
+    /** Page access for SendLaterWebHooks; every WebView touch is behind isActivityAlive(). */
+    private class SendLaterHost implements SendLaterWebHooks.Host {
+        @Override
+        public void evaluate(String js) {
+            runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
+                webView.evaluateJavascript(js, null);
+            });
+        }
+
+        @Override
+        public String currentUrl() {
+            return isActivityAlive() ? webView.getUrl() : null;
+        }
+
+        @Override
+        public void readThread(String e164, int limit, ThreadReadCallback cb) {
+            GVoiceWebViewActivity.this.readThread(e164, limit, cb);
+        }
+    }
+
     private static String jsonEncode(String s) {
         try {
             JSONArray arr = new JSONArray();
@@ -516,6 +572,59 @@ public class GVoiceWebViewActivity extends Activity {
                 new Handler(Looper.getMainLooper())
                         .postDelayed(GVoiceWebViewActivity.this::showKeyboardForWebView, 100);
             });
+        }
+
+        // ---- Send Later (R10/R11/R17/R18); binder thread, logic in SendLaterWebHooks ----
+
+        @JavascriptInterface
+        public void requestSendLater(String json) {
+            final CapturePayload payload =
+                    sendLaterHooks != null ? sendLaterHooks.bridgeAcceptCapture(json) : null;
+            if (payload == null) return;
+            runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
+                sendLaterHooks.openSheet(payload, webView.getUrl());
+            });
+        }
+
+        @JavascriptInterface
+        public String sendLaterChipState(String e164) {
+            if (sendLaterHooks == null) {
+                return ChipState.disabled();
+            }
+            return sendLaterHooks.bridgeChipState(e164);
+        }
+
+        @JavascriptInterface
+        public void requestSendLaterChipTap(String e164) {
+            if (sendLaterHooks == null) {
+                return;
+            }
+            sendLaterHooks.bridgeChipTap(e164);
+        }
+
+        @JavascriptInterface
+        public boolean requestSendLaterUndo(long messageId) {
+            if (sendLaterHooks == null) {
+                return false;
+            }
+            return sendLaterHooks.bridgeUndo(messageId);
+        }
+
+        @JavascriptInterface
+        public void onThreadRead(String json) {
+            if (sendLaterHooks == null) {
+                return;
+            }
+            sendLaterHooks.bridgeThreadRead(json);
+        }
+
+        @JavascriptInterface
+        public void onThreadDirectory(String json) {
+            if (sendLaterHooks == null) {
+                return;
+            }
+            sendLaterHooks.bridgeThreadDirectory(json);
         }
     }
 
@@ -713,6 +822,7 @@ public class GVoiceWebViewActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (sendLaterHooks != null) sendLaterHooks.onPause();
         CookieManager.getInstance().flush();
         if (webView != null) {
             webView.onPause();
@@ -722,6 +832,7 @@ public class GVoiceWebViewActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (sendLaterHooks != null) sendLaterHooks.onResume();
         if (webView != null) {
             webView.onResume();
         }
@@ -753,6 +864,8 @@ public class GVoiceWebViewActivity extends Activity {
         if (container != null && webView != null) {
             container.removeView(webView);
         }
+
+        if (sendLaterHooks != null) sendLaterHooks.onDestroy();
 
         Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
         app.detachActivityContext();
