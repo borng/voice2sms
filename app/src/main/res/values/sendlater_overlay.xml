@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Send Later: native Google Voice overlay (voice-overlay node). Never edit strings.xml for these. -->
+<resources>
+    <string name="sendlater_overlay_tab">Send later</string>
+    <!-- %1$s = the scheduled time label from the sheet, e.g. "Sat 9:00 AM" -->
+    <string name="sendlater_overlay_scheduled">Scheduled for %1$s</string>
+    <string name="sendlater_overlay_undo">Undo</string>
+    <string name="sendlater_overlay_clear_failed">Scheduled, but the draft couldn\'t be cleared</string>
+    <string name="sendlater_overlay_changed">Saved to Upcoming — the conversation changed, draft left as is</string>
+    <string name="sendlater_overlay_undone">Canceled — draft restored</string>
+    <string name="sendlater_overlay_undone_kept">Canceled — the draft wasn\'t restored because the composer changed</string>
+    <string name="sendlater_overlay_undo_failed">Couldn\'t undo — the message is no longer scheduled</string>
+</resources>

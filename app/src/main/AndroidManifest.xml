@@ -28,6 +28,9 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- sendlater:voice-overlay start: optional, only improves R4 recipient resolution (A5) -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- sendlater:voice-overlay end -->
 
     <application
         android:name=".Voice2SmsApplication"
