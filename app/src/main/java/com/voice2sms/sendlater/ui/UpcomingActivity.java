@@ -27,6 +27,8 @@ import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -181,21 +183,21 @@ public class UpcomingActivity extends AppCompatActivity {
         }
         empty.setText(R.string.sendlater_upcoming_empty);
         empty.setVisibility(s.isEmpty() ? View.VISIBLE : View.GONE);
-        section(R.string.sendlater_upcoming_section_pending, s.getPending());
-        section(R.string.sendlater_upcoming_section_held, s.getHeld());
-        section(R.string.sendlater_upcoming_section_recent, s.getRecent());
+        section(R.string.sendlater_upcoming_section_pending, s.getPending(), enabled);
+        section(R.string.sendlater_upcoming_section_held, s.getHeld(), enabled);
+        section(R.string.sendlater_upcoming_section_recent, s.getRecent(), enabled);
     }
 
-    private void section(int titleRes, List<ScheduledMessage> rows) {
+    private void section(int titleRes, List<ScheduledMessage> rows, boolean enabled) {
         if (rows.isEmpty()) return;
         LayoutInflater inf = getLayoutInflater();
         TextView header = (TextView) inf.inflate(R.layout.sendlater_upcoming_header, list, false);
         header.setText(titleRes);
         list.addView(header);
-        for (ScheduledMessage m : rows) list.addView(row(inf, m));
+        for (ScheduledMessage m : rows) list.addView(row(inf, m, enabled));
     }
 
-    private View row(LayoutInflater inf, final ScheduledMessage m) {
+    private View row(LayoutInflater inf, final ScheduledMessage m, boolean enabled) {
         View v = inf.inflate(R.layout.sendlater_upcoming_row, list, false);
         ((TextView) v.findViewById(R.id.sendlater_upcoming_row_time)).setText(formatTime(m.getScheduledFor()));
         ((TextView) v.findViewById(R.id.sendlater_upcoming_row_name)).setText(nameOf(m));
@@ -209,7 +211,7 @@ public class UpcomingActivity extends AppCompatActivity {
             status.setVisibility(View.VISIBLE);
         }
 
-        Set<UpcomingSections.RowAction> actions = UpcomingSections.actionsFor(m.getStatus());
+        Set<UpcomingSections.RowAction> actions = visibleActions(m.getStatus(), enabled);
         View bar = v.findViewById(R.id.sendlater_upcoming_row_actions);
         bar.setVisibility(actions.isEmpty() ? View.GONE : View.VISIBLE);
         bind(v.findViewById(R.id.sendlater_upcoming_row_change),
@@ -219,6 +221,18 @@ public class UpcomingActivity extends AppCompatActivity {
         bind(v.findViewById(R.id.sendlater_upcoming_row_send),
                 actions.contains(UpcomingSections.RowAction.SEND_NOW), () -> confirmSendNow(m));
         return v;
+    }
+
+    /**
+     * OD24: while Send Later is off the list is read-only except Cancel; Change time and Send now
+     * come back when it is turned on.
+     */
+    static Set<UpcomingSections.RowAction> visibleActions(Status status, boolean enabled) {
+        Set<UpcomingSections.RowAction> all = UpcomingSections.actionsFor(status);
+        if (enabled) return all;
+        Set<UpcomingSections.RowAction> out = EnumSet.noneOf(UpcomingSections.RowAction.class);
+        if (all.contains(UpcomingSections.RowAction.CANCEL)) out.add(UpcomingSections.RowAction.CANCEL);
+        return Collections.unmodifiableSet(out);
     }
 
     private static void bind(View button, boolean visible, final Runnable action) {

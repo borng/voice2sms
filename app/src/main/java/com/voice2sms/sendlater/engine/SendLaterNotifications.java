@@ -83,17 +83,36 @@ public final class SendLaterNotifications {
     /**
      * R29: tap opens review mode with the message pre-filled (no auto-send). R27: a missing GV
      * session adds a Sign-in action that opens Google Voice without the message.
+     * With a {@code cause} (OD23(3): a send that typed nothing) the title follows the
+     * sender's cause ({@link #cannotSendTitle}). Only a missing session gets Sign in (R27).
      */
-    public static void remind(Context c, ScheduledMessage m, RemindReason reason) {
+    public static void remind(Context c, ScheduledMessage m, RemindReason reason, RemindCause cause) {
+        String title = cause != null ? cannotSendTitle(m, cause) : remindTitle(m, reason);
+        boolean signIn = cause != null ? hasSignInAction(cause) : hasSignInAction(reason);
+        String kind = "remind:" + (cause != null ? cause : reason);
         NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
-                .setContentTitle(remindTitle(m, reason))
+                .setContentTitle(title)
                 .setContentText("Tap to review and send: " + preview(m))
                 .setStyle(new NotificationCompat.BigTextStyle().bigText("Tap to review and send: " + preview(m)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setOnlyAlertOnce(true)
                 .setContentIntent(reviewMode(c, m, true));
-        if (hasSignInAction(reason)) b.addAction(0, "Sign in", signIn(c, m.getId()));
-        post(c, m.getId(), b.build(), "remind:" + reason);
+        if (signIn) b.addAction(0, "Sign in", signIn(c, m.getId()));
+        post(c, m.getId(), b.build(), kind);
+    }
+
+    /**
+     * R29: tap opens review mode with the message pre-filled (no auto-send). R27: a missing GV
+     * session adds a Sign-in action that opens Google Voice without the message.
+     */
+    public static void remind(Context c, ScheduledMessage m, RemindReason reason) {
+        remind(c, m, reason, null);
+    }
+
+    /** OD23(3): a send that typed nothing, worded by the sender's cause. */
+    public static void remindCannotSend(Context c, ScheduledMessage m, RemindCause cause) {
+        RemindCause k = cause != null ? cause : RemindCause.LOCKED;
+        remind(c, m, k.reason(), k);
     }
 
     /** R31: the send failed and was not retried; tap opens review mode to send it by hand. */
@@ -202,12 +221,29 @@ public final class SendLaterNotifications {
         if (reason == null) return "Send your message to " + who(m);
         switch (reason) {
             case LATE: return "Too late to send automatically to " + who(m);
-            case NO_SESSION: return "Sign in to Google Voice to send to " + who(m);
+            case NO_SESSION: return "Sign in to Google Voice in voice2sms to send to " + who(m);
             case NO_NETWORK: return "No connection: message to " + who(m) + " not sent";
             case LOCKED: return "Unlock to send your message to " + who(m);
             case NO_SENDER:
             default: return "Send your message to " + who(m);
         }
+    }
+
+    /** OD23(3): reminder title for a send that typed nothing, by the sender's cause. */
+    static String cannotSendTitle(ScheduledMessage m, RemindCause cause) {
+        if (cause == null) return remindTitle(m, RemindReason.LOCKED);
+        switch (cause) {
+            case NO_SESSION: return remindTitle(m, RemindReason.NO_SESSION);
+            case DAILY_CAP: return "Daily scheduled-send limit reached";
+            case BUSY: return "You were using voice2sms; tap to send now";
+            case LOCKED:
+            default: return remindTitle(m, RemindReason.LOCKED);
+        }
+    }
+
+    /** R27: only a missing GV session gets the Sign-in action. */
+    static boolean hasSignInAction(RemindCause cause) {
+        return cause == RemindCause.NO_SESSION;
     }
 
     /** R27: only a missing or expired GV session gets the Sign-in action. */

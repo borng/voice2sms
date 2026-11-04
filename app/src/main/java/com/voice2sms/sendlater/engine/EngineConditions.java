@@ -15,4 +15,10 @@ public interface EngineConditions extends EngineClock {
     boolean listenerEnabled();
 
     OutboundPolicy outboundPolicy();
+
+    /**
+     * The Send Later master switch ({@code SendLaterSettings.isEnabled}, OD24). Off: nothing is
+     * sent automatically and no alarm is re-armed; IN_FLIGHT rows are still resolved.
+     */
+    default boolean sendLaterEnabled() { return true; }
 }
