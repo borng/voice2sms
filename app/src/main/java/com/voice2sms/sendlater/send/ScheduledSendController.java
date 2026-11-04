@@ -78,6 +78,15 @@ public final class ScheduledSendController {
     public static final String EXTRA_LAUNCH_TOKEN = "com.voice2sms.sendlater.extra.LAUNCH_TOKEN";
     /** Wall time of the engine's thread check that allowed this send (late-reply window). */
     public static final String EXTRA_CHECK_TIME = "com.voice2sms.sendlater.extra.CHECK_TIME";
+    /**
+     * OD28: the screen was dark (not interactive) when {@link WebViewScheduledSender} planned this
+     * launch. Decides {@link #launchedDark}; the activity's own reading is the fallback only when
+     * the extra is absent.
+     */
+    public static final String EXTRA_LAUNCHED_DARK = "com.voice2sms.sendlater.extra.LAUNCHED_DARK";
+
+    /** CANNOT_SHOW cause for a row with no recipient or no text (OD28: the generic reminder). */
+    static final String DETAIL_NO_RECIPIENT = "no_recipient";
 
     /** Detail passed with SENT_VERIFIED when an inbound landed between the check and the send. */
     public static final String DETAIL_LATE_REPLY = "late_reply";
@@ -183,6 +192,14 @@ public final class ScheduledSendController {
      * instead of uncovering.
      */
     private boolean launchedDark;
+    /** {@link #EXTRA_LAUNCHED_DARK} of the launch being claimed (null: absent); read once. */
+    private Boolean plannedDark;
+    /**
+     * OD28: a non-scheduled intent arrived over the keyguard while covered. The lock flags are
+     * already cleared; the cover stays until onStop so the thread never shows while the keyguard
+     * animates back.
+     */
+    private boolean coverUntilStop;
     /** An unclaimed launch finished at once over the keyguard: the activity must not load GV (R3). */
     private boolean skipPageLoad;
     /** Id of the last outcome reported; its engine broadcast ends the job. */
@@ -250,10 +267,13 @@ public final class ScheduledSendController {
         long id = intent.getLongExtra(EXTRA_SCHEDULED_MESSAGE_ID, -1L);
         String token = intent.getStringExtra(EXTRA_LAUNCH_TOKEN);
         long checkTime = intent.getLongExtra(EXTRA_CHECK_TIME, 0L);
+        Boolean planned = intent.hasExtra(EXTRA_LAUNCHED_DARK)
+                ? Boolean.valueOf(intent.getBooleanExtra(EXTRA_LAUNCHED_DARK, false)) : null;
         // A recreate() (renderer crash) or a later re-delivery of this intent must never send again.
         intent.removeExtra(EXTRA_SCHEDULED_MESSAGE_ID);
         intent.removeExtra(EXTRA_LAUNCH_TOKEN);
         intent.removeExtra(EXTRA_CHECK_TIME);
+        intent.removeExtra(EXTRA_LAUNCHED_DARK);
         boolean fromHistory = (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
         refreshLockState();
         if (restored || fromHistory || id <= 0 || !LaunchClaims.INSTANCE.take(id, token)) {
@@ -262,6 +282,8 @@ public final class ScheduledSendController {
             return true;
         }
         // Claimed: only now may the cover go up and the activity show over the keyguard.
+        coverUntilStop = false;
+        plannedDark = planned;
         noteLaunchScreen();
         claimed = true;
         jobState = LockCoverPolicy.JobState.RUNNING;
@@ -288,6 +310,7 @@ public final class ScheduledSendController {
 
     /** A hand-off claim joined this activity: the job runs under the same lock rules. */
     private void onClaimed() {
+        plannedDark = null;   // a hand-off carries no intent: the activity's own reading
         noteLaunchScreen();
         claimed = true;
         jobState = LockCoverPolicy.JobState.RUNNING;
@@ -329,6 +352,11 @@ public final class ScheduledSendController {
         resumed = false;
         pauseEvent = stopped ? LockCoverPolicy.Event.STOPPED : LockCoverPolicy.Event.PAUSED;
         refreshLockState();
+        if (stopped && coverUntilStop) {
+            // OD28: the keyguard is back over the activity; the cover may come off now.
+            coverUntilStop = false;
+            cover.hide();
+        }
         if (!LockCoverPolicy.endsJob(pauseEvent, claimed, jobState)) return;
         main.removeCallbacks(pauseCheck);
         main.postDelayed(pauseCheck, PAUSE_GRACE_MS);
@@ -398,7 +426,11 @@ public final class ScheduledSendController {
         return typed ? SendOutcome.SENT_UNVERIFIED : SendOutcome.CANNOT_SHOW;
     }
 
-    /** A non-scheduled intent is taking the page over: end the scheduled work honestly. */
+    /**
+     * A non-scheduled intent is taking the page over: end the scheduled work honestly. The lock
+     * flags come down first; over the keyguard (OD28) the cover then stays up until onStop (or an
+     * unlock), so the thread never shows while the keyguard animates back.
+     */
     public void onOtherIntent() {
         main.removeCallbacksAndMessages(null);
         abandonAll("other_intent");
@@ -407,7 +439,8 @@ public final class ScheduledSendController {
         awaitingEngineId = -1L;
         jobState = claimed ? LockCoverPolicy.JobState.ENDED : LockCoverPolicy.JobState.IDLE;
         applyLockFlags(false);
-        cover.hide();
+        coverUntilStop = LockCoverPolicy.keepCoverUntilStop(cover.isShown(), refreshLockState());
+        if (!coverUntilStop) cover.hide();
     }
 
     public void onDestroy() {
@@ -469,8 +502,9 @@ public final class ScheduledSendController {
             return;
         }
         if (m.getRecipientE164() == null || m.getText() == null) {
-            // A corrupt row (start() never launches one): a real failure, not a reminder.
-            report(job, SendOutcome.FAILED, "no_recipient");
+            // A corrupt row (start() never launches one): nothing can be typed, so CANNOT_SHOW
+            // and the generic reminder, never "may have already sent" (OD28).
+            report(job, SendOutcome.CANNOT_SHOW, DETAIL_NO_RECIPIENT);
             return;
         }
         job.e164 = m.getRecipientE164();
@@ -699,12 +733,21 @@ public final class ScheduledSendController {
     }
 
     /**
-     * At a claim, before the lock flags wake the screen: a new job starts with the screen as it
-     * is now; a hand-off into a running job keeps a dark launch dark (OD27).
+     * At a claim, before the lock flags wake the screen: a new job starts dark when the sender
+     * planned it on a dark screen ({@link #EXTRA_LAUNCHED_DARK}, OD28), or, when the extra is
+     * absent, with the screen as it is now; a hand-off into a running job keeps a dark launch
+     * dark (OD27).
      */
     private void noteLaunchScreen() {
-        boolean dark = isScreenDark();
+        Boolean planned = plannedDark;
+        plannedDark = null;
+        boolean dark = darkAtLaunch(planned, planned == null && isScreenDark());
         launchedDark = jobState == LockCoverPolicy.JobState.RUNNING ? (launchedDark || dark) : dark;
+    }
+
+    /** OD28: the planning-time reading when the launch carried one, else the activity's own. */
+    static boolean darkAtLaunch(Boolean planned, boolean darkNow) {
+        return planned != null ? planned : darkNow;
     }
 
     /** A dark screen counts as locked: the keyguard follows within its grace period. */

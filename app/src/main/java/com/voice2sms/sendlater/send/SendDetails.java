@@ -17,11 +17,13 @@ import com.voice2sms.sendlater.engine.RemindCause;
  *   <li>everything else ({@code compose_timeout}: GV was only slow to open the thread, so the
  *       generic wording, not Sign in (OD27); {@code timeout}, {@code inject_failed}, {@code paused},
  *       {@code launch_timeout}, {@code cannot_show}, {@code activity_gone},
- *       {@code other_intent}, ...): null, the LOCKED default.</li>
+ *       {@code other_intent}, {@code no_recipient} (a corrupt row, OD28), ...): null, the
+ *       LOCKED default.</li>
  * </ul>
  * The other outcomes keep the cause: a verified send passes
- * {@link ScheduledSendController#DETAIL_LATE_REPLY} or null, the engine records a FAILED cause
- * and ignores the rest.
+ * {@link ScheduledSendController#DETAIL_LATE_REPLY} or null; SENT_UNVERIFIED carries its cause
+ * ({@code no_match}, {@code timeout}, ...), which the engine ignores. The send path never reports
+ * FAILED (OD28).
  */
 public final class SendDetails {
 

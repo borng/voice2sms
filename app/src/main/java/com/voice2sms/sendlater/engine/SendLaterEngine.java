@@ -686,9 +686,10 @@ public final class SendLaterEngine {
      *   <li>SENT_VERIFIED: SENT_VERIFIED, then "Sent" or, when the listener saw an inbound timed
      *       after the thread check (or the sender says {@link #DETAIL_LATE_REPLY}), "replied just
      *       as your message sent".</li>
-     *   <li>SENT_UNVERIFIED and FAILED (something may have been typed): HELD(UNVERIFIED) + "may
-     *       have already sent", no thread read, no retry. A retry happens only through the
-     *       user's Send anyway.</li>
+     *   <li>SENT_UNVERIFIED (something may have been typed): HELD(UNVERIFIED) + "may have
+     *       already sent", no thread read, no retry. A retry happens only through the user's
+     *       Send anyway. The send path never reports FAILED (OD28: a corrupt row is CANNOT_SHOW);
+     *       any other outcome takes this conservative branch too.</li>
      *   <li>CANNOT_SHOW: nothing was typed; back to SCHEDULED + a reminder worded by the
      *       detail ({@link RemindCause#fromDetail}: no_session gets Sign in, daily_cap, user_busy,
      *       else locked).</li>
@@ -727,7 +728,6 @@ public final class SendLaterEngine {
                 return;
             }
             case SENT_UNVERIFIED:
-            case FAILED:
             default: {
                 // OD27: nothing the engine can read proves the send did or did not go out.
                 checkTimes.remove(id);
