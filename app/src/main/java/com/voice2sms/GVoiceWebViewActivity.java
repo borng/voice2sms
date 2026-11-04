@@ -35,6 +35,7 @@ import androidx.preference.PreferenceManager;
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.OriginGuard;
+import com.voice2sms.sendlater.send.ScheduledSendController;
 import com.voice2sms.sendlater.web.SendLaterWebHooks;
 import com.voice2sms.sendlater.web.ThreadReadCallback;
 import com.voice2sms.sendlater.web.ThreadUrl;
@@ -74,6 +75,8 @@ public class GVoiceWebViewActivity extends Activity {
      * which serve nothing unless OriginGuard.isTrustedGvUrl accepts it.
      */
     private volatile String mainFrameUrl;
+    /** Send Later due-time send (R30/R31, OD11): the scheduled branch; see ScheduledSendController. */
+    private ScheduledSendController scheduledSend;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -106,6 +109,8 @@ public class GVoiceWebViewActivity extends Activity {
         // The singleton WebView may already show a page that no callback will report again.
         mainFrameUrl = webView.getUrl();
         webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
+        scheduledSend = new ScheduledSendController(this, new ScheduledHost());
+        boolean scheduledLaunch = scheduledSend.handle(getIntent(), savedInstanceState != null);
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
@@ -168,6 +173,9 @@ public class GVoiceWebViewActivity extends Activity {
 
             if (cookies != null && cookies.contains("SID")) {
                 loadGoogleVoice();
+            } else if (scheduledLaunch) {
+                // No web session: never open the account picker over the lock screen.
+                scheduledSend.onWebFailure("no_session");
             } else {
                 attemptAccountAuth();
             }
@@ -179,6 +187,9 @@ public class GVoiceWebViewActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        // Scheduled branch: it reloads the page itself, or queues behind the running send.
+        if (scheduledSend != null && scheduledSend.handle(intent, false)) return;
+        if (scheduledSend != null) scheduledSend.onOtherIntent();
 
         recipient = intent.getStringExtra("recipient");
         body = intent.getStringExtra("body");
@@ -231,7 +242,8 @@ public class GVoiceWebViewActivity extends Activity {
                     // Mark SPA as loaded for future warm starts
                     Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
                     app.setSpaLoaded(true);
-                    injectComposer();
+                    if (scheduledSend == null || !scheduledSend.isActive()) injectComposer();
+                    else if (scheduledSend.isComposing()) injectScheduledComposer();
                 } else if (url.startsWith("https://voice.google.com") && !injected) {
                     // No recipient but page loaded — mark SPA ready
                     Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
@@ -447,6 +459,39 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /**
+     * Scheduled branch of the composer (R30): inject.js auto-send for the scheduled message. The
+     * scheduled queue already spaced and capped this send, so the global auto-send rate limiter
+     * and the Wear/Gemini extra are not involved; ScheduledSendController verifies the result.
+     */
+    private void injectScheduledComposer() {
+        injected = true;
+        if (!isActivityAlive() || scheduledSend == null) return;
+        String script = readAssetScript("inject.js");
+        if (script == null) {
+            scheduledSend.onWebFailure("inject_failed");
+            return;
+        }
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        int delayMs = prefs.getInt("auto_send_delay", 2) * 1000;
+        script += "\nvoice2sms(" + jsonEncode(recipient) + ", " + jsonEncode(body != null ? body : "")
+                + ", true, " + delayMs + ");";
+        webView.evaluateJavascript(script, null);
+        scheduledSend.onComposerInjected(delayMs);
+    }
+
+    private String readAssetScript(String name) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(getAssets().open(name)))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line).append("\n");
+            return sb.toString();
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read " + name + ": " + e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
     /** Installs the inject.js Send Later module (v2sSendLaterInit) once per page load. */
     private void installSendLater() {
         if (!isActivityAlive() || sendLaterHooks == null) return;
@@ -489,6 +534,40 @@ public class GVoiceWebViewActivity extends Activity {
         @Override
         public void readThread(String e164, int limit, ThreadReadCallback cb) {
             GVoiceWebViewActivity.this.readThread(e164, limit, cb);
+        }
+    }
+
+    /** Activity access for the scheduled branch; every WebView touch is behind isActivityAlive(). */
+    private class ScheduledHost implements ScheduledSendController.Host {
+        @Override
+        public boolean isAlive() {
+            return isActivityAlive();
+        }
+
+        @Override
+        public String mainFrameUrl() {
+            return mainFrameUrl;
+        }
+
+        @Override
+        public boolean beginCompose(String e164, String text) {
+            if (!isActivityAlive()) return false;
+            recipient = e164;
+            body = text;
+            injected = false;
+            webView.onResume();
+            loadGoogleVoice();
+            return true;
+        }
+
+        @Override
+        public void readThread(String e164, int limit, ThreadReadCallback cb) {
+            GVoiceWebViewActivity.this.readThread(e164, limit, cb);
+        }
+
+        @Override
+        public void finish() {
+            GVoiceWebViewActivity.this.finish();
         }
     }
 
@@ -895,6 +974,7 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         if (sendLaterHooks != null) sendLaterHooks.onDestroy();
+        if (scheduledSend != null) scheduledSend.onDestroy();
 
         Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
         app.detachActivityContext();

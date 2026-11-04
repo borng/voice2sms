@@ -30,6 +30,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- sendlater:battery-guard permission (R38: ignore-battery-optimizations request) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- sendlater:send-path permission (R30/OD10: full-screen intent opens the send on a locked screen) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:name=".Voice2SmsApplication"
@@ -88,6 +90,12 @@
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
+
+        <!-- sendlater:send-path start -->
+        <!-- OD10/OD11: no dedicated send activity and no foreground service. GVoiceWebViewActivity
+             above is the lock-screen target: it sets showWhenLocked/turnScreenOn at runtime only
+             for launches carrying ScheduledSendController.EXTRA_SCHEDULED_MESSAGE_ID. -->
+        <!-- sendlater:send-path end -->
 
         <!-- Settings -->
         <activity

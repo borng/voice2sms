@@ -46,6 +46,8 @@ public class Voice2SmsApplication extends Application {
         // they exist before the first SMS_DELIVER broadcast arrives — channels are
         // sticky once registered, so this is cheap on subsequent launches.
         ensureNotificationChannels();
+        com.voice2sms.sendlater.engine.SendLaterEngine.setSender(new com.voice2sms.sendlater.send.WebViewScheduledSender());
+        com.voice2sms.sendlater.send.WebViewThreadEventSource.register();
         com.voice2sms.sendlater.engine.SendLaterEngine.onProcessStart(this);
     }
 
