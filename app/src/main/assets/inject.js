@@ -861,3 +861,542 @@ function sendImageToGV(base64Data, mimeType, fileName) {
 
     tryDirectInject();
 }
+
+// ── Send Later module (R10, R11, R17, R18, R19) ───────────────────────────
+//
+// Independent of voice2sms(): installed once per page load by v2sSendLaterInit(),
+// which GVoiceWebViewActivity calls from onPageFinished. Shows a light-blue edge
+// tab on a 1:1 thread with a non-empty composer, a chip above the compose row
+// when the thread has pending/held messages, and the "Scheduled for ... · Undo"
+// bar after the native sheet scheduled the draft. Never logs drafts, names or
+// numbers (console lines with [Voice2SMS] reach logcat).
+//
+// Thread URL shape is UNVERIFIED on device (F7): only itemId=t.+<7-15 digits> is
+// a 1:1 thread; anything else (t.g.* groups, no itemId) shows no tab and no chip.
+
+var V2S_SL_ACCENT = '#8AB4F8';      // shared Send Later accent (A4 / OD9)
+var V2S_SL_ON_ACCENT = '#0B1D3A';   // text/icon colour on the accent
+var V2S_SL_Z = 2147483000;
+
+function v2sSendLaterInit() {
+    if (typeof V2SBridge === 'undefined') return;
+    if (window._v2sSl && window._v2sSl.installed) return;
+    window._v2sSl = {
+        installed: true,
+        e164: null,          // 1:1 thread on screen, or null
+        enabled: false,      // Send Later switched on (from the chip state)
+        chip: null,          // last V2SBridge.sendLaterChipState answer
+        chipAt: 0,
+        capture: null,       // {e164, href} of the last tab tap
+        undo: null,          // {messageId, draft, href, e164, until}
+        barTimer: null,
+        title: null,         // {e164, title, at, confirmed} header pairing for R4
+        prevTitle: '',       // header text of the previous thread (stale-header guard)
+        pairs: {},           // e164 -> confirmed header title
+        directorySig: ''
+    };
+    document.addEventListener('input', function() { _v2sSlTick(); }, true);
+    window.addEventListener('resize', function() { _v2sSlTick(); });
+    setInterval(function() { _v2sSlTick(); }, 700);
+    _v2sSlTick();
+}
+
+/** Java -> page on ACTION_STATE_CHANGED: re-read the chip for the open thread (R17). */
+window.v2sSendLaterRefresh = function() {
+    var st = window._v2sSl;
+    if (!st) return;
+    _v2sSlRefreshChip(st);
+};
+
+/**
+ * Java -> page after the sheet persisted the message (R11, R7 for the WebView):
+ * clears the composer only when it still holds expectedDraft on the same thread URL,
+ * then offers Undo for 10 s. Otherwise leaves the draft untouched.
+ */
+window.v2sSendLaterClear = function(messageId, expectedDraft, scheduledLabel) {
+    var st = window._v2sSl;
+    var ta = _v2sSlComposer();
+    var e164 = _v2sSlThreadE164();
+    var sameThread = !!(st && st.capture && e164 && e164 === st.capture.e164
+        && location.href === st.capture.href);
+    if (!ta || !sameThread || typeof expectedDraft !== 'string' || ta.value !== expectedDraft) {
+        _v2sSlShowBar('Saved to Upcoming — draft left as is', null);
+        return false;
+    }
+    _v2sSlSetInputValue(ta, '', false);
+    _v2sSlShowBar('Scheduled for ' + (scheduledLabel || 'later'), {
+        messageId: messageId,
+        draft: expectedDraft,
+        href: location.href,
+        e164: e164,
+        until: Date.now() + 10000
+    });
+    _v2sSlRefreshChip(st);
+    return true;
+};
+
+/**
+ * Java -> page (send path, watermarks): reports the open thread's newest bubbles as
+ * {e164, bubbles: [{direction, timeMs|null, text, id|null}] | null}. bubbles is null
+ * when the page is not showing that 1:1 thread or the bubbles cannot be read reliably.
+ */
+window.v2sReadThread = function(e164, limit) {
+    var bubbles = null;
+    try {
+        if (e164 && _v2sSlThreadE164() === e164) bubbles = _v2sSlReadBubbles(limit);
+    } catch (e) {
+        bubbles = null;
+    }
+    V2SBridge.onThreadRead(JSON.stringify({ e164: e164, bubbles: bubbles }));
+};
+
+// ── Send Later helpers ────────────────────────────────────────────────────
+
+/** E.164 of a GV item id when it is a 1:1 thread id ("t.+<digits>"), else null. */
+function _v2sSlE164FromItemId(id) {
+    if (typeof id !== 'string' || !id) return null;
+    // A literal '+' in the query decodes to a space; read it back as the E.164 plus.
+    id = id.replace(/^t\. /, 't.+');
+    if (!/^t\.\+\d{7,15}$/.test(id)) return null;
+    return id.substring(2);
+}
+
+/** E.164 of the open 1:1 thread from location (itemId via URLSearchParams), else null. */
+function _v2sSlThreadE164() {
+    var id = null;
+    try {
+        id = new URLSearchParams(location.search).get('itemId');
+    } catch (e) {
+        return null;
+    }
+    return _v2sSlE164FromItemId(id);
+}
+
+function _v2sSlComposer() {
+    return document.querySelector(
+        'textarea[placeholder="Type a message"], ' +
+        'textarea[placeholder*="message"], ' +
+        'textarea[aria-label*="message"]'
+    );
+}
+
+function _v2sSlHasDraft(ta) {
+    return !!ta && typeof ta.value === 'string' && ta.value.trim().length > 0;
+}
+
+/**
+ * Angular-safe setter for the Send Later module (copy of voice2sms()'s setInputValue,
+ * which is private to that function): native value setter + InputEvent in the zone.
+ */
+function _v2sSlSetInputValue(el, value, focus) {
+    if (focus) el.focus();
+    var proto = (el.tagName === 'TEXTAREA')
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+    var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (nativeSetter && nativeSetter.set) {
+        nativeSetter.set.call(el, value);
+    } else {
+        el.value = value;
+    }
+    var angularZone = _v2sGetAngularZone(el);
+    var inputEvent = new InputEvent('input', {
+        bubbles: true,
+        inputType: value ? 'insertText' : 'deleteContentBackward',
+        data: value || null
+    });
+    if (angularZone) {
+        angularZone.run(function() { el.dispatchEvent(inputEvent); });
+    } else {
+        el.dispatchEvent(inputEvent);
+    }
+}
+
+function _v2sSlTick() {
+    var st = window._v2sSl;
+    if (!st || document.hidden) return;
+    var e164 = _v2sSlThreadE164();
+    if (e164 !== st.e164) {
+        st.prevTitle = st.title ? st.title.title : '';
+        st.e164 = e164;
+        st.title = null;
+        _v2sSlRefreshChip(st);
+    } else if (e164 && Date.now() - st.chipAt > 15000) {
+        _v2sSlRefreshChip(st);
+    }
+    _v2sSlNoteThreadTitle(st);
+    _v2sSlScrapeDirectory(st);
+    _v2sSlLayout(st);
+}
+
+/** Re-reads V2SBridge.sendLaterChipState for the open thread (R17). */
+function _v2sSlRefreshChip(st) {
+    if (!st) return;
+    st.chipAt = Date.now();
+    if (!st.e164) {
+        st.chip = null;
+        st.enabled = false;
+        _v2sSlLayout(st);
+        return;
+    }
+    var state = null;
+    try {
+        state = JSON.parse(V2SBridge.sendLaterChipState(st.e164));
+    } catch (e) {
+        state = null;
+    }
+    st.chip = state;
+    st.enabled = !!(state && state.enabled === true);
+    _v2sSlLayout(st);
+}
+
+/** Outermost ancestor (up to 5 levels) of the composer that still looks like one row. */
+function _v2sSlComposeRow(ta) {
+    var row = ta;
+    var el = ta.parentElement;
+    for (var i = 0; el && i < 5; i++, el = el.parentElement) {
+        var r = el.getBoundingClientRect();
+        if (r.height <= 0 || r.height > 160) break;
+        row = el;
+    }
+    return row;
+}
+
+function _v2sSlSendButton(row) {
+    var scope = row && row.parentElement ? row.parentElement : document;
+    return scope.querySelector('button[aria-label*="Send"]');
+}
+
+function _v2sSlOverlaps(a, b) {
+    return !!a && !!b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+/** Positions (or hides) the edge tab, the chip and the bar around the compose row (R19). */
+function _v2sSlLayout(st) {
+    var ta = st && st.e164 ? _v2sSlComposer() : null;
+    var rect = null;
+    if (ta) {
+        var rr = _v2sSlComposeRow(ta).getBoundingClientRect();
+        if (rr.width > 0 && rr.height > 0) rect = rr;
+    }
+    var tab = document.getElementById('v2s-sl-tab');
+    var chip = document.getElementById('v2s-sl-chip');
+    var bar = document.getElementById('v2s-sl-bar');
+    var barShown = !!(bar && bar.style.display !== 'none');
+    var showTab = !!(rect && st.enabled && _v2sSlHasDraft(ta));
+    var label = st && st.chip && st.enabled && typeof st.chip.label === 'string' ? st.chip.label : '';
+    var showChip = !!(rect && label && !barShown);
+
+    if (showTab) {
+        tab = tab || _v2sSlCreateTab();
+        var h = 48;
+        var w = 22;
+        var top = rect.top + rect.height / 2 - h / 2;
+        var tabRect = { left: window.innerWidth - w, right: window.innerWidth, top: top, bottom: top + h };
+        var send = _v2sSlSendButton(_v2sSlComposeRow(ta));
+        if (send && _v2sSlOverlaps(tabRect, send.getBoundingClientRect())) {
+            top = rect.top - h - 8;   // never cover Send: sit just above the row instead
+        }
+        tab.style.top = Math.max(0, Math.round(top)) + 'px';
+        tab.style.display = 'flex';
+    } else if (tab) {
+        tab.style.display = 'none';
+    }
+
+    if (showChip) {
+        chip = chip || _v2sSlCreateChip();
+        chip.textContent = label;
+        chip.style.left = Math.max(8, Math.round(rect.left + 8)) + 'px';
+        chip.style.bottom = Math.max(0, Math.round(window.innerHeight - rect.top + 6)) + 'px';
+        chip.style.display = 'block';
+    } else if (chip) {
+        chip.style.display = 'none';
+    }
+
+    if (barShown && rect) {
+        bar.style.bottom = Math.max(0, Math.round(window.innerHeight - rect.top + 6)) + 'px';
+    }
+}
+
+function _v2sSlCreateTab() {
+    var tab = document.createElement('div');
+    tab.id = 'v2s-sl-tab';
+    tab.setAttribute('role', 'button');
+    tab.setAttribute('aria-label', 'Send later');
+    tab.style.cssText = 'position:fixed;right:0;width:22px;height:48px;display:none;' +
+        'align-items:center;justify-content:center;border-radius:12px 0 0 12px;' +
+        'background:' + V2S_SL_ACCENT + ';color:' + V2S_SL_ON_ACCENT + ';' +
+        'box-shadow:0 1px 4px rgba(0,0,0,.4);z-index:' + V2S_SL_Z + ';cursor:pointer;';
+    tab.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">' +
+        '<circle cx="12" cy="12" r="9" fill="none" stroke="' + V2S_SL_ON_ACCENT + '" stroke-width="2.2"/>' +
+        '<path d="M12 7v5.2l3.4 2" fill="none" stroke="' + V2S_SL_ON_ACCENT +
+        '" stroke-width="2.2" stroke-linecap="round"/></svg>';
+    // Keep the textarea focused (and the IME up) while the tab is pressed.
+    tab.addEventListener('mousedown', function(e) { e.preventDefault(); });
+    tab.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _v2sSlCapture();
+    });
+    document.body.appendChild(tab);
+    return tab;
+}
+
+function _v2sSlCreateChip() {
+    var chip = document.createElement('div');
+    chip.id = 'v2s-sl-chip';
+    chip.setAttribute('role', 'button');
+    chip.style.cssText = 'position:fixed;display:none;max-width:70vw;padding:4px 12px;' +
+        'border-radius:14px;font:500 13px/20px Roboto,Arial,sans-serif;white-space:nowrap;' +
+        'overflow:hidden;text-overflow:ellipsis;background:' + V2S_SL_ACCENT + ';' +
+        'color:' + V2S_SL_ON_ACCENT + ';box-shadow:0 1px 3px rgba(0,0,0,.35);' +
+        'z-index:' + V2S_SL_Z + ';cursor:pointer;';
+    chip.addEventListener('mousedown', function(e) { e.preventDefault(); });
+    chip.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _v2sSlChipTap();
+    });
+    document.body.appendChild(chip);
+    return chip;
+}
+
+/** Chip tap (R18): Java opens edit mode for one message, Upcoming for several. */
+function _v2sSlChipTap() {
+    var st = window._v2sSl;
+    if (!st || !st.e164 || st.e164 !== _v2sSlThreadE164()) return;
+    V2SBridge.requestSendLaterChipTap(st.e164);
+}
+
+/** Edge-tab tap (R10): hand the draft and the newest-message watermark to the sheet. */
+function _v2sSlCapture() {
+    var st = window._v2sSl;
+    if (!st || !st.enabled) return;
+    var e164 = _v2sSlThreadE164();
+    var ta = _v2sSlComposer();
+    if (!e164 || e164 !== st.e164 || !_v2sSlHasDraft(ta)) return;
+    var bubbles = null;
+    try {
+        bubbles = _v2sSlReadBubbles(20);
+    } catch (e) {
+        bubbles = null;
+    }
+    var newest = bubbles && bubbles.length ? bubbles[bubbles.length - 1] : null;
+    var newestId = newest && newest.id ? newest.id : null;
+    var newestTime = newest && typeof newest.timeMs === 'number' ? newest.timeMs : null;
+    var quality = (newestId && newestTime) ? 'EXACT' : (newestTime ? 'TIMESTAMP' : 'DEVICE_ONLY');
+    st.capture = { e164: e164, href: location.href };
+    V2SBridge.requestSendLater(JSON.stringify({
+        e164: e164,
+        displayName: _v2sSlThreadTitle() || null,
+        draftText: ta.value,
+        newestMessageId: newestId,
+        newestMessageTimeMs: newestTime,
+        watermarkQuality: quality
+    }));
+}
+
+/** In-page confirmation bar; with undo set it offers Undo for 10 s (R11). */
+function _v2sSlShowBar(text, undo) {
+    var st = window._v2sSl;
+    var bar = document.getElementById('v2s-sl-bar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'v2s-sl-bar';
+        bar.style.cssText = 'position:fixed;left:8px;right:8px;bottom:96px;display:none;' +
+            'align-items:center;gap:12px;padding:10px 14px;border-radius:10px;' +
+            'font:14px/20px Roboto,Arial,sans-serif;background:#1E2A3A;color:#E8EAED;' +
+            'box-shadow:0 2px 8px rgba(0,0,0,.5);z-index:' + V2S_SL_Z + ';';
+        document.body.appendChild(bar);
+    }
+    while (bar.firstChild) bar.removeChild(bar.firstChild);
+    var msg = document.createElement('span');
+    msg.style.flex = '1';
+    msg.textContent = text;
+    bar.appendChild(msg);
+    if (st) st.undo = undo;
+    if (undo) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Undo';
+        btn.style.cssText = 'border:0;background:transparent;font:500 14px Roboto,Arial,sans-serif;' +
+            'color:' + V2S_SL_ACCENT + ';padding:4px 8px;cursor:pointer;';
+        btn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            _v2sSlOnUndoTap();
+        });
+        bar.appendChild(btn);
+    }
+    bar.style.display = 'flex';
+    if (st && st.barTimer) clearTimeout(st.barTimer);
+    var timer = setTimeout(function() { _v2sSlHideBar(); }, 10000);
+    if (st) {
+        st.barTimer = timer;
+        _v2sSlLayout(st);
+    }
+}
+
+function _v2sSlHideBar() {
+    var st = window._v2sSl;
+    var bar = document.getElementById('v2s-sl-bar');
+    if (bar) bar.style.display = 'none';
+    if (st) {
+        st.undo = null;
+        if (st.barTimer) clearTimeout(st.barTimer);
+        st.barTimer = null;
+        _v2sSlLayout(st);
+    }
+}
+
+/**
+ * Undo (R11, I4): cancels and restores the draft only while the composer is still
+ * empty and the thread URL is unchanged; otherwise the message stays scheduled.
+ */
+function _v2sSlOnUndoTap() {
+    var st = window._v2sSl;
+    var u = st ? st.undo : null;
+    _v2sSlHideBar();
+    if (!u || Date.now() > u.until) return;
+    var ta = _v2sSlComposer();
+    if (ta && ta.value === '' && location.href === u.href && _v2sSlThreadE164() === u.e164) {
+        var undone = V2SBridge.requestSendLaterUndo(u.messageId);
+        if (undone === true || undone === 'true') {
+            _v2sSlSetInputValue(ta, u.draft, true);
+        } else {
+            _v2sSlShowBar('Couldn’t undo — it’s still in Upcoming', null);
+        }
+        _v2sSlRefreshChip(st);
+        return;
+    }
+    _v2sSlShowBar('Not undone — the message is still in Upcoming', null);
+}
+
+/** Header title of the open thread, or '' (best effort; selectors unverified). */
+function _v2sSlThreadTitle() {
+    var el = document.querySelector(
+        '[gv-test-id="conversation-title"], [gv-test-id="thread-title"], ' +
+        'gv-thread-details-header .title, gv-message-thread-header .title'
+    );
+    var t = el ? (el.textContent || '').trim() : '';
+    return t.length > 0 && t.length <= 80 ? t : '';
+}
+
+/**
+ * R4 pairing from the open thread: the header title counts for this number only after it
+ * has been stable for 1.5 s on the same thread and differs from the previous thread's
+ * header (a stale header during navigation must never pair a name with the wrong number).
+ */
+function _v2sSlNoteThreadTitle(st) {
+    var t = st.e164 ? _v2sSlThreadTitle() : '';
+    if (!t) {
+        st.title = null;
+        return;
+    }
+    if (!st.title || st.title.e164 !== st.e164 || st.title.title !== t) {
+        st.title = { e164: st.e164, title: t, at: Date.now(), confirmed: false };
+        return;
+    }
+    if (!st.title.confirmed && Date.now() - st.title.at >= 1500 && t !== st.prevTitle) {
+        st.title.confirmed = true;
+        st.pairs[st.e164] = t;
+    }
+}
+
+function _v2sSlHasLetter(s) {
+    return /[A-Za-zÀ-￿]/.test(s) && s.indexOf(',') < 0;
+}
+
+/** Thread-list scrape (R4): {displayName, e164} pairs -> V2SBridge.onThreadDirectory. */
+function _v2sSlScrapeDirectory(st) {
+    var out = [];
+    var seen = {};
+    var items = document.querySelectorAll(
+        'ol[gv-test-id="list"] li.list-item, gv-message-thread-list-item, gv-thread-list-item'
+    );
+    for (var i = 0; i < items.length && out.length < 300; i++) {
+        var e164 = _v2sSlItemE164(items[i]);
+        var nameEl = e164 ? items[i].querySelector(
+            '[gv-test-id="item-contact"], .contact-name, .participants') : null;
+        var name = nameEl ? (nameEl.textContent || '').trim() : '';
+        if (!e164 || !name || name.length > 80 || !_v2sSlHasLetter(name) || seen[e164]) continue;
+        seen[e164] = true;
+        out.push({ displayName: name, e164: e164 });
+    }
+    for (var k in st.pairs) {
+        if (!Object.prototype.hasOwnProperty.call(st.pairs, k) || seen[k]) continue;
+        if (!_v2sSlHasLetter(st.pairs[k])) continue;
+        seen[k] = true;
+        out.push({ displayName: st.pairs[k], e164: k });
+    }
+    if (!out.length) return;
+    var sig = JSON.stringify(out);
+    if (sig === st.directorySig) return;
+    st.directorySig = sig;
+    V2SBridge.onThreadDirectory(sig);
+}
+
+/** 1:1 E.164 of a thread-list item from an itemId link inside it, else null. */
+function _v2sSlItemE164(item) {
+    var a = item.querySelector('a[href*="itemId="]');
+    var href = a ? a.getAttribute('href') : null;
+    if (!href) return null;
+    try {
+        return _v2sSlE164FromItemId(new URL(href, location.href).searchParams.get('itemId'));
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Newest bubbles of the open thread, oldest first: [{direction, timeMs|null, text, id|null}].
+ * Returns null when no bubble is found or any bubble's direction is unclear: a partial or
+ * guessed read must never look like "no reply" (selectors unverified on device).
+ */
+function _v2sSlReadBubbles(limit) {
+    var sel = 'gv-message-item, gv-text-message-item, [gv-test-id="message-item"], [data-message-id]';
+    var nodes = document.querySelectorAll(sel);
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n.parentElement && n.parentElement.closest(sel)) continue;   // nested match
+        var direction = _v2sSlBubbleDirection(n);
+        if (!direction) return null;
+        var textEl = n.querySelector('[gv-test-id="message-text"], .message-text, .content');
+        var text = ((textEl || n).textContent || '').trim();
+        out.push({
+            direction: direction,
+            timeMs: _v2sSlBubbleTime(n),
+            text: text,
+            id: n.getAttribute('data-message-id') || n.getAttribute('data-id') || null
+        });
+    }
+    if (!out.length) return null;
+    var max = (typeof limit === 'number' && limit > 0) ? Math.floor(limit) : 20;
+    return out.slice(Math.max(0, out.length - max));
+}
+
+function _v2sSlBubbleDirection(n) {
+    var el = n;
+    for (var i = 0; el && i < 3; i++, el = el.parentElement) {
+        var c = (el.getAttribute('class') || '') + ' ' + (el.getAttribute('gv-test-id') || '');
+        if (/outgoing|from-me|sent-by-me/i.test(c)) return 'OUT';
+        if (/incoming|from-them|received/i.test(c)) return 'IN';
+    }
+    return null;
+}
+
+function _v2sSlBubbleTime(n) {
+    var t = n.querySelector('time[datetime]');
+    if (t) {
+        var p = Date.parse(t.getAttribute('datetime'));
+        if (!isNaN(p) && p > 0) return p;
+    }
+    var raw = n.getAttribute('data-timestamp');
+    if (raw && /^\d{9,13}$/.test(raw)) {
+        var v = parseInt(raw, 10);
+        return raw.length <= 10 ? v * 1000 : v;
+    }
+    return null;
+}
