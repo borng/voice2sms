@@ -121,12 +121,15 @@ public final class WebViewScheduledSender implements ScheduledSender {
             }
             return;
         }
-        switch (currentPlan(app)) {
+        // OD28: whether the screen was dark is recorded now, when the launch is planned, and
+        // travels with the intent (the activity's own onCreate reading comes after the wake-up).
+        final boolean dark = !isScreenOn(app);
+        switch (planFor(app, dark)) {
             case DIRECT:
-                launchDirect(app, id, token, checkTime);
+                launchDirect(app, id, token, checkTime, dark);
                 return;
             case FULL_SCREEN_INTENT:
-                postFullScreenIntent(app, id, token, checkTime);
+                postFullScreenIntent(app, id, token, checkTime, dark);
                 return;
             case CANNOT_SHOW:
             default:
@@ -139,8 +142,12 @@ public final class WebViewScheduledSender implements ScheduledSender {
     }
 
     private static LaunchPlanner.Result currentPlan(Context app) {
+        return planFor(app, !isScreenOn(app));
+    }
+
+    private static LaunchPlanner.Result planFor(Context app, boolean screenDark) {
         return LaunchPlanner.plan(isOwnAccessibilityServiceEnabled(app),
-                isKeyguardLocked(app), isScreenOn(app), canUseFullScreenIntent(app));
+                isKeyguardLocked(app), !screenDark, canUseFullScreenIntent(app));
     }
 
     /** Cheap pre-check before a slot is taken: the row is IN_FLIGHT with this text. */
@@ -164,25 +171,27 @@ public final class WebViewScheduledSender implements ScheduledSender {
                 && bodyHash != null && bodyHash.equals(ThreadEvent.hashOf(stored.getText()));
     }
 
-    static Intent launchIntent(Context app, long id, String token, long checkTime) {
+    static Intent launchIntent(Context app, long id, String token, long checkTime, boolean launchedDark) {
         Intent i = new Intent(app, GVoiceWebViewActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         i.putExtra(ScheduledSendController.EXTRA_SCHEDULED_MESSAGE_ID, id);
         i.putExtra(ScheduledSendController.EXTRA_LAUNCH_TOKEN, token);
         i.putExtra(ScheduledSendController.EXTRA_CHECK_TIME, checkTime);
+        i.putExtra(ScheduledSendController.EXTRA_LAUNCHED_DARK, launchedDark);
         return i;
     }
 
-    private static void launchDirect(Context app, long id, String token, long checkTime) {
+    private static void launchDirect(Context app, long id, String token, long checkTime, boolean launchedDark) {
         if (!LaunchClaims.INSTANCE.isPending(id)) return;
         try {
-            app.startActivity(launchIntent(app, id, token, checkTime));
+            app.startActivity(launchIntent(app, id, token, checkTime, launchedDark));
         } catch (RuntimeException e) {
             Log.w(TAG, "direct launch failed for id " + id + ": " + e.getClass().getSimpleName());
         }
     }
 
-    private static void postFullScreenIntent(Context app, long id, String token, long checkTime) {
+    private static void postFullScreenIntent(Context app, long id, String token, long checkTime,
+                                             boolean launchedDark) {
         if (!LaunchClaims.INSTANCE.isPending(id)) return;
         NotificationManager nm = (NotificationManager) app.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
@@ -192,7 +201,7 @@ public final class WebViewScheduledSender implements ScheduledSender {
             ch.setDescription("Shown while a scheduled message is being sent");
             nm.createNotificationChannel(ch);
         }
-        PendingIntent pi = PendingIntent.getActivity(app, (int) id, launchIntent(app, id, token, checkTime),
+        PendingIntent pi = PendingIntent.getActivity(app, (int) id, launchIntent(app, id, token, checkTime, launchedDark),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         // No message text or contact name: this shows on the lock screen.
         Notification n = new NotificationCompat.Builder(app, CHANNEL_SEND)

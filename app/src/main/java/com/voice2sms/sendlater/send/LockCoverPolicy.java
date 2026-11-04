@@ -94,6 +94,15 @@ public final class LockCoverPolicy {
         return finishNow(event, lockedNow || launchedDark);
     }
 
+    /**
+     * OD28: a non-scheduled intent arrives while the cover is up and the phone is locked (or
+     * dark). The lock flags are cleared first; the cover then stays until onStop, so the page is
+     * never revealed while the keyguard animates back. Unlocked: the cover comes off at once.
+     */
+    public static boolean keepCoverUntilStop(boolean coverShown, boolean lockedNow) {
+        return coverShown && lockedNow;
+    }
+
     /** Masked recipient for the cover: last four digits only, never a name or message text. */
     public static String maskedNumber(String e164) {
         if (e164 == null) return "";
