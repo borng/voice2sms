@@ -36,3 +36,8 @@ setup-github-secrets.sh
 API-REPLAY-PLAN.md
 docs/research/
 .playwright-mcp/
+# sendlater:debug-smoke start
+# Send Later smoke-test recipients: real numbers stay local (public repo, I9)
+tests/smoke/.recipient
+tests/smoke/.allowed-recipient
+# sendlater:debug-smoke end
