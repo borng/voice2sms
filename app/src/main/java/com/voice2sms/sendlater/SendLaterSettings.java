@@ -26,7 +26,8 @@ public final class SendLaterSettings {
     public static final String KEY_HOLD_DEFAULT = "sendlater_hold_default";
     public static final String KEY_CLEAR_DRAFT = "sendlater_clear_draft";
 
-    public static final boolean DEFAULT_ENABLED = false;
+    /** On by default (R41, D26): a fresh install and an install that never set the switch. */
+    public static final boolean DEFAULT_ENABLED = true;
     public static final int DEFAULT_SLOT_MORNING = 480;
     public static final int DEFAULT_SLOT_AFTERNOON = 780;
     public static final int DEFAULT_SLOT_EVENING = 1080;

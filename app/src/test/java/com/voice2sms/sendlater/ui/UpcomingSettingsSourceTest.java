@@ -251,7 +251,8 @@ public class UpcomingSettingsSourceTest {
         Element enabled = only(k, SendLaterSettings.KEY_ENABLED);
         assertTrue("enabled is a switch", enabled.getTagName().contains("Switch"));
         String ev = enabled.getAttribute("android:defaultValue");
-        assertTrue("enabled defaults off", ev.isEmpty() || "false".equals(ev));
+        assertEquals("enabled shows the store default (on, D26)",
+                String.valueOf(SendLaterSettings.DEFAULT_ENABLED), ev);
 
         Element hold = only(k, SendLaterSettings.KEY_HOLD_DEFAULT);
         assertTrue("hold default is a switch", hold.getTagName().contains("Switch"));

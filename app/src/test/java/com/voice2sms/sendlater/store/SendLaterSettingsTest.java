@@ -36,8 +36,10 @@ public class SendLaterSettingsTest {
         assertEquals(OutboundPolicy.STILL_SEND, Parse.outboundPolicy(m));
         assertTrue(Parse.holdDefault(m));
         assertTrue(Parse.clearDraft(m));
-        assertFalse(Parse.enabled(m));
-        assertFalse(Parse.enabled(null));
+        // D26 / R41: on by default, also for an install that never set the switch
+        assertTrue(Parse.enabled(m));
+        assertTrue(Parse.enabled(null));
+        assertTrue(SendLaterSettings.DEFAULT_ENABLED);
     }
 
     @Test public void storedValuesWin() {
@@ -65,7 +67,8 @@ public class SendLaterSettingsTest {
         m.put(SendLaterSettings.KEY_SLOT_NIGHT, 3.5f);
         m.put(SendLaterSettings.KEY_OUTBOUND_POLICY, "sometimes");
         m.put(SendLaterSettings.KEY_HOLD_DEFAULT, 1);
-        assertFalse(Parse.enabled(m));
+        assertEquals("unreadable switch falls back to the default (on, D26)",
+                SendLaterSettings.DEFAULT_ENABLED, Parse.enabled(m));
         assertArrayEquals(new int[] {480, 780, 1080, 1260}, Parse.slotMinutes(m));
         assertEquals(OutboundPolicy.STILL_SEND, Parse.outboundPolicy(m));
         assertTrue(Parse.holdDefault(m));
