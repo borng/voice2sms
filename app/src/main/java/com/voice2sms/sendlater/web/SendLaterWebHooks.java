@@ -209,6 +209,11 @@ public final class SendLaterWebHooks {
         }
     };
 
+    /** Main thread: the main frame moved (SPA navigation); the page re-reads the chip state. */
+    public void onMainFrameUrlChanged() {
+        refreshChip();
+    }
+
     private void refreshChip() {
         host.evaluate("if (window.v2sSendLaterRefresh) window.v2sSendLaterRefresh();");
     }
@@ -321,10 +326,15 @@ public final class SendLaterWebHooks {
 
     // ------------------------------------------------------------------ chip (R17, R18)
 
-    /** Binder thread: chip JSON for the thread (see {@link ChipState}). */
-    public String bridgeChipState(String e164) {
+    /**
+     * Binder thread: chip JSON for the thread (see {@link ChipState}). {@code mainFrameUrl} is the
+     * activity's main-frame URL; the page only learns about the thread it shows, so any other
+     * number answers the disabled state.
+     */
+    public String bridgeChipState(String e164, String mainFrameUrl) {
         if (!SendLaterSettings.isEnabled(app)) return ChipState.disabled();
         if (!ThreadDirectory.isE164(e164)) return ChipState.toJson(true, null, null, TimeZone.getDefault());
+        if (!ThreadUrl.isThreadOf(mainFrameUrl, e164)) return ChipState.disabled();
         try {
             SendLaterRepository repo = SendLaterRepository.get(app);
             return ChipState.toJson(true, repo.pendingForThread(e164), repo.heldForThread(e164),
@@ -335,8 +345,12 @@ public final class SendLaterWebHooks {
         }
     }
 
-    /** Binder thread: one message -> edit mode, several -> Upcoming filtered to the thread. */
-    public void bridgeChipTap(String e164) {
+    /**
+     * Binder thread: one message -> edit mode, several -> Upcoming filtered to the thread. Does
+     * nothing unless {@code mainFrameUrl} is the 1:1 thread of {@code e164}.
+     */
+    public void bridgeChipTap(String e164, String mainFrameUrl) {
+        if (!ThreadUrl.isThreadOf(mainFrameUrl, e164)) return;
         if (!SendLaterSettings.isEnabled(app) || !ThreadDirectory.isE164(e164)) return;
         final Intent i;
         try {

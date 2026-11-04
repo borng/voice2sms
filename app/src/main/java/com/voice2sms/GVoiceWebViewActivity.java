@@ -34,6 +34,7 @@ import androidx.preference.PreferenceManager;
 
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
+import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.web.SendLaterWebHooks;
 import com.voice2sms.sendlater.web.ThreadReadCallback;
 import com.voice2sms.sendlater.web.ThreadUrl;
@@ -67,6 +68,12 @@ public class GVoiceWebViewActivity extends Activity {
     private volatile boolean stickerInjectionActive;
     /** Send Later wiring (R10/R11/R17/R18); see SendLaterWebHooks. */
     private SendLaterWebHooks sendLaterHooks;
+    /**
+     * Main-frame URL, written on the UI thread by onPageStarted, onPageFinished and
+     * doUpdateVisitedHistory; read by the Send Later V2SBridge methods on the binder thread,
+     * which serve nothing unless OriginGuard.isTrustedGvUrl accepts it.
+     */
+    private volatile String mainFrameUrl;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,6 +103,8 @@ public class GVoiceWebViewActivity extends Activity {
         // the bridge closure captures `this` Activity)
         sendLaterHooks = new SendLaterWebHooks(this, new SendLaterHost());
         setupWebViewClient();
+        // The singleton WebView may already show a page that no callback will report again.
+        mainFrameUrl = webView.getUrl();
         webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -192,8 +201,7 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                if (url.contains("google.com") || url.contains("googleapis.com")
-                        || url.contains("gstatic.com")) {
+                if (OriginGuard.isAllowedNavigation(request.getUrl().getScheme(), request.getUrl().getHost())) {
                     return false;
                 }
                 Log.d(TAG, "Blocking non-Google URL: " + url);
@@ -203,6 +211,7 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
+                mainFrameUrl = url;
                 // Always inject fingerprint mask (includes dark mode CSS).
                 // Must run early before page renders to avoid flash of light mode.
                 injectFingerprintMask();
@@ -211,6 +220,7 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
+                mainFrameUrl = url;
                 Log.d(TAG, "onPageFinished: " + url);
 
                 CookieManager.getInstance().flush();
@@ -237,6 +247,17 @@ public class GVoiceWebViewActivity extends Activity {
                         && !url.contains("WILL_NOT_SIGN_IN")) {
                     Log.d(TAG, "Auth MergeSession loaded, redirecting to GV");
                     view.loadUrl(GV_MESSAGES_URL);
+                }
+            }
+
+            @Override
+            public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+                super.doUpdateVisitedHistory(view, url, isReload);
+                String previous = mainFrameUrl;
+                mainFrameUrl = url;
+                // The page may have asked for the chip before this SPA navigation was reported.
+                if (sendLaterHooks != null && url != null && !url.equals(previous)) {
+                    sendLaterHooks.onMainFrameUrlChanged();
                 }
             }
 
@@ -578,6 +599,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         @JavascriptInterface
         public void requestSendLater(String json) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             final CapturePayload payload =
                     sendLaterHooks != null ? sendLaterHooks.bridgeAcceptCapture(json) : null;
             if (payload == null) return;
@@ -589,22 +611,27 @@ public class GVoiceWebViewActivity extends Activity {
 
         @JavascriptInterface
         public String sendLaterChipState(String e164) {
+            final String url = mainFrameUrl;
+            if (!OriginGuard.isTrustedGvUrl(url)) return ChipState.disabled();
             if (sendLaterHooks == null) {
                 return ChipState.disabled();
             }
-            return sendLaterHooks.bridgeChipState(e164);
+            return sendLaterHooks.bridgeChipState(e164, url);
         }
 
         @JavascriptInterface
         public void requestSendLaterChipTap(String e164) {
+            final String url = mainFrameUrl;
+            if (!OriginGuard.isTrustedGvUrl(url)) return;
             if (sendLaterHooks == null) {
                 return;
             }
-            sendLaterHooks.bridgeChipTap(e164);
+            sendLaterHooks.bridgeChipTap(e164, url);
         }
 
         @JavascriptInterface
         public boolean requestSendLaterUndo(long messageId) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return false;
             if (sendLaterHooks == null) {
                 return false;
             }
@@ -613,6 +640,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         @JavascriptInterface
         public void onThreadRead(String json) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             if (sendLaterHooks == null) {
                 return;
             }
@@ -621,6 +649,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         @JavascriptInterface
         public void onThreadDirectory(String json) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             if (sendLaterHooks == null) {
                 return;
             }
