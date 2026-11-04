@@ -189,8 +189,12 @@ public final class SendLaterEngine {
             try {
                 synchronized (LOCK) {
                     doResolveInFlight(d);
-                    // OD24: Send Later off -> only the IN_FLIGHT resolution above; no sweep, no re-arm.
-                    if (!enabled(d)) return;
+                    // OD24 / F2: Send Later off -> the IN_FLIGHT resolution above and a silent
+                    // expiry sweep (no notification, N9b); no re-arm.
+                    if (!enabled(d)) {
+                        doSweepExpired(d, false);
+                        return;
+                    }
                     doSweepExpired(d);
                     schedulerOf(d).reregisterAll(context);
                 }
@@ -369,6 +373,17 @@ public final class SendLaterEngine {
     /** {@code armExpiry} false: Send Later is off (OD24); turning it on re-arms HELD expiries. */
     private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent,
                              boolean armExpiry) {
+        hold(d, m, reason, now, mayHaveSent, armExpiry, true);
+    }
+
+    /**
+     * {@code notify} false: a silent hold while Send Later is off (OD24, OD29 Q1): the row steps
+     * down to HELD (I6) and any notification it had is removed, but no hold notification posts.
+     * "May have already sent" always posts (OD29 Q3): callers never pass mayHaveSent with
+     * notify false.
+     */
+    private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent,
+                             boolean armExpiry, boolean notify) {
         long id = m.getId();
         if (!d.store.hold(id, reason)) return;
         d.marks.setReminded(id, false);
@@ -377,8 +392,10 @@ public final class SendLaterEngine {
         ScheduledMessage held = reload(d, m);
         if (mayHaveSent) {
             d.notifier.mayHaveSent(held);
-        } else {
+        } else if (notify) {
             d.notifier.hold(held, reason, now);
+        } else {
+            d.notifier.dismiss(id);
         }
         d.broadcaster.stateChanged(id, m.getRecipientE164());
         if (armExpiry) schedulerOf(d).registerExpiry(held);
@@ -416,12 +433,20 @@ public final class SendLaterEngine {
     }
 
     private static void expire(EngineDeps d, ScheduledMessage m) {
+        expire(d, m, true);
+    }
+
+    /**
+     * {@code notify} false: the silent sweep while Send Later is off (N9b). No notifier call at
+     * all, so a "may have already sent" notice posted at this process start stays up (OD29 Q3).
+     */
+    private static void expire(EngineDeps d, ScheduledMessage m, boolean notify) {
         long id = m.getId();
         if (!d.store.expire(id)) return;
         d.marks.clear(id);
         schedulerOf(d).cancelAll(id);
         d.networkWaiter.cancel(id);
-        d.notifier.expired(reload(d, m));
+        if (notify) d.notifier.expired(reload(d, m));
         d.broadcaster.stateChanged(id, m.getRecipientE164());
     }
 
@@ -554,6 +579,9 @@ public final class SendLaterEngine {
      * a pending message's watermark holds it now when holdIfReplied is on: HELD, alarms cancelled,
      * hold notification, chip refresh broadcast. Outbound events change nothing here.
      *
+     * <p>While Send Later is off (OD24, OD29 Q1) the hold is silent: still HELD (a step down, I6),
+     * but no notification and no expiry alarm; turning it on sweeps and re-arms expiries.
+     *
      * @param e164OrConversationKey the E.164 number or {@code ConversationRef.key()}
      */
     public static void onInboundEvent(final Context context, final String e164OrConversationKey,
@@ -562,15 +590,16 @@ public final class SendLaterEngine {
         run(context, () -> {
             EngineDeps d = deps(context);
             long now = d.conditions.nowMs();
+            boolean on = enabled(d);
             for (ScheduledMessage m : pendingFor(d, e164OrConversationKey)) {
                 if (!m.isHoldIfReplied()) continue;
                 Classification c = ThreadEventClassifier.classify(m, Collections.singletonList(event), true);
                 if (c == Classification.REPLIED) {
                     d.networkWaiter.cancel(m.getId());
-                    hold(d, m, HoldReason.REPLIED, now, false);
+                    hold(d, m, HoldReason.REPLIED, now, false, on, on);
                 } else if (c == Classification.REACHED_OUT) {
                     d.networkWaiter.cancel(m.getId());
-                    hold(d, m, HoldReason.REACHED_OUT, now, false);
+                    hold(d, m, HoldReason.REACHED_OUT, now, false, on, on);
                 }
             }
         });
@@ -765,10 +794,58 @@ public final class SendLaterEngine {
     // ================================================================== master switch (OD24, AC11)
 
     /**
+     * The one serialized master-switch decision (F2, N9a; OD24, AC11). Always runs on the engine
+     * executor under the engine lock and re-reads {@code sendLaterEnabled()} there, so any number
+     * of quick toggles ends in the switch's final state: the last task to run sees the stored
+     * value, whatever order the toggles came in.
+     * <ul>
+     *   <li>Off: as {@link #onDisabled}: every alarm (expiry included) and network waiter of each
+     *       SCHEDULED and HELD row cancelled, its notification dismissed. Records kept;
+     *       IN_FLIGHT rows finish their attempt.</li>
+     *   <li>On: the expiry sweep (rows past 24 h expire, with their notification), then
+     *       {@link SendLaterScheduler#reregisterAll}.</li>
+     * </ul>
+     * {@code done} runs afterwards on the executor (also when the work failed), e.g. the
+     * ACTION_STATE_CHANGED broadcast.
+     */
+    public static void applySwitch(final Context context, final Runnable done) {
+        runInBackground(context, () -> {
+            synchronized (LOCK) {
+                EngineDeps d = deps(context);
+                if (enabled(d)) {
+                    doSweepExpired(d);
+                    schedulerOf(d).reregisterAll(context);
+                } else {
+                    // Already on the executor (not the main thread) and holding LOCK: runs inline.
+                    onDisabled(context);
+                }
+            }
+        }, done);
+    }
+
+    /** {@link #applySwitch(Context, Runnable)} with nothing to run afterwards. */
+    public static void applySwitch(final Context context) {
+        applySwitch(context, null);
+    }
+
+    /**
+     * Boot, time change, exact-alarm permission change ({@link SendLaterBootReceiver}): re-arms
+     * under the engine lock, so it cannot interleave with {@link #applySwitch}. A no-op while
+     * Send Later is off. Call on the engine executor.
+     */
+    public static void reregisterAll(final Context context) {
+        synchronized (LOCK) {
+            EngineDeps d = deps(context);
+            if (!enabled(d)) return;
+            schedulerOf(d).reregisterAll(context);
+        }
+    }
+
+    /**
      * Send Later was switched off: under the engine lock, cancels every alarm (expiry included)
      * and network waiter of each SCHEDULED and HELD row and dismisses its notification. Records
-     * are kept; IN_FLIGHT rows finish their attempt. Turning it on again re-arms through
-     * {@link SendLaterScheduler#reregisterAll}.
+     * are kept; IN_FLIGHT rows finish their attempt. It does not re-read the switch: the
+     * Settings screen goes through {@link #applySwitch}, which does.
      */
     public static void onDisabled(final Context context) {
         run(context, () -> {
@@ -781,9 +858,14 @@ public final class SendLaterEngine {
             SendLaterScheduler s = schedulerOf(d);
             for (ScheduledMessage m : live) {
                 long id = m.getId();
-                s.cancelAll(id);
-                d.networkWaiter.cancel(id);
-                d.notifier.dismiss(id);
+                try {
+                    s.cancelAll(id);
+                    d.networkWaiter.cancel(id);
+                    d.notifier.dismiss(id);
+                } catch (RuntimeException e) {
+                    // One row failing must not leave the others armed.
+                    Log.w(TAG, "disable failed for id " + id + ": " + e.getClass().getSimpleName());
+                }
             }
         });
     }
@@ -804,6 +886,11 @@ public final class SendLaterEngine {
     }
 
     private static void doSweepExpired(EngineDeps d) {
+        doSweepExpired(d, true);
+    }
+
+    /** {@code notify} false: the silent sweep while Send Later is off (N9b). */
+    private static void doSweepExpired(EngineDeps d, boolean notify) {
         long now = d.conditions.nowMs();
         List<ScheduledMessage> rows = new ArrayList<>();
         List<ScheduledMessage> held = d.store.allHeld();
@@ -811,7 +898,7 @@ public final class SendLaterEngine {
         List<ScheduledMessage> pending = d.store.allPending();
         if (pending != null) rows.addAll(pending);
         for (ScheduledMessage m : rows) {
-            if (now - m.getScheduledFor() >= LadderEvaluator.EXPIRY_MS) expire(d, m);
+            if (now - m.getScheduledFor() >= LadderEvaluator.EXPIRY_MS) expire(d, m, notify);
         }
     }
 

@@ -10,8 +10,9 @@ import android.content.Intent;
  * first unlock (no USER_UNLOCKED receiver needed). Process start ({@code onProcessStart}) has
  * already queued the IN_FLIGHT resolution on the same single-thread executor, so it runs first
  * (R23). The receiver is exported for the system broadcasts, so any other action (an explicit
- * intent from another app) is ignored. While Send Later is off nothing is re-armed
- * ({@link SendLaterScheduler#reregisterAll} checks the master switch, OD24).
+ * intent from another app) is ignored. The re-arm runs under the engine lock
+ * ({@link SendLaterEngine#reregisterAll}), so it cannot interleave with a master-switch change
+ * ({@link SendLaterEngine#applySwitch}); while Send Later is off nothing is re-armed (OD24).
  */
 public final class SendLaterBootReceiver extends BroadcastReceiver {
 
@@ -32,7 +33,7 @@ public final class SendLaterBootReceiver extends BroadcastReceiver {
         final Context app = context.getApplicationContext();
         final PendingResult pending = goAsync();
         SendLaterEngine.runInBackground(app,
-                () -> SendLaterScheduler.get(app).reregisterAll(app),
+                () -> SendLaterEngine.reregisterAll(app),
                 pending::finish);
     }
 }
