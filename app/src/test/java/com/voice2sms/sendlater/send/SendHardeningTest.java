@@ -176,16 +176,18 @@ public class SendHardeningTest {
     @Test public void cannotShowCausesMapToTheEnginesThreeDetails() {
         assertEquals("no_session", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "no_session"));
         assertEquals("no_session", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "auth"));
-        // OD27: a slow GV is not a sign-in problem: generic (LOCKED) wording.
-        assertNull(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "compose_timeout"));
+        // OD27: a slow GV is not a sign-in problem: generic wording (F6: COULD_NOT_SEND).
+        assertEquals("could_not_send", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "compose_timeout"));
         assertEquals("daily_cap", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, WebViewScheduledSender.DETAIL_DAILY_CAP));
         assertEquals("user_busy", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY));
         for (String other : new String[] {"timeout", "inject_failed", "paused", "launch_timeout", "cannot_show",
-                "activity_gone", "other_intent", null}) {
-            assertNull(other, SendDetails.forEngine(SendOutcome.CANNOT_SHOW, other));
+                "activity_gone", "other_intent"}) {
+            assertEquals(other, "could_not_send", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, other));
         }
+        assertNull(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, null));
         assertEquals(RemindCause.NO_SESSION, RemindCause.fromDetail(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "auth")));
-        assertEquals(RemindCause.LOCKED, RemindCause.fromDetail(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "timeout")));
+        assertEquals(RemindCause.COULD_NOT_SEND,
+                RemindCause.fromDetail(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "timeout")));
         assertEquals("late_reply", SendDetails.forEngine(SendOutcome.SENT_VERIFIED, ScheduledSendController.DETAIL_LATE_REPLY));
         assertEquals("no_match", SendDetails.forEngine(SendOutcome.SENT_UNVERIFIED, "no_match"));
     }

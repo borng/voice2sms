@@ -692,7 +692,7 @@ public final class SendLaterEngine {
      *       any other outcome takes this conservative branch too.</li>
      *   <li>CANNOT_SHOW: nothing was typed; back to SCHEDULED + a reminder worded by the
      *       detail ({@link RemindCause#fromDetail}: no_session gets Sign in, daily_cap, user_busy,
-     *       else locked).</li>
+     *       could_not_send, late (filed under LATE), else locked).</li>
      * </ul>
      */
     public static void onSendOutcome(final Context context, final long id, final SendOutcome outcome,

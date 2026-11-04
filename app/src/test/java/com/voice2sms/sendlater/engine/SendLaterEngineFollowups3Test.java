@@ -267,16 +267,18 @@ public class SendLaterEngineFollowups3Test {
         cannotShow("daily_cap");
         assertEquals(Collections.singletonList(ID + " DAILY_CAP"), notifier.causes);
         assertFalse(SendLaterNotifications.hasSignInAction(RemindCause.DAILY_CAP));
-        assertEquals("Daily scheduled-send limit reached",
-                SendLaterNotifications.cannotSendTitle(message(ID).build(), RemindCause.DAILY_CAP));
+        ScheduledMessage m = message(ID).build();
+        assertEquals("Daily scheduled-send limit reached: tap to send to " + SendLaterNotifications.who(m),
+                SendLaterNotifications.cannotSendTitle(m, RemindCause.DAILY_CAP));
     }
 
     @Test public void userBusyDetailRemindsWithTheBusyWording() {
         cannotShow("user_busy");
         assertEquals(Collections.singletonList(ID + " BUSY"), notifier.causes);
         assertFalse(SendLaterNotifications.hasSignInAction(RemindCause.BUSY));
-        assertEquals("You were using voice2sms; tap to send now",
-                SendLaterNotifications.cannotSendTitle(message(ID).build(), RemindCause.BUSY));
+        ScheduledMessage m = message(ID).build();
+        assertEquals("You were using voice2sms; tap to send to " + SendLaterNotifications.who(m) + " now",
+                SendLaterNotifications.cannotSendTitle(m, RemindCause.BUSY));
     }
 
     @Test public void unknownOrNoDetailKeepsTheLockedWording() {
