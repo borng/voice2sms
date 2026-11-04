@@ -5,6 +5,8 @@
     <!-- %1$s = the scheduled time label from the sheet, e.g. "Sat 9:00 AM" -->
     <string name="sendlater_overlay_scheduled">Scheduled for %1$s</string>
     <string name="sendlater_overlay_undo">Undo</string>
+    <!-- TalkBack label for the Undo action on the confirmation (UI M9). -->
+    <string name="sendlater_overlay_undo_description">Undo scheduled message</string>
     <string name="sendlater_overlay_clear_failed">Scheduled, but the draft couldn\'t be cleared</string>
     <string name="sendlater_overlay_changed">Saved to Upcoming — the conversation changed, draft left as is</string>
     <string name="sendlater_overlay_undone">Canceled — draft restored</string>

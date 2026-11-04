@@ -93,6 +93,8 @@ public final class VoiceOverlayController {
     private PendingScheduled scheduled;
     private PendingScheduled undo;
     private final Set<String> reported = new HashSet<>();
+    /** UI M2 (native): one sheet per tab tap burst. */
+    private final OverlayGeometry.TapGate tabGate = new OverlayGeometry.TapGate();
 
     private static final class PendingScheduled {
         final VoiceDraftSnapshot snapshot;
@@ -160,6 +162,7 @@ public final class VoiceOverlayController {
         capture = null;
         scheduled = null;
         undo = null;
+        tabGate.release();
     }
 
     /** From onInterrupt: removes the overlays, keeps listening. */
@@ -235,7 +238,9 @@ public final class VoiceOverlayController {
                 r.draft != null && !r.draft.isEmpty(), group, true, entry != null ? entry.total() : 0);
         openEntry = st.isChipVisible() ? entry : null;
         String chipLabel = st.isChipVisible() ? entry.chipLabel(TimeZone.getDefault(), System.currentTimeMillis()) : null;
-        windows.update(st.isTabVisible(), chipLabel, r.anchor);
+        // While a tab tap is in flight the tab stays hidden, so a second tap cannot reach it (UI M2).
+        boolean showTab = st.isTabVisible() && !tabGate.isBlocking(SystemClock.elapsedRealtime());
+        windows.update(showTab, chipLabel, r.anchor);
         OnScreenThreadSource.INSTANCE.setOpen(high && !group
                 ? new OnScreenThreadSource.OpenThread(r.title, r.atNewest) : null);
 
@@ -291,8 +296,15 @@ public final class VoiceOverlayController {
 
     private void onTabTap() {
         if (service == null) return;
+        // UI M2: gate and hide the tab synchronously, before the worker hop, so a double tap
+        // opens one sheet.
+        if (!tabGate.tryEnter(SystemClock.elapsedRealtime())) return;
+        windows.disableTab();
         final String title = nodes.readTitle();
-        if (title == null || VoiceOverlayState.isGroupTitle(title)) return;
+        if (title == null || VoiceOverlayState.isGroupTitle(title)) {
+            releaseTab();
+            return;
+        }
         final Context c = app;
         WORKER.execute(() -> {
             final List<String> contacts = CandidateLookup.contacts(c, title);
@@ -301,12 +313,21 @@ public final class VoiceOverlayController {
         });
     }
 
+    /** The tap was dropped or the sheet did not start: let the tab come back on the next refresh. */
+    private void releaseTab() {
+        tabGate.release();
+        if (service != null) scheduleRefresh();
+    }
+
     private void openSheet(String title, List<String> contacts, List<String> directory) {
         if (service == null) return;
         VoiceDraftSnapshot snap = VoiceDraftSnapshot.capture(nodes, System.currentTimeMillis(),
                 TimeZone.getDefault(), contacts, directory);
         // The candidates were looked up for `title`: drop the tap when the thread changed meanwhile.
-        if (snap == null || !title.equals(snap.getDisplayName())) return;
+        if (snap == null || !title.equals(snap.getDisplayName())) {
+            releaseTab();
+            return;
+        }
         List<String> cands = snap.getCandidates();
         Intent i = new Intent(SendLaterIntents.ACTION_CAPTURE)
                 .setPackage(app.getPackageName())
@@ -326,7 +347,12 @@ public final class VoiceOverlayController {
         }
         capture = snap;
         captureAt = SystemClock.elapsedRealtime();
-        if (start(i)) windows.hideTabAndChip();
+        if (start(i)) {
+            tabGate.settle(SystemClock.elapsedRealtime());
+            windows.hideTabAndChip();
+        } else {
+            releaseTab();
+        }
     }
 
     private boolean start(Intent i) {
@@ -424,7 +450,8 @@ public final class VoiceOverlayController {
         undo = undoable;
         windows.showToast(text, undoable == null ? null : () -> onUndo(undoable));
         main.removeCallbacks(hideToastRunnable);
-        main.postDelayed(hideToastRunnable, CONFIRM_MS);
+        // UI M9: the Undo window honours the user's accessibility timeout (API 29+).
+        main.postDelayed(hideToastRunnable, windows.confirmTimeoutMs(CONFIRM_MS, undoable != null));
     }
 
     private void hideToast() {
@@ -460,7 +487,7 @@ public final class VoiceOverlayController {
                         : R.string.sendlater_overlay_undone_kept;
                 windows.showToast(service.getString(res), null);
                 main.removeCallbacks(hideToastRunnable);
-                main.postDelayed(hideToastRunnable, CONFIRM_MS / 2);
+                main.postDelayed(hideToastRunnable, windows.confirmTimeoutMs(CONFIRM_MS / 2, false));
             });
         });
     }
