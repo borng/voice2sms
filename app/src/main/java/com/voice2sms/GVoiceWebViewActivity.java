@@ -266,6 +266,8 @@ public class GVoiceWebViewActivity extends Activity {
                 CookieManager.getInstance().flush();
                 // Send Later module (v2sSendLaterInit), once per page load.
                 if (url.startsWith("https://voice.google.com") && sendLaterHooks != null) installSendLater();
+                // R44: Enter inserts a newline in the composer, once per page load.
+                if (url.startsWith("https://voice.google.com")) installEnterNewline();
 
                 if (url.startsWith("https://voice.google.com") && !injected && recipient != null) {
                     // Mark SPA as loaded for future warm starts
@@ -519,6 +521,18 @@ public class GVoiceWebViewActivity extends Activity {
             Log.w(TAG, "Failed to read " + name + ": " + e.getClass().getSimpleName());
             return null;
         }
+    }
+
+    /**
+     * Installs inject.js v2sInstallEnterNewline() once per page load (R44, D29): Enter in the
+     * message box inserts a newline; only Send sends. Independent of Send Later and of the
+     * composer injection; the JS side is idempotent per document.
+     */
+    private void installEnterNewline() {
+        if (!isActivityAlive()) return;
+        String script = readAssetScript("inject.js");
+        if (script == null) return;
+        webView.evaluateJavascript(script + "\nv2sInstallEnterNewline();", null);
     }
 
     /** Installs the inject.js Send Later module (v2sSendLaterInit) once per page load. */
