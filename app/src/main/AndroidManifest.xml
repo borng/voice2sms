@@ -28,6 +28,8 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- sendlater:upcoming-settings permissions (optional contacts row, R36) -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <application
         android:name=".Voice2SmsApplication"
@@ -189,6 +191,21 @@
             android:name=".SetupActivity"
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
+        <!-- sendlater:upcoming-settings start -->
+        <!-- Send Later Upcoming list (R35): Settings, the chip and notifications open it with
+             SendLaterIntents.ACTION_UPCOMING (setPackage'd) and an optional EXTRA_E164 filter. -->
+        <activity
+            android:name=".sendlater.ui.UpcomingActivity"
+            android:exported="false"
+            android:label="@string/sendlater_upcoming_title"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.UPCOMING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- sendlater:upcoming-settings end -->
 
         <!-- Wearable listener: receives SMS send requests from the Voice2SMS watch companion.
              Transport is DataClient on /voice2sms/requests/* (durable) plus MessageClient on

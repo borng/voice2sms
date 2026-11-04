@@ -18,6 +18,8 @@ import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceManager;
 import androidx.preference.SwitchPreferenceCompat;
 
+import com.voice2sms.sendlater.ui.SendLaterSettingsController;
+
 public class SettingsActivity extends AppCompatActivity {
 
     private static final int REQUEST_ACCOUNT_PICKER = 3001;
@@ -41,9 +43,13 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     public static class SettingsFragment extends PreferenceFragmentCompat {
+        /** "Send Later" category rows (R36); summaries refreshed in onResume. */
+        private SendLaterSettingsController sendLater;
+
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
             setPreferencesFromResource(R.xml.preferences, rootKey);
+            sendLater = new SendLaterSettingsController(this);
 
             // Set default SMS app button
             Preference defaultSmsBtn = findPreference("set_default_sms");
@@ -135,6 +141,9 @@ public class SettingsActivity extends AppCompatActivity {
             Preference geminiToggle = findPreference("gemini_intercept_toggle");
             if (geminiToggle != null) {
                 updateGeminiInterceptStatus(geminiToggle);
+            }
+            if (sendLater != null) {
+                sendLater.refresh();
             }
         }
 

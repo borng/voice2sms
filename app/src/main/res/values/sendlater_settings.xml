@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Send Later settings, Upcoming screen and onboarding copy (R35-R37). strings.xml is not touched. -->
+<resources>
+    <!-- Settings category -->
+    <string name="sendlater_settings_category">Send Later</string>
+    <string name="sendlater_settings_enabled_title">Send Later</string>
+    <string name="sendlater_settings_enabled_on">On. Schedule texts from Google Voice and they go out at the time you pick.</string>
+    <string name="sendlater_settings_enabled_off">Off. Nothing is scheduled and nothing is sent. Your saved messages are kept.</string>
+
+    <string name="sendlater_settings_slot_morning">Morning time</string>
+    <string name="sendlater_settings_slot_afternoon">Afternoon time</string>
+    <string name="sendlater_settings_slot_evening">Evening time</string>
+    <string name="sendlater_settings_slot_night">Night time</string>
+
+    <string name="sendlater_settings_outbound_title">If I text them first</string>
+    <string name="sendlater_settings_outbound_still_send">Still send</string>
+    <string name="sendlater_settings_outbound_hold_and_ask">Hold and ask</string>
+
+    <string name="sendlater_settings_hold_default_title">Hold if they text first</string>
+    <string name="sendlater_settings_hold_default_summary">New scheduled messages wait for you to decide if the other person texts before the send time</string>
+
+    <string name="sendlater_settings_clear_draft_title">Clear draft after scheduling</string>
+    <string name="sendlater_settings_clear_draft_summary">Empty the message box once a message is saved to Upcoming</string>
+
+    <string name="sendlater_settings_exact_title">Send at the exact time</string>
+    <string name="sendlater_settings_exact_granted">Allowed. Messages go out at the time you pick.</string>
+    <string name="sendlater_settings_exact_denied">Not allowed. Send Later falls back to inexact alarms, so messages may go out a few minutes late. Tap to allow.</string>
+
+    <string name="sendlater_settings_listener_title">Notice replies (notification access)</string>
+    <string name="sendlater_settings_listener_on">On. %1$s.</string>
+    <string name="sendlater_settings_listener_not_bound">Allowed, but not connected yet. %1$s.</string>
+    <string name="sendlater_settings_listener_off">Off. Tap to allow. %1$s.</string>
+    <string name="sendlater_settings_listener_why">Optional. With notification access, Send Later reads the notifications Google Voice shows when someone texts you, so it can hold a scheduled message if they reply or text first. Without it, Send Later only checks the conversation when the message is due.</string>
+
+    <string name="sendlater_settings_accessibility_title">Read the Google Voice screen</string>
+    <string name="sendlater_settings_accessibility_on">On. The Voice2SMS accessibility service also watches the Google Voice app.</string>
+    <string name="sendlater_settings_accessibility_off">Off. Tap to open Accessibility settings.</string>
+    <string name="sendlater_settings_accessibility_why">Optional. The Voice2SMS accessibility service, which already handles Gemini, now also watches the Google Voice app: it adds the Send Later button to a conversation and reads the messages on screen so a scheduled text is not sent after a reply. It reads nothing in other apps for Send Later.</string>
+
+    <string name="sendlater_settings_contacts_title">Contacts</string>
+    <string name="sendlater_settings_contacts_granted">Allowed. Names are matched to the right number.</string>
+    <string name="sendlater_settings_contacts_denied">Optional. Not allowed: you may be asked which number to use. Tap to allow.</string>
+
+    <string name="sendlater_settings_notifications_title">Notifications</string>
+    <string name="sendlater_settings_notifications_granted">Allowed. You get the last call, hold and sent notices.</string>
+    <string name="sendlater_settings_notifications_denied">Not allowed. You will not see the last call or hold notices. Tap to allow.</string>
+
+    <string name="sendlater_settings_upcoming_title">Upcoming</string>
+    <string name="sendlater_settings_upcoming_summary">See, change or cancel scheduled messages</string>
+
+    <string name="sendlater_settings_help_title">Toggle greyed out?</string>
+    <string name="sendlater_settings_help_summary">On Samsung and some other phones, if the accessibility or notification access toggle is greyed out, open App info for Voice2SMS, tap the menu (three dots) and choose Allow restricted settings, then try again.</string>
+
+    <string name="sendlater_settings_disabled_toast">Send Later is off. Alarms cancelled; your messages are kept.</string>
+    <string name="sendlater_settings_enabled_toast">Send Later is on.</string>
+
+    <!-- Onboarding (SetupActivity) -->
+    <string name="sendlater_settings_onboarding_title">Optional: Send Later</string>
+    <string name="sendlater_settings_onboarding_body">Send Later lets you schedule a text and have it sent for you. It is off until you turn it on in Settings, and each permission below is optional: without one, Send Later asks you more often instead of breaking.</string>
+    <string name="sendlater_settings_onboarding_accessibility">Accessibility: the same Voice2SMS accessibility service that handles Gemini also watches the Google Voice app, so it can add the Send Later button and see whether they replied before a scheduled text goes out.</string>
+    <string name="sendlater_settings_onboarding_listener">Notification access: lets Send Later notice a reply from the Google Voice notification, so it can hold a scheduled text when they text you first.</string>
+    <string name="sendlater_settings_onboarding_samsung">Samsung: if a toggle is greyed out, open App info for Voice2SMS, tap the menu and choose Allow restricted settings.</string>
+    <string name="sendlater_settings_onboarding_listener_button">Open notification access</string>
+    <string name="sendlater_settings_onboarding_settings_button">Send Later settings</string>
+    <string name="sendlater_settings_onboarding_listener_on">Notification access: On</string>
+    <string name="sendlater_settings_onboarding_listener_off">Notification access: Off</string>
+
+    <!-- Upcoming screen -->
+    <string name="sendlater_upcoming_title">Upcoming</string>
+    <string name="sendlater_upcoming_section_pending">Pending</string>
+    <string name="sendlater_upcoming_section_held">Held</string>
+    <string name="sendlater_upcoming_section_recent">Recent (last 30 days)</string>
+    <string name="sendlater_upcoming_empty">Nothing scheduled.</string>
+    <string name="sendlater_upcoming_filtered">Showing one conversation</string>
+    <string name="sendlater_upcoming_show_all">Show all</string>
+    <string name="sendlater_upcoming_disabled">Send Later is off. Nothing will be sent until you turn it on in Settings.</string>
+    <string name="sendlater_upcoming_unknown_recipient">Unknown recipient</string>
+    <string name="sendlater_upcoming_change_time">Change time</string>
+    <string name="sendlater_upcoming_cancel">Cancel</string>
+    <string name="sendlater_upcoming_send_now">Send now</string>
+    <string name="sendlater_upcoming_sending">Sending</string>
+    <string name="sendlater_upcoming_confirm_cancel">Cancel this scheduled message?</string>
+    <string name="sendlater_upcoming_confirm_send">Send this message now?</string>
+    <string name="sendlater_upcoming_confirm_send_unverified">It may already have been sent. Send it now anyway?</string>
+    <string name="sendlater_upcoming_keep">Keep</string>
+    <string name="sendlater_upcoming_load_failed">Could not load scheduled messages.</string>
+
+    <string name="sendlater_upcoming_reason_replied">Held: they replied</string>
+    <string name="sendlater_upcoming_reason_reached_out">Held: they texted you</string>
+    <string name="sendlater_upcoming_reason_outbound_only">Held: you texted them since scheduling</string>
+    <string name="sendlater_upcoming_reason_unverified">Held: could not confirm whether it was sent</string>
+    <string name="sendlater_upcoming_reason_locked">Held: the phone was locked</string>
+    <string name="sendlater_upcoming_reason_unknown">Held</string>
+
+    <string name="sendlater_upcoming_status_sent">Sent</string>
+    <string name="sendlater_upcoming_status_canceled">Cancelled</string>
+    <string name="sendlater_upcoming_status_expired">Expired, not sent</string>
+    <string name="sendlater_upcoming_status_self_preempted">Not sent: you already sent it</string>
+    <string name="sendlater_upcoming_status_failed">Failed, not sent</string>
+
+    <string-array name="sendlater_settings_outbound_entries">
+        <item>@string/sendlater_settings_outbound_still_send</item>
+        <item>@string/sendlater_settings_outbound_hold_and_ask</item>
+    </string-array>
+    <string-array name="sendlater_settings_outbound_values" translatable="false">
+        <item>STILL_SEND</item>
+        <item>HOLD_AND_ASK</item>
+    </string-array>
+</resources>
