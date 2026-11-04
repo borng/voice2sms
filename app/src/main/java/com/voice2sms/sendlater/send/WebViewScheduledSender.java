@@ -41,8 +41,9 @@ import java.util.concurrent.Executors;
  * as {@link LaunchPlanner} decides: DIRECT startActivity when voice2sms's accessibility service is
  * enabled, a full-screen-intent notification on a locked or dark screen, otherwise nothing
  * (CANNOT_SHOW, then false: "Unlock to send" while locked (D15), else "Couldn't send
- * automatically"). At the slot's time the row is reloaded and a launch past its lateness deadline
- * is CANNOT_SHOW {@code late} (F4, I2). Every CANNOT_SHOW detail goes through
+ * automatically"). A corrupt row (no recipient or text) is CANNOT_SHOW with the generic reminder.
+ * At the slot's time the row is reloaded and a launch more than {@link LaunchRecheck#QUEUE_SLACK_MS}
+ * past its lateness deadline is CANNOT_SHOW {@code late} (F4, I2, OD30). Every CANNOT_SHOW detail goes through
  * {@link SendDetails#forEngine}.
  *
  * <p>Runs on the engine's background thread. Never writes a status itself: outcomes go through
@@ -70,7 +71,11 @@ public final class WebViewScheduledSender implements ScheduledSender {
         if (context == null || message == null) return false;
         final Context app = context.getApplicationContext();
         final long id = message.getId();
-        if (message.getRecipientE164() == null || message.getText() == null) return false;
+        if (message.getRecipientE164() == null || message.getText() == null) {
+            // A corrupt row: nothing can be typed. Report it so the reminder is the generic
+            // "Couldn't send automatically", never the default "Unlock to send" (gate-residuals).
+            return notStarted(app, id, ScheduledSendController.DETAIL_NO_RECIPIENT);
+        }
         // Nothing that cannot launch may use up a queue slot (spacing, daily cap).
         if (!rowIsSendable(app, message)) return false;
         if (!ScheduledSendController.isBusy() && ForegroundUse.isUserBusy(System.currentTimeMillis())) {
@@ -152,7 +157,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
     /**
      * F4 (I2 "ever"): the queue delay is a main-Handler delay, which counts uptime and stops in
      * deep sleep, so the slot can come long after the thread check. Before launching, reload the
-     * row off the main thread: past {@code LatenessBudget.deadlineMs} it is CANNOT_SHOW with
+     * row off the main thread: more than {@link LaunchRecheck#QUEUE_SLACK_MS} past
+     * {@code LatenessBudget.deadlineMs} (OD30) it is CANNOT_SHOW with
      * {@link LaunchRecheck#DETAIL_LATE} (the LATE reminder), never a late send; a row that is no
      * longer IN_FLIGHT is dropped silently (the engine already resolved it). An unreadable row
      * launches: the controller reloads and re-checks it before anything is typed.
@@ -162,7 +168,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
         IO.execute(() -> {
             LaunchRecheck.Verdict verdict = LaunchRecheck.Verdict.PROCEED;
             try {
-                verdict = LaunchRecheck.check(SendLaterRepository.get(app).get(id), System.currentTimeMillis());
+                verdict = LaunchRecheck.check(SendLaterRepository.get(app).get(id), System.currentTimeMillis(),
+                        LaunchRecheck.QUEUE_SLACK_MS);
             } catch (RuntimeException e) {
                 Log.w(TAG, "recheck failed for id " + id + ": " + e.getClass().getSimpleName());
             }
@@ -273,7 +280,7 @@ public final class WebViewScheduledSender implements ScheduledSender {
         }
     }
 
-    /** Nobody took the launch in time: nothing was typed, so CANNOT_SHOW (LOCKED reminder). */
+    /** Nobody took the launch in time: nothing was typed, so CANNOT_SHOW ("Couldn't send automatically"). */
     private static void watchClaim(final Context app, final long id, final String token, long delayMs) {
         MAIN.postDelayed(() -> {
             if (!LaunchClaims.INSTANCE.take(id, token)) return;

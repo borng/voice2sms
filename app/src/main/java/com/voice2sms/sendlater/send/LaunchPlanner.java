@@ -9,7 +9,8 @@ package com.voice2sms.sendlater.send;
  *       {@link Result#FULL_SCREEN_INTENT} (the system launches it only on a locked or dark
  *       screen);</li>
  *   <li>else {@link Result#CANNOT_SHOW}: on a lit, unlocked screen a full-screen intent is only
- *       a heads-up, so the engine records the LOCKED reminder instead.</li>
+ *       a heads-up, so the sender reports CANNOT_SHOW with {@link SendDetails#plannerCause}
+ *       ("Unlock to send" when locked, else "Couldn't send automatically").</li>
  * </ol>
  */
 public final class LaunchPlanner {

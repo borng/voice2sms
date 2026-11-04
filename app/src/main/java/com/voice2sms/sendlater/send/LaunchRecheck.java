@@ -25,15 +25,35 @@ public final class LaunchRecheck {
     /** CANNOT_SHOW cause for a late launch; the engine words it with the LATE reminder. */
     public static final String DETAIL_LATE = RemindCause.DETAIL_LATE;
 
+    /**
+     * OD30: how far past {@link LatenessBudget#deadlineMs} a launch may still start. The thread
+     * check decided SEND on time; the queue spacing (2 s per message due together) and the hop
+     * to the activity add a few seconds that must not turn a NEVER_LATE message (deadline = its
+     * scheduled time) into a reminder. Only the launch-time re-checks (the sender's slot and the
+     * controller's dequeue) pass this; the domain evaluator keeps the exact deadline.
+     */
+    public static final long QUEUE_SLACK_MS = 10_000L;
+
     private LaunchRecheck() {}
 
+    /** Exact deadline (no slack). */
     public static Verdict check(ScheduledMessage row, long nowMs) {
+        return check(row, nowMs, 0L);
+    }
+
+    /** As {@link #check(ScheduledMessage, long)} with {@code slackMs} allowed past the deadline. */
+    public static Verdict check(ScheduledMessage row, long nowMs, long slackMs) {
         if (row == null || row.getStatus() != ScheduledMessage.Status.IN_FLIGHT) return Verdict.GONE;
-        return isLate(row, nowMs) ? Verdict.LATE : Verdict.PROCEED;
+        return isLate(row, nowMs, slackMs) ? Verdict.LATE : Verdict.PROCEED;
     }
 
     /** {@code nowMs} is past the row's lateness deadline (inclusive deadline, as the evaluator). */
     public static boolean isLate(ScheduledMessage row, long nowMs) {
-        return row != null && nowMs > LatenessBudget.deadlineMs(row);
+        return isLate(row, nowMs, 0L);
+    }
+
+    /** {@code nowMs} is more than {@code slackMs} past the row's lateness deadline. */
+    public static boolean isLate(ScheduledMessage row, long nowMs, long slackMs) {
+        return row != null && nowMs > LatenessBudget.deadlineMs(row) + Math.max(0L, slackMs);
     }
 }
