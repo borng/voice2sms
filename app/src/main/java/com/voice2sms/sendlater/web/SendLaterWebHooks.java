@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat;
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
+import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 import com.voice2sms.sendlater.store.ThreadDirectory;
 
@@ -63,6 +64,12 @@ public final class SendLaterWebHooks {
 
         /** {@code GVoiceWebViewActivity.readThread}. */
         void readThread(String e164, int limit, ThreadReadCallback cb);
+
+        /**
+         * Main thread: the Send Later switch may have changed (ACTION_STATE_CHANGED, or the
+         * activity resumed). The activity restarts or stops its Send Later-only work (R40).
+         */
+        void onSendLaterSwitch(boolean enabled);
     }
 
     private static volatile WeakReference<SendLaterWebHooks> active = new WeakReference<>(null);
@@ -85,6 +92,8 @@ public final class SendLaterWebHooks {
     private boolean receiverRegistered;
     private boolean sheetOpen;
     private String moduleScript;
+    /** The current page load got the module (moduleScript() answered non-null for it). */
+    private boolean moduleOnPage;
 
     private static final class PendingClear {
         final long messageId;
@@ -127,8 +136,15 @@ public final class SendLaterWebHooks {
 
     // ------------------------------------------------------------------ page load
 
-    /** inject.js plus {@code v2sSendLaterInit()}; evaluated by the activity from onPageFinished. */
+    /**
+     * Main thread: inject.js plus {@code v2sSendLaterInit()}; evaluated by the activity from
+     * onPageFinished. Null while Send Later is off (R40, I8: with the switch off a GV page runs
+     * none of the module); {@link #syncModule} installs it on the live page once the switch goes
+     * on.
+     */
     public String moduleScript() {
+        moduleOnPage = false;
+        if (!SendLaterSettings.isEnabled(app)) return null;
         if (moduleScript == null) {
             try (InputStream is = activity.getAssets().open("inject.js")) {
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -141,7 +157,23 @@ public final class SendLaterWebHooks {
                 return null;
             }
         }
+        moduleOnPage = true;
         return moduleScript + "\n;if (typeof v2sSendLaterInit === 'function') v2sSendLaterInit();";
+    }
+
+    /**
+     * Main thread: the switch may have changed. On -> installs the module on the live GV page
+     * when this page load did not get it (v2sSendLaterInit is idempotent). Then the page re-reads
+     * the chip state; with the switch off the page's own tick stops on that answer.
+     */
+    private void syncModule() {
+        boolean on = SendLaterSettings.isEnabled(app);
+        if (on && !moduleOnPage && OriginGuard.isTrustedGvUrl(host.currentUrl())) {
+            String js = moduleScript();
+            if (js != null) host.evaluate(js);
+        }
+        refreshChip();
+        host.onSendLaterSwitch(on);
     }
 
     // ------------------------------------------------------------------ lifecycle (main thread)
@@ -156,7 +188,7 @@ public final class SendLaterWebHooks {
             pendingClear = null;
         }
         if (c != null) applyClear(c);
-        else refreshChip();
+        else syncModule();
     }
 
     public void onPause() {
@@ -204,7 +236,7 @@ public final class SendLaterWebHooks {
             if (SendLaterIntents.ACTION_SCHEDULED.equals(action)) {
                 onScheduled(intent);
             } else if (SendLaterIntents.ACTION_STATE_CHANGED.equals(action)) {
-                refreshChip();
+                syncModule();
             }
         }
     };
@@ -380,8 +412,11 @@ public final class SendLaterWebHooks {
 
     /**
      * Binder thread: cancels the message just cleared from the composer. Only the most recent
-     * clear, within its undo window, and only while it is still SCHEDULED or HELD. The page
-     * restores the draft itself, and only when this returns true.
+     * clear, within its undo window, and only while it is still SCHEDULED or HELD. The cancel goes
+     * through {@link SendLaterEngine#onCancel} (inline under the engine lock on this thread), so
+     * its alarms, marks and notification go with it and the engine broadcasts the state change,
+     * exactly like the native Undo (R11). The page restores the draft itself, and only when this
+     * returns true (the row reads back CANCELED).
      */
     public boolean bridgeUndo(long messageId) {
         synchronized (this) {
@@ -398,16 +433,13 @@ public final class SendLaterWebHooks {
                     && m.getStatus() != ScheduledMessage.Status.HELD)) {
                 return false;
             }
-            if (!repo.cancel(messageId)) return false;
+            SendLaterEngine.onCancel(app, messageId);
+            ScheduledMessage after = repo.get(messageId);
+            return after != null && after.getStatus() == ScheduledMessage.Status.CANCELED;
         } catch (RuntimeException e) {
             Log.w(TAG, "undo failed: " + e.getClass().getSimpleName());
             return false;
         }
-        app.sendBroadcast(new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
-                .setPackage(app.getPackageName())
-                .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, messageId)
-                .putExtra(SendLaterIntents.EXTRA_STATUS, ScheduledMessage.Status.CANCELED.name()));
-        return true;
     }
 
     // ------------------------------------------------------------------ thread read
