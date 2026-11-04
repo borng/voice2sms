@@ -84,6 +84,15 @@ public final class UpcomingSections {
         return Collections.unmodifiableSet(EnumSet.noneOf(RowAction.class));
     }
 
+    /**
+     * UI M5: a SCHEDULED row the engine already reminded about (id in {@code remindedIds}) will
+     * not send itself; its row gets a status line saying so instead of none.
+     */
+    public static boolean isWaitingForUser(ScheduledMessage m, Set<Long> remindedIds) {
+        return m != null && com.voice2sms.sendlater.domain.ChipLabel.isWaitingForUser(m,
+                remindedIds != null && remindedIds.contains(m.getId()));
+    }
+
     /** First line of the message text, trimmed (null-safe; "" when there is none). */
     public static String firstLine(String text) {
         if (text == null) return "";

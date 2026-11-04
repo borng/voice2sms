@@ -36,9 +36,14 @@
     <!-- sendlater:send-path permission (R30/OD10: full-screen intent opens the send on a locked screen) -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
+    <!-- sendlater:dl-privacy start: the two backup-rule attributes on the application element below
+         (OD31) keep sendlater.db and the sendlater_* prefs out of backup and device transfer. -->
+    <!-- sendlater:dl-privacy end -->
     <application
         android:name=".Voice2SmsApplication"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/sendlater_data_extraction_rules"
+        android:fullBackupContent="@xml/sendlater_backup_rules"
         android:hardwareAccelerated="true"
         android:icon="@android:drawable/sym_action_chat"
         android:label="@string/app_name"

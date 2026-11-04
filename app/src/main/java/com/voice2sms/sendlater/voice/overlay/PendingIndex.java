@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 
 /**
@@ -46,6 +47,7 @@ public final class PendingIndex {
         private int held;
         private long nextTimeMs = Long.MAX_VALUE;
         private long onlyId = -1;
+        private int reminded;
         private String e164;
         private String heldName;
         private String heldE164;
@@ -66,13 +68,28 @@ public final class PendingIndex {
 
         public boolean hasHoldWatch() { return !watches.isEmpty(); }
 
-        /** R17 chip text, or null when there is nothing to show. */
+        /**
+         * The message the chip opens in edit mode (R18), else -1. OD31 PQ4: a single HELD message
+         * opens Upcoming filtered to the thread instead, which shows the hold reason and Send now.
+         */
+        public long editMessageId() { return held == 0 ? singleMessageId() : -1; }
+
+        /** Pending messages the engine already reminded about (they will not send themselves). */
+        public int remindedCount() { return reminded; }
+
+        /** R17 chip text without the date rule, or null when there is nothing to show. */
         public String chipLabel(TimeZone zone) {
-            return ChipLabel.format(pending, held, nextTimeMs == Long.MAX_VALUE ? 0 : nextTimeMs,
-                    heldName, heldE164, heldReason, zone);
+            long next = nextTimeMs == Long.MAX_VALUE ? 0 : nextTimeMs;
+            return chipLabel(zone, next);
         }
 
-        void add(ScheduledMessage m, boolean isHeld) {
+        /** R17 chip text at {@code nowMs} (date beyond the coming week, UI M5/M6), or null. */
+        public String chipLabel(TimeZone zone, long nowMs) {
+            return ChipLabel.format(pending, held, nextTimeMs == Long.MAX_VALUE ? 0 : nextTimeMs,
+                    heldName, heldE164, heldReason, reminded, nowMs, zone);
+        }
+
+        void add(ScheduledMessage m, boolean isHeld, boolean isReminded) {
             if (isHeld) {
                 held++;
                 if (heldReason == null) {
@@ -82,6 +99,7 @@ public final class PendingIndex {
                 }
             } else {
                 pending++;
+                if (isReminded) reminded++;
                 nextTimeMs = Math.min(nextTimeMs, m.getScheduledFor());
                 if (m.isHoldIfReplied() && m.getRecipientE164() != null) {
                     watches.add(new HoldWatch(m.getId(), m.getRecipientE164(), m.getWatermark(), m.getCreatedAt()));
@@ -104,18 +122,33 @@ public final class PendingIndex {
 
     /** {@code pending} = SCHEDULED rows, {@code held} = HELD rows; either may be null. */
     public static PendingIndex build(List<ScheduledMessage> pending, List<ScheduledMessage> held) {
+        return build(pending, held, null);
+    }
+
+    /**
+     * As {@link #build(List, List)}; {@code remindedIds} are the SCHEDULED ids carrying the
+     * engine's "reminded" mark (null = none), shown as "Reminder sent" on the chip (UI M5).
+     */
+    public static PendingIndex build(List<ScheduledMessage> pending, List<ScheduledMessage> held,
+                                     Set<Long> remindedIds) {
         Map<String, Entry> map = new HashMap<>();
-        if (pending != null) for (ScheduledMessage m : pending) put(map, m, false);
-        if (held != null) for (ScheduledMessage m : held) put(map, m, true);
+        if (pending != null) {
+            for (ScheduledMessage m : pending) {
+                boolean r = m != null && ChipLabel.isWaitingForUser(m,
+                        remindedIds != null && remindedIds.contains(m.getId()));
+                put(map, m, false, r);
+            }
+        }
+        if (held != null) for (ScheduledMessage m : held) put(map, m, true, false);
         return map.isEmpty() ? EMPTY : new PendingIndex(map);
     }
 
-    private static void put(Map<String, Entry> map, ScheduledMessage m, boolean isHeld) {
+    private static void put(Map<String, Entry> map, ScheduledMessage m, boolean isHeld, boolean isReminded) {
         if (m == null) return;
         String e164 = m.getRecipientE164();
-        if (e164 != null) entry(map, e164).add(m, isHeld);
+        if (e164 != null) entry(map, e164).add(m, isHeld, isReminded);
         String name = m.getRecipientDisplayName();
-        if (name != null && !name.trim().isEmpty()) entry(map, nameKey(name)).add(m, isHeld);
+        if (name != null && !name.trim().isEmpty()) entry(map, nameKey(name)).add(m, isHeld, isReminded);
     }
 
     private static Entry entry(Map<String, Entry> map, String key) {

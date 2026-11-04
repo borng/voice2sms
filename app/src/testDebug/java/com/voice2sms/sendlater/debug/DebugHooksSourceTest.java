@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  */
 public class DebugHooksSourceTest {
 
-    private static final Path PKG = Paths.get("src/main/java/com/voice2sms/sendlater/debug");
+    private static final Path PKG = Paths.get("src/debug/java/com/voice2sms/sendlater/debug");
     private static final Path RECEIVER = PKG.resolve("SendLaterDebugReceiver.java");
     private static final Path COMMANDS = PKG.resolve("SendLaterDebugCommands.java");
     private static final Path MAIN_MANIFEST = Paths.get("src/main/AndroidManifest.xml");

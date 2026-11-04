@@ -1,6 +1,7 @@
 package com.voice2sms.sendlater.domain;
 
 import java.text.SimpleDateFormat;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -9,6 +10,11 @@ import java.util.TimeZone;
  * In-thread chip text (R17): "Scheduled · Sat 9:00 AM" for one pending message, "N scheduled"
  * for several, "Held · <Name> replied" (or "... called" for REACHED_OUT) whenever any is held.
  * Returns null when there is nothing to show.
+ *
+ * <p>Deliver fixes (UI M5, M6): a SCHEDULED message the engine already reminded about will not
+ * send itself, so it reads "Reminder sent · Sat 9:00 AM" instead of "Scheduled · ..."; several
+ * with any reminded read "3 scheduled · 1 waiting for you". The time carries the date beyond the
+ * coming week ("Mon, Nov 23, 9:00 AM"), the same rule as the sheet's time label.
  */
 public final class ChipLabel {
 
@@ -23,12 +29,26 @@ public final class ChipLabel {
     }
 
     /**
-     * @param heldName   display name as captured (may be null)
-     * @param heldE164   number used when there is no name, formatted (NXX) NXX-XXXX for +1 numbers
-     * @param heldReason reason of the held message shown; REACHED_OUT reads "called"
+     * As the full overload with nothing reminded and the time read without a date (the time is
+     * measured against itself, so it always falls in "this week").
      */
     public static String format(int pendingCount, int heldCount, long nextTimeMs, String heldName,
                                 String heldE164, HoldReason heldReason, TimeZone zone) {
+        return format(pendingCount, heldCount, nextTimeMs, heldName, heldE164, heldReason,
+                0, nextTimeMs, zone);
+    }
+
+    /**
+     * @param heldName      display name as captured (may be null)
+     * @param heldE164      number used when there is no name, formatted (NXX) NXX-XXXX for +1 numbers
+     * @param heldReason    reason of the held message shown; REACHED_OUT reads "called"
+     * @param remindedCount how many of the pending (SCHEDULED) messages were already reminded
+     *                      about and wait for the user (see {@link #isWaitingForUser})
+     * @param nowMs         now, for the date rule of the time label
+     */
+    public static String format(int pendingCount, int heldCount, long nextTimeMs, String heldName,
+                                String heldE164, HoldReason heldReason, int remindedCount,
+                                long nowMs, TimeZone zone) {
         if (heldCount > 0) {
             String who = heldDisplayName(heldName, heldE164);
             String verb = verb(heldReason);
@@ -37,13 +57,42 @@ public final class ChipLabel {
             if (verb != null) sb.append(who.isEmpty() ? SEP : " ").append(verb);
             return sb.toString();
         }
-        if (pendingCount > 1) return pendingCount + " scheduled";
+        if (pendingCount > 1) {
+            String n = pendingCount + " scheduled";
+            return remindedCount > 0 ? n + SEP + Math.min(remindedCount, pendingCount) + " waiting for you" : n;
+        }
         if (pendingCount == 1) {
-            SimpleDateFormat f = new SimpleDateFormat("EEE h:mm a", Locale.getDefault());
-            f.setTimeZone(zone != null ? zone : TimeZone.getDefault());
-            return "Scheduled" + SEP + f.format(new Date(nextTimeMs));
+            return (remindedCount > 0 ? "Reminder sent" : "Scheduled") + SEP
+                    + timeLabel(nextTimeMs, nowMs, zone != null ? zone : TimeZone.getDefault());
         }
         return null;
+    }
+
+    /**
+     * A SCHEDULED message that will not send itself: the engine reminded the user about it
+     * ({@code remindedMark}, the engine's "reminded" mark, R29). Any other status is false.
+     */
+    public static boolean isWaitingForUser(ScheduledMessage m, boolean remindedMark) {
+        return m != null && m.getStatus() == ScheduledMessage.Status.SCHEDULED && remindedMark;
+    }
+
+    /**
+     * "Wed 1:30 PM" within the coming week (today plus six days), "Wed, Jun 24, 1:30 PM" further
+     * out. Same rule as the sheet's time label ({@code SheetViewModelLogic.timeLabel}, R17).
+     */
+    public static String timeLabel(long t, long nowMs, TimeZone zone) {
+        Calendar now = Calendar.getInstance(zone);
+        now.setTimeInMillis(nowMs);
+        now.set(Calendar.HOUR_OF_DAY, 0);
+        now.set(Calendar.MINUTE, 0);
+        now.set(Calendar.SECOND, 0);
+        now.set(Calendar.MILLISECOND, 0);
+        now.add(Calendar.DAY_OF_MONTH, 6);
+        boolean thisWeek = t < now.getTimeInMillis() + 24L * 60 * 60 * 1000;
+        SimpleDateFormat f = new SimpleDateFormat(thisWeek ? "EEE h:mm a" : "EEE, MMM d, h:mm a",
+                Locale.getDefault());
+        f.setTimeZone(zone);
+        return f.format(new Date(t));
     }
 
     /** REPLIED -> "replied", REACHED_OUT -> "called"; other reasons have no verb ("Held · Name"). */
