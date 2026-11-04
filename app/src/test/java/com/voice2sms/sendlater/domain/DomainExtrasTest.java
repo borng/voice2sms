@@ -46,7 +46,8 @@ public class DomainExtrasTest {
         assertEquals(DAY, LatenessBudget.budgetMs(7 * DAY, LatenessPolicy.UP_TO_24H));
         ScheduledMessage m = message(3 * HOUR).latenessPolicy(LatenessPolicy.UP_TO_24H).build();
         assertEquals(Decision.Kind.SEND, eval(m, DUE + 23 * HOUR).getKind());
-        assertEquals(Decision.Kind.REMIND, eval(m, DUE + DAY + MIN).getKind());
+        // Past the 24 h cap the message no longer sends; it is also 24 h past due, so R29 expires it.
+        assertEquals(Decision.Kind.EXPIRED, eval(m, DUE + DAY + MIN).getKind());
     }
 
     @Test
@@ -126,10 +127,13 @@ public class DomainExtrasTest {
     }
 
     @Test
-    public void classifier_timestampWatermark_ignoresEventsAtOrBeforeNewestTs() {
+    public void classifier_timestampWatermark_ignoresInboundBeforeMarginAndOutboundAtNewestTs() {
         ScheduledMessage m = message(3 * HOUR).build(); // newestTs = T0 - 10 min
+        // OD20(6): inbound counts from newestTs - 90 s, so only older inbound is ignored.
         assertEquals(Classification.UNCHANGED, ThreadEventClassifier.classify(m,
-                events(inbound(ThreadEvent.Kind.SMS, T0 - 10 * MIN, "old")), true));
+                events(inbound(ThreadEvent.Kind.SMS, T0 - 10 * MIN - 91_000L, "old")), true));
+        assertEquals(Classification.UNCHANGED, ThreadEventClassifier.classify(m,
+                events(Fixtures.outboundSms(T0 - 10 * MIN, "What time is dinner")), true));
     }
 
     @Test

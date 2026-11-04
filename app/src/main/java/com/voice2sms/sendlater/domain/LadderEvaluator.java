@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * The degrade ladder (R25-R29, I2, I6) as a pure function. Facts can only make the outcome more
- * cautious; nothing here can turn a HOLD/REMIND back into SEND (only Greg's tap, via
+ * cautious; nothing here can turn a HOLD/REMIND back into SEND (only the user's tap, via
  * {@link #evaluateSendAnyway}).
  *
  * <p>Order for a SCHEDULED (or IN_FLIGHT, after its thread read) message:
@@ -19,8 +19,10 @@ import java.util.List;
  *   <li>No network: WAIT(deadline) while inside the budget, else REMIND(NO_NETWORK).</li>
  *   <li>Otherwise SEND.</li>
  * </ol>
- * A HELD message stays HELD (CANCEL if Greg has since sent a similar text) and becomes EXPIRED
- * once 24 h have passed since its scheduled time (R29).
+ * A HELD message stays HELD (CANCEL if the user has since sent a similar text) and becomes EXPIRED
+ * once 24 h have passed since its scheduled time (R29). A SCHEDULED message whose result would be
+ * REMIND (a reminded message keeps status SCHEDULED) also becomes EXPIRED once 24 h have passed
+ * since its scheduled time (R29, "HELD or reminded").
  */
 public final class LadderEvaluator {
 
@@ -37,12 +39,32 @@ public final class LadderEvaluator {
     }
 
     /**
+     * Evaluates the ladder for a SCHEDULED, HELD or IN_FLIGHT message.
+     *
+     * <p>IN_FLIGHT (R31): an IN_FLIGHT message is evaluated like a SCHEDULED one, so once its own
+     * outbound bubble appears in the thread the result is {@code CANCEL(SELF_PREEMPTED)}. For an
+     * IN_FLIGHT message that result means the send went out: the engine must map it to
+     * SENT_VERIFIED (R31), never to the SELF_PREEMPTED or CANCELED status.
+     *
      * @param events null when no ThreadEventSource was available (classifies as UNVERIFIED)
      * @throws IllegalArgumentException for a message already in a terminal status
      */
     public static Decision evaluate(ScheduledMessage message, Rung rung, List<ThreadEvent> events, long nowMs,
                                     SessionState session, NetworkState network, boolean listenerEnabled,
                                     OutboundPolicy outboundPolicy) {
+        Decision d = evaluateLadder(message, rung, events, nowMs, session, network, listenerEnabled, outboundPolicy);
+        // R29: a reminded message (status stays SCHEDULED) ignored for 24 h expires, like a HELD one.
+        if (d.getKind() == Decision.Kind.REMIND
+                && message.getStatus() == ScheduledMessage.Status.SCHEDULED
+                && nowMs - message.getScheduledFor() >= EXPIRY_MS) {
+            return Decision.expired();
+        }
+        return d;
+    }
+
+    private static Decision evaluateLadder(ScheduledMessage message, Rung rung, List<ThreadEvent> events, long nowMs,
+                                           SessionState session, NetworkState network, boolean listenerEnabled,
+                                           OutboundPolicy outboundPolicy) {
         if (message == null) throw new IllegalArgumentException("message");
         ScheduledMessage.Status status = message.getStatus();
         if (status.isTerminal()) {
@@ -102,18 +124,30 @@ public final class LadderEvaluator {
     }
 
     /**
-     * R28 "Send anyway" (Greg's tap): skips the thread check and the lateness budget, except that a
-     * similar outbound text sent in the last 60 s cancels (he already sent it elsewhere).
+     * R28 "Send anyway" (the user's tap): skips the thread check and the lateness budget, except
+     * that a similar outbound text sent in the last 60 s cancels (the user already sent it
+     * elsewhere).
+     *
+     * <p>Only a SCHEDULED or HELD message can be sent anyway. Like {@link #evaluate}, which refuses
+     * terminal statuses, this refuses CANCELED, SENT_VERIFIED, SELF_PREEMPTED, EXPIRED, FAILED and
+     * also IN_FLIGHT (a send is already under way) by throwing, so a stale "Send anyway" action can
+     * never yield SEND for them. Callers handling a notification tap should check the stored
+     * status first (or catch the exception) and drop the tap.
      *
      * @param events events just read for the conversation, or null when none could be read
+     * @throws IllegalArgumentException for a terminal or IN_FLIGHT message
      */
     public static Decision evaluateSendAnyway(ScheduledMessage message, List<ThreadEvent> events, long nowMs) {
         if (message == null) throw new IllegalArgumentException("message");
+        ScheduledMessage.Status status = message.getStatus();
+        if (status.isTerminal() || status == ScheduledMessage.Status.IN_FLIGHT) {
+            throw new IllegalArgumentException("cannot send anyway a message in status " + status);
+        }
         if (events != null) {
             for (ThreadEvent e : events) {
                 if (e == null || e.isInbound() || e.isCallLike()) continue;
                 if (e.getTimeMs() >= nowMs - SEND_ANYWAY_RECHECK_MS
-                        && ThreadEventClassifier.similar(message.getText(), e.getText())) {
+                        && ThreadEventClassifier.similar(message, e)) {
                     return Decision.cancel(Classification.SELF_PREEMPTED);
                 }
             }

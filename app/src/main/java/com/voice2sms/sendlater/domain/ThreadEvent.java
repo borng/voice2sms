@@ -1,8 +1,13 @@
 package com.voice2sms.sendlater.domain;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+
 /**
  * One message or call seen in a conversation (R32). Immutable. {@code text} is optional and must
- * never be logged; {@code textHash} is whatever stable hash the recording source uses.
+ * never be logged; {@code textHash} is {@link #hashOf(String)} of the text (OD20(5)): lowercase hex
+ * SHA-256 of the classifier's normalized text, so a hash-only event can still be matched.
  */
 public final class ThreadEvent {
 
@@ -31,6 +36,31 @@ public final class ThreadEvent {
     public long getTimeMs() { return timeMs; }
     public String getTextHash() { return textHash; }
     public String getText() { return text; }
+
+    /**
+     * Lowercase hex SHA-256 of {@code text} normalized as the classifier does (case-folded,
+     * diacritics stripped, split into letter/digit tokens, joined by single spaces, UTF-8).
+     * Null for null text.
+     */
+    public static String hashOf(String text) {
+        if (text == null) return null;
+        StringBuilder norm = new StringBuilder();
+        for (String t : TextNorm.tokens(text)) {
+            if (norm.length() > 0) norm.append(' ');
+            norm.append(t);
+        }
+        byte[] digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256").digest(norm.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 unavailable", ex);
+        }
+        StringBuilder hex = new StringBuilder(digest.length * 2);
+        for (byte b : digest) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
+    }
 
     public boolean isInbound() { return direction == Direction.IN; }
 
