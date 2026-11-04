@@ -18,6 +18,9 @@
                 <action android:name="com.voice2sms.sendlater.DEBUG_INBOUND" />
                 <action android:name="com.voice2sms.sendlater.DEBUG_LAST_CALL" />
                 <action android:name="com.voice2sms.sendlater.DEBUG_CANCEL" />
+                <!-- sendlater:gate-residuals start -->
+                <action android:name="com.voice2sms.sendlater.DEBUG_ENABLE" />
+                <!-- sendlater:gate-residuals end -->
             </intent-filter>
         </receiver>
         <!-- sendlater:debug-smoke end -->

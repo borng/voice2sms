@@ -26,6 +26,10 @@ import org.junit.Test;
  * ({@code if (BuildConfig.DEBUG) Log.d(...)}) or in an enclosing {@code if (BuildConfig.DEBUG)}
  * block. A URL passed through {@code withoutQuery(url)} is allowed unguarded: the query and
  * fragment (where Voice puts the E.164) are cut off.
+ *
+ * <p>gate-residuals (I7): in GVoiceWebViewActivity a Log whose arguments name a
+ * {@code text}, {@code value} or {@code body} identifier (the V2SBridge typing requests and
+ * the read-back after shell typing carry JS-supplied message text) must be guarded too.
  */
 public class PrivacyLoggingSourceTest {
 
@@ -41,6 +45,9 @@ public class PrivacyLoggingSourceTest {
             Pattern.compile("\\bgetText\\s*\\(|\\bgetContentDescription\\s*\\(");
     private static final Pattern SERVICE_SENSITIVE =
             Pattern.compile("\\bcontentDesc\\b|\\btext\\b");
+    /** gate-residuals: JS-supplied text reaches the activity under these names. */
+    private static final Pattern ACTIVITY_SENSITIVE =
+            Pattern.compile("\\btext\\b|\\bvalue\\b|\\bbody\\b");
     private static final Pattern URL = Pattern.compile("\\burl\\b");
     private static final Pattern REDACTED_URL = Pattern.compile("\\bwithoutQuery\\s*\\(\\s*url\\s*\\)");
 
@@ -87,6 +94,49 @@ public class PrivacyLoggingSourceTest {
         assertTrue(bad.toString(), bad.get(1).startsWith("X:5"));
     }
 
+    /** gate-residuals: the three typing-text log sites exist, so the guard cannot pass vacuously. */
+    @Test
+    public void guardSeesTheTypingTextSites() throws IOException {
+        String act = strip(read(ACTIVITY));
+        for (String site : new String[] {"\"JS requested tap(\"", "\"JS requested native typing: \"",
+                "\"Input value after shell typing: \""}) {
+            assertTrue(site + " log site not found", act.contains(site));
+        }
+    }
+
+    /** Mutation check: unguarding any of the three typing-text logs makes the scan flag it. */
+    @Test
+    public void unguardedTypingTextLogsAreFlagged() throws IOException {
+        String act = strip(read(ACTIVITY));
+        assertTrue(scan("A", act, false).isEmpty());
+        String[] sites = {"\"JS requested tap(\"", "\"JS requested native typing: \"",
+                "\"Input value after shell typing: \""};
+        for (String site : sites) {
+            int at = act.indexOf(site);
+            int log = act.lastIndexOf("Log.d(", at);
+            int guard = act.lastIndexOf("if (BuildConfig.DEBUG) ", log);
+            assertTrue(site + " must sit right after an inline BuildConfig.DEBUG guard",
+                    guard >= 0 && guard + "if (BuildConfig.DEBUG) ".length() == log);
+            String mutated = act.substring(0, guard) + act.substring(log);
+            List<String> bad = scan("A", mutated, false);
+            assertEquals(site + " unguarded: " + bad, 1, bad.size());
+        }
+    }
+
+    /** Synthetic: text / value / body identifiers are flagged in the activity scan unless guarded. */
+    @Test
+    public void activityScanFlagsTextValueBody() {
+        String code = "class X { void a(String text, String value, String body) {\n"
+                + "  Log.d(TAG, \"t=\" + text);\n"
+                + "  Log.d(TAG, \"v=\" + value);\n"
+                + "  Log.d(TAG, \"b=\" + body);\n"
+                + "  if (BuildConfig.DEBUG) Log.d(TAG, \"t=\" + text);\n"
+                + "  Log.d(TAG, \"text value body\");\n"
+                + "} }";
+        List<String> bad = scan("X", strip(code), false);
+        assertEquals(bad.toString(), 3, bad.size());
+    }
+
     // ---- scanner ----
 
     private static List<String> unguardedSensitiveLogs(Path p, boolean service) throws IOException {
@@ -103,7 +153,7 @@ public class PrivacyLoggingSourceTest {
             String unredacted = REDACTED_URL.matcher(args).replaceAll("_");
             boolean sensitive = COMMON_SENSITIVE.matcher(args).find()
                     || URL.matcher(unredacted).find()
-                    || (service && SERVICE_SENSITIVE.matcher(args).find());
+                    || (service ? SERVICE_SENSITIVE : ACTIVITY_SENSITIVE).matcher(args).find();
             if (sensitive && !debugGuarded(code, m.start())) {
                 bad.add(where + ":" + lineOf(code, m.start()) + " " + args.trim());
             }

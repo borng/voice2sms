@@ -9,8 +9,10 @@ import android.net.NetworkCapabilities;
 import android.util.Log;
 
 import androidx.core.app.NotificationManagerCompat;
+import androidx.preference.PreferenceManager;
 
 import com.voice2sms.BuildConfig;
+import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.HoldReason;
@@ -51,7 +53,7 @@ import java.util.concurrent.Executors;
  *   -a com.voice2sms.sendlater.DEBUG_SEED --es e164 +1… --es text … --ei offset_min 3 --ez hold true
  *   -a …DEBUG_DUMP | …DEBUG_EVALUATE --el id N | …DEBUG_FIRE --el id N [--ez allow_send true
  *   --es allowed_recipient +1…] | …DEBUG_INBOUND --es e164 +1… --es text … | …DEBUG_LAST_CALL --el id N
- *   | …DEBUG_CANCEL --el id N
+ *   | …DEBUG_CANCEL --el id N | …DEBUG_ENABLE --ez on true|false
  * </pre>
  * The one-line result comes back as the broadcast's result data and in logcat tag
  * {@code SendLaterDebug}. DEBUG_DUMP also logs one JSON line under {@code SendLaterDump} and writes
@@ -120,6 +122,9 @@ public final class SendLaterDebugReceiver extends BroadcastReceiver {
             return c.lastCall(id);
         } else if (SendLaterDebugCommands.ACTION_CANCEL.equals(action)) {
             return c.cancel(id);
+        } else if (SendLaterDebugCommands.ACTION_ENABLE.equals(action)) {
+            return c.enable(i.hasExtra(SendLaterDebugCommands.EXTRA_ON)
+                    ? Boolean.valueOf(i.getBooleanExtra(SendLaterDebugCommands.EXTRA_ON, false)) : null);
         }
         return "error=unknown_action";
     }
@@ -250,5 +255,26 @@ public final class SendLaterDebugReceiver extends BroadcastReceiver {
         }
 
         @Override public void engineOnDue(long id) { SendLaterEngine.onDue(app, id); }
+
+        @Override public boolean sendLaterEnabled() {
+            try {
+                return SendLaterSettings.isEnabled(app);
+            } catch (RuntimeException e) {
+                return false;
+            }
+        }
+
+        @Override public void setSendLaterEnabled(boolean on) {
+            PreferenceManager.getDefaultSharedPreferences(app).edit()
+                    .putBoolean(SendLaterSettings.KEY_ENABLED, on).commit();
+        }
+
+        @Override public void applySwitch() {
+            SendLaterEngine.applySwitch(app, this::broadcastStateChanged);
+        }
+
+        @Override public void broadcastStateChanged() {
+            app.sendBroadcast(new Intent(SendLaterIntents.ACTION_STATE_CHANGED).setPackage(app.getPackageName()));
+        }
     }
 }

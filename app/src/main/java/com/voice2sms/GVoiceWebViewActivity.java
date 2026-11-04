@@ -674,7 +674,7 @@ public class GVoiceWebViewActivity extends Activity {
     private class V2SBridge {
         @JavascriptInterface
         public void requestTapAndType(float cssX, float cssY, String text) {
-            Log.d(TAG, "JS requested tap(" + cssX + "," + cssY + ") + type: " + text);
+            if (BuildConfig.DEBUG) Log.d(TAG, "JS requested tap(" + cssX + "," + cssY + ") + type: " + text);
             runOnUiThread(() -> {
                 if (!isActivityAlive()) return;
                 tapAndType(cssX, cssY, text);
@@ -683,7 +683,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         @JavascriptInterface
         public void requestType(String text) {
-            Log.d(TAG, "JS requested native typing: " + text);
+            if (BuildConfig.DEBUG) Log.d(TAG, "JS requested native typing: " + text);
             runOnUiThread(() -> {
                 if (!isActivityAlive()) return;
                 typeIntoWebView(text, 0);
@@ -954,7 +954,7 @@ public class GVoiceWebViewActivity extends Activity {
                                 "document.querySelector('input[placeholder*=\"name or phone\"]')?.value || ''",
                                 value -> {
                                     if (!isActivityAlive()) return;
-                                    Log.d(TAG, "Input value after shell typing: " + value);
+                                    if (BuildConfig.DEBUG) Log.d(TAG, "Input value after shell typing: " + value);
                                     webView.evaluateJavascript(
                                         "if(window._v2sOnTyped)window._v2sOnTyped()", null);
                                 }

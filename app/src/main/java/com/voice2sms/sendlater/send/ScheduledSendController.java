@@ -85,7 +85,11 @@ public final class ScheduledSendController {
      */
     public static final String EXTRA_LAUNCHED_DARK = "com.voice2sms.sendlater.extra.LAUNCHED_DARK";
 
-    /** CANNOT_SHOW cause for a row with no recipient or no text (OD28: the generic reminder). */
+    /**
+     * CANNOT_SHOW cause for a row with no recipient or no text (OD28), from the controller and
+     * from {@link WebViewScheduledSender#start}: {@link SendDetails#forEngine} maps it to
+     * {@code could_not_send}, the generic "Couldn't send automatically" reminder (not LOCKED).
+     */
     static final String DETAIL_NO_RECIPIENT = "no_recipient";
 
     /** Detail passed with SENT_VERIFIED when an inbound landed between the check and the send. */
@@ -501,9 +505,10 @@ public final class ScheduledSendController {
             afterOutcome();
             return;
         }
-        if (LaunchRecheck.isLate(m, System.currentTimeMillis())) {
+        if (LaunchRecheck.isLate(m, System.currentTimeMillis(), LaunchRecheck.QUEUE_SLACK_MS)) {
             // F4 (I2 "ever"): this job waited (the launch, a hand-off queued behind another send)
-            // past the lateness deadline. Nothing typed: CANNOT_SHOW with the LATE reminder.
+            // more than the queue slack (OD30) past the lateness deadline. Nothing typed:
+            // CANNOT_SHOW with the LATE reminder.
             report(job, SendOutcome.CANNOT_SHOW, LaunchRecheck.DETAIL_LATE);
             return;
         }

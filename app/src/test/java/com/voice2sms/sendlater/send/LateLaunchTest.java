@@ -130,7 +130,8 @@ public class LateLaunchTest {
     @Test public void theControllerRechecksEveryDequeuedJobBeforeComposing() throws IOException {
         String loaded = body(code(CONTROLLER), "onLoaded");
         int status = loaded.indexOf("m.getStatus() != ScheduledMessage.Status.IN_FLIGHT");
-        int late = loaded.indexOf("LaunchRecheck.isLate(m, System.currentTimeMillis())");
+        // gate-residuals (OD30): the dequeue re-check allows the queue slack past the deadline.
+        int late = loaded.indexOf("LaunchRecheck.isLate(m, System.currentTimeMillis(), LaunchRecheck.QUEUE_SLACK_MS)");
         int report = loaded.indexOf("report(job, SendOutcome.CANNOT_SHOW, LaunchRecheck.DETAIL_LATE)");
         int compose = loaded.indexOf("beginCompose(");
         assertTrue(status >= 0 && late > status);
