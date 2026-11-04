@@ -8,7 +8,9 @@ import com.voice2sms.sendlater.SendLaterIntents;
 
 /**
  * Non-exported receiver for notification buttons. The engine re-reads the stored status before
- * acting and drops stale taps. ACTION_SEND_ANYWAY / ACTION_SEND_NOW: the user's "send anyway"
+ * acting; a stale tap posts a short notice of what happened (UI M4). On API 31+ Send now / Send
+ * anyway reach this receiver only after the user unlocks (L1); below 31 they go through
+ * {@link SendLaterUnlockActivity} instead. ACTION_SEND_ANYWAY / ACTION_SEND_NOW: the user's "send anyway"
  * (self-preemption check only). ACTION_SNOOZE: +1 h. ACTION_CANCEL: cancel. ACTION_EDIT: opens the
  * sheet via SendLaterIntents.ACTION_EDIT when the row is still editable (notifications launch the
  * sheet directly, since Android blocks activity starts from notification trampolines).
@@ -23,12 +25,10 @@ public final class SendLaterActionReceiver extends BroadcastReceiver {
         final Context app = context.getApplicationContext();
         final PendingResult pending = goAsync();
         SendLaterEngine.runInBackground(app, () -> {
-            if (SendLaterIntents.ACTION_SEND_ANYWAY.equals(action) || SendLaterIntents.ACTION_SEND_NOW.equals(action)) {
-                SendLaterEngine.onSendAnyway(app, id);
-            } else if (SendLaterIntents.ACTION_SNOOZE.equals(action)) {
-                SendLaterEngine.onSnooze(app, id);
-            } else if (SendLaterIntents.ACTION_CANCEL.equals(action)) {
-                SendLaterEngine.onCancel(app, id);
+            if (SendLaterIntents.ACTION_SEND_ANYWAY.equals(action) || SendLaterIntents.ACTION_SEND_NOW.equals(action)
+                    || SendLaterIntents.ACTION_SNOOZE.equals(action) || SendLaterIntents.ACTION_CANCEL.equals(action)) {
+                // UI M4: a stale tap posts what happened ("Already sending ...") instead of nothing.
+                SendLaterEngine.onNotificationTap(app, action, id);
             } else if (SendLaterIntents.ACTION_EDIT.equals(action)) {
                 if (!SendLaterEngine.isEditable(app, id)) return;
                 Intent edit = SendLaterNotifications.editIntent(app, id);

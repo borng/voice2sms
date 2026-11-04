@@ -30,7 +30,12 @@ public enum RemindCause {
      * The launch was ready only after the lateness deadline ({@code LatenessBudget.deadlineMs}),
      * so it was not sent (I2: never send late; F4). Filed under {@link RemindReason#LATE}.
      */
-    LATE;
+    LATE,
+    /**
+     * OD31 PQ3: the user tapped Stop on the send cover of an unlocked phone before typing
+     * started; nothing was sent and this reminder follows. Filed under LOCKED.
+     */
+    STOPPED;
 
     /** Sender detail strings (send-path contract, OD23). */
     public static final String DETAIL_NO_SESSION = "no_session";
@@ -42,6 +47,8 @@ public enum RemindCause {
     public static final String DETAIL_COULD_NOT_SEND = "could_not_send";
     /** The launch came after the lateness deadline (F4, I2). Distinct from "late_reply". */
     public static final String DETAIL_LATE = "late";
+    /** The user stopped the send from its cover before typing started (OD31 PQ3). */
+    public static final String DETAIL_STOPPED = "stopped";
 
     /** The cause a sender detail names; anything else (null, unknown) is {@link #LOCKED}. */
     public static RemindCause fromDetail(String detail) {
@@ -52,6 +59,7 @@ public enum RemindCause {
         if (DETAIL_USER_BUSY.equals(d) || "busy".equals(d)) return BUSY;
         if (DETAIL_COULD_NOT_SEND.equals(d)) return COULD_NOT_SEND;
         if (DETAIL_LATE.equals(d)) return LATE;
+        if (DETAIL_STOPPED.equals(d)) return STOPPED;
         return LOCKED;
     }
 

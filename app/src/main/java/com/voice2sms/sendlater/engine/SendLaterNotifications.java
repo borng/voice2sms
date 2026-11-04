@@ -36,28 +36,79 @@ public final class SendLaterNotifications {
     static final String TAG = "sendlater";
     /** Extra naming the state a posted notification shows ("hold:REPLIED", "lastCall", ...). */
     static final String EXTRA_KIND = "com.voice2sms.sendlater.notification_kind";
+    static final String KIND_LAST_CALL = "lastCall";
+    static final String KIND_SENDING = "sending";
+    /** "Sending to X now" goes away on its own if no outcome replaces it (the send job is 60 s). */
+    static final long SENDING_TIMEOUT_MS = 2 * 60_000L;
+    /** A stale-tap notice is short-lived. */
+    static final long STALE_TAP_TIMEOUT_MS = 60_000L;
 
     private SendLaterNotifications() {}
 
     // ================================================================== kinds
 
-    /** R24: "Sending to X in 5 min", chronometer countdown to T; Cancel / Edit / Send now. */
+    /**
+     * R24: "Sending to X in 5 min", chronometer countdown to T; Cancel / Edit / Send now. UI M8: the
+     * title states the real time left ({@link #lastCallTitle}), so a last call posted late or for
+     * a message due in under 5 minutes does not claim 5 min. Send now needs an unlock (L1, OD31).
+     */
     public static void lastCall(Context c, ScheduledMessage m) {
+        long now = System.currentTimeMillis();
         NotificationCompat.Builder b = base(c, CHANNEL_LAST_CALL, m)
-                .setContentTitle("Sending to " + who(m) + " in 5 min")
+                .setContentTitle(lastCallTitle(m, now))
                 .setContentText(preview(m))
                 .setWhen(m.getScheduledFor())
                 .setShowWhen(true)
                 .setUsesChronometer(true)
                 .setChronometerCountDown(true)
-                .setTimeoutAfter(Math.max(60_000L, m.getScheduledFor() - System.currentTimeMillis() + 60_000L))
+                .setTimeoutAfter(Math.max(60_000L, m.getScheduledFor() - now + 60_000L))
                 .setOnlyAlertOnce(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
         PendingIntent edit = editActivity(c, m.getId());
         if (edit != null) b.addAction(0, "Edit", edit).setContentIntent(edit);
-        b.addAction(0, "Send now", broadcast(c, SendLaterIntents.ACTION_SEND_NOW, m.getId()));
-        post(c, m.getId(), b.build(), "lastCall");
+        b.addAction(unlockedAction(c, "Send now", SendLaterIntents.ACTION_SEND_NOW, m.getId()));
+        post(c, m.getId(), b.build(), KIND_LAST_CALL);
+    }
+
+    /**
+     * UI M8: the send has started. Replaces a last call that is still showing with "Sending to X
+     * now", without Cancel or Send now and without a countdown; silent (an update, not a new
+     * alert). Posts nothing when no last call is showing. The outcome's notification (Sent, a
+     * reminder, a hold) replaces it in the same slot.
+     */
+    public static void sending(Context c, ScheduledMessage m) {
+        if (c == null || m == null) return;
+        NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null || !KIND_LAST_CALL.equals(activeKind(nm, m.getId()))) return;
+        NotificationCompat.Builder b = base(c, CHANNEL_LAST_CALL, m)
+                .setContentTitle(sendingTitle(m))
+                .setContentText(preview(m))
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setTimeoutAfter(SENDING_TIMEOUT_MS)
+                .setPriority(NotificationCompat.PRIORITY_HIGH);
+        postUpdate(c, nm, m.getId(), b.build(), KIND_SENDING);
+    }
+
+    /**
+     * UI M4: a notification tap landed on a message that had changed (already sending, sent,
+     * cancelled, or no longer scheduled). The tap auto-cancels the notification, so say what
+     * happened instead of failing silently. {@code m} may be null (row gone).
+     */
+    public static void staleTap(Context c, long id, ScheduledMessage m, TapResult r, boolean cancelTap) {
+        String title = TapResult.feedback(r, cancelTap);
+        if (c == null || title == null) return;
+        NotificationCompat.Builder b = new NotificationCompat.Builder(c, CHANNEL_INFO)
+                .setSmallIcon(android.R.drawable.sym_action_chat)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setAutoCancel(true)
+                .setContentTitle(title)
+                .setContentText(staleTapText(m))
+                .setTimeoutAfter(STALE_TAP_TIMEOUT_MS)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT);
+        post(c, id, b.build(), "info:staleTap");
     }
 
     /**
@@ -75,7 +126,7 @@ public final class SendLaterNotifications {
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setOnlyAlertOnce(true)
-                .addAction(0, sendAnywayLabel(m, nowMs), broadcast(c, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
+                .addAction(unlockedAction(c, sendAnywayLabel(m, nowMs), SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
                 .addAction(0, "Snooze 1 h", broadcast(c, SendLaterIntents.ACTION_SNOOZE, m.getId()))
                 .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
         PendingIntent edit = editActivity(c, m.getId());
@@ -158,8 +209,8 @@ public final class SendLaterNotifications {
                         .bigText("Check the conversation before sending again: " + preview(m)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(reviewMode(c, m, false))
-                .addAction(0, sendAnywayLabel(m, System.currentTimeMillis(), true),
-                        broadcast(c, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
+                .addAction(unlockedAction(c, sendAnywayLabel(m, System.currentTimeMillis(), true),
+                        SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
                 .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
         post(c, m.getId(), b.build(), "mayHaveSent");
     }
@@ -170,6 +221,36 @@ public final class SendLaterNotifications {
     }
 
     // ================================================================== pure labels (JVM-tested)
+
+    /**
+     * UI M8: "Sending to X in 3 min" from the real time left (rounded, at least 1 min while any
+     * time is left; 5 at the normal T-5 alarm), "Sending to X now" at or after the due time.
+     */
+    static String lastCallTitle(ScheduledMessage m, long nowMs) {
+        long left = m.getScheduledFor() - nowMs;
+        if (left <= 0) return sendingTitle(m);
+        long minutes = Math.max(1L, (left + LatenessBudget.MINUTE_MS / 2) / LatenessBudget.MINUTE_MS);
+        return "Sending to " + who(m) + " in " + minutes + " min";
+    }
+
+    /** UI M8: the title once the send has started. */
+    static String sendingTitle(ScheduledMessage m) {
+        return "Sending to " + who(m) + " now";
+    }
+
+    /** Body of a stale-tap notice: whose message, never its text. */
+    static String staleTapText(ScheduledMessage m) {
+        return m == null ? "Your scheduled message" : "Your message to " + who(m);
+    }
+
+    /**
+     * L1 (OD31): on API 31+ Send now / Send anyway are broadcast actions that Android runs only
+     * after the user unlocks ({@code setAuthenticationRequired}); below 31 they open
+     * {@link SendLaterUnlockActivity}, which asks for the unlock before acting.
+     */
+    static boolean usesAuthenticatedBroadcast(int sdkInt) {
+        return sdkInt >= 31;
+    }
 
     /** "Send anyway" within the lateness budget, "Send anyway (3 h late)" past it (R28). */
     public static String sendAnywayLabel(ScheduledMessage m, long nowMs) {
@@ -253,6 +334,7 @@ public final class SendLaterNotifications {
             case BUSY: return "You were using voice2sms; tap to send to " + who(m) + " now";
             case COULD_NOT_SEND: return "Couldn't send automatically to " + who(m);
             case LATE: return remindTitle(m, RemindReason.LATE);
+            case STOPPED: return "You stopped the send to " + who(m) + ": tap to review and send";
             case LOCKED:
             default: return remindTitle(m, RemindReason.LOCKED);
         }
@@ -322,6 +404,18 @@ public final class SendLaterNotifications {
         nm.notify(TAG, slot(id), n);
     }
 
+    /** Replaces the slot's notification in place (no cancel first, so it stays silent). */
+    private static void postUpdate(Context c, NotificationManager nm, long id, Notification n, String kind) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(c, Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        ensureChannels(nm);
+        if (n.extras != null) n.extras.putString(EXTRA_KIND, kind);
+        nm.notify(TAG, slot(id), n);
+    }
+
     /** The kind of the notification showing in {@code id}'s slot, or null (none, or unreadable). */
     private static String activeKind(NotificationManager nm, long id) {
         try {
@@ -364,6 +458,17 @@ public final class SendLaterNotifications {
             ch.setDescription("Sent, not sent and expired scheduled messages.");
             nm.createNotificationChannel(ch);
         }
+    }
+
+    /** Send now / Send anyway: never runs from the lock screen without an unlock (L1, OD31). */
+    private static NotificationCompat.Action unlockedAction(Context c, String label, String action, long id) {
+        if (usesAuthenticatedBroadcast(Build.VERSION.SDK_INT)) {
+            return new NotificationCompat.Action.Builder(0, label, broadcast(c, action, id))
+                    .setAuthenticationRequired(true)
+                    .build();
+        }
+        return new NotificationCompat.Action.Builder(0, label, SendLaterUnlockActivity.pendingIntent(c, action, id))
+                .build();
     }
 
     private static PendingIntent broadcast(Context c, String action, long id) {

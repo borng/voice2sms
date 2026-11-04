@@ -103,6 +103,17 @@ public final class LockCoverPolicy {
         return coverShown && lockedNow;
     }
 
+    /**
+     * OD31 PQ3: the cover's Stop button. Shown only for a claimed, running job under its cover,
+     * on an unlocked, lit phone ({@code lockedNow} false), while a job is current and typing has
+     * not started ({@code typingStarted}: inject.js auto-send was injected). Hidden once typing
+     * started, between jobs, after the job ended and whenever the phone is locked or dark.
+     */
+    public static boolean showStop(boolean claimed, JobState state, boolean coverShown, boolean lockedNow,
+                                   boolean jobCurrent, boolean typingStarted) {
+        return claimed && state == JobState.RUNNING && coverShown && !lockedNow && jobCurrent && !typingStarted;
+    }
+
     /** Masked recipient for the cover: last four digits only, never a name or message text. */
     public static String maskedNumber(String e164) {
         if (e164 == null) return "";

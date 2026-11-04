@@ -20,6 +20,7 @@ import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.domain.ThreadEvent;
+import com.voice2sms.sendlater.engine.RemindCause;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 import com.voice2sms.sendlater.web.ThreadBubble;
@@ -409,6 +410,7 @@ public final class ScheduledSendController {
         final Job job = current;
         if (job == null || job.injected || job.e164 == null) return;
         job.injected = true;
+        updateStop();   // OD31 PQ3: typing has started, Stop goes away
         job.watch = new SendWatch(job.bodyHash);
         job.deadlineMs = System.currentTimeMillis() + Math.max(0L, autoSendDelayMs) + VERIFY_WINDOW_MS;
         main.postDelayed(() -> readOnce(job), BASELINE_POLL_MS);
@@ -481,6 +483,7 @@ public final class ScheduledSendController {
         }
         current = job;
         busy = true;
+        updateStop();   // OD31 PQ3: Stop is offered until this job starts typing
         // OD26: every scheduled job has the hard timeout, locked or not.
         lastHardDeadlineMs = job.hardDeadlineMs;
         main.removeCallbacks(hardTimeout);
@@ -522,6 +525,7 @@ public final class ScheduledSendController {
         job.bodyHash = ThreadEvent.hashOf(m.getText());
         targetE164 = job.e164;
         cover.setRecipient(job.e164);
+        updateStop();
         if (!host.isAlive() || !host.beginCompose(job.e164, m.getText())) {
             report(job, SendOutcome.CANNOT_SHOW, "activity_gone");
             return;
@@ -605,6 +609,7 @@ public final class ScheduledSendController {
             return;
         }
         busy = false;
+        updateStop();
         settle();
     }
 
@@ -644,6 +649,7 @@ public final class ScheduledSendController {
         stopListeningForScreen();
         awaitingEngineId = -1L;
         if (claimed) jobState = LockCoverPolicy.JobState.ENDED;
+        updateStop();
         applyLockFlags(false);
         if (finish) {
             if (!activity.isFinishing()) host.finish();
@@ -660,6 +666,36 @@ public final class ScheduledSendController {
         } else {
             cover.hide();
         }
+        updateStop();
+    }
+
+    /** OD31 PQ3: whether the cover's Stop button shows right now. */
+    private boolean stopAllowed() {
+        Job job = current;
+        return LockCoverPolicy.showStop(claimed, jobState, cover.isShown(), lockedNow,
+                job != null, job != null && job.injected);
+    }
+
+    /** Shows or hides the Stop button per {@link LockCoverPolicy#showStop}. */
+    private void updateStop() {
+        cover.setStopVisible(stopAllowed(), this::onStopTapped);
+    }
+
+    /**
+     * OD31 PQ3: Stop on the cover of an unlocked phone, before typing started. Ends the running
+     * and queued jobs without sending (CANNOT_SHOW {@code stopped}: the engine puts the row back
+     * and posts a reminder) and finishes, so the user is back where they were. Re-checked here:
+     * a tap that lands after typing started, or once the phone locked, does nothing.
+     */
+    void onStopTapped() {
+        refreshLockState();
+        if (!stopAllowed()) {
+            updateStop();
+            return;
+        }
+        main.removeCallbacksAndMessages(null);
+        abandonAll(RemindCause.DETAIL_STOPPED);
+        endJob(true);
     }
 
     private void listenForEngine() {
@@ -773,6 +809,7 @@ public final class ScheduledSendController {
     private boolean refreshLockState() {
         lockedNow = isLockedOrDark();
         if (jobState == LockCoverPolicy.JobState.ENDED && cover.isShown()) updateCover();
+        else updateStop();
         return lockedNow;
     }
 

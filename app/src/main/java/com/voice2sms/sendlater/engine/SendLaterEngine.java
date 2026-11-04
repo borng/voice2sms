@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.Looper;
 import android.util.Log;
 
+import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.battery.BatteryWarning;
 import com.voice2sms.sendlater.domain.Classification;
 import com.voice2sms.sendlater.domain.ConversationRef;
@@ -348,6 +349,7 @@ public final class SendLaterEngine {
             return;
         }
         if (!d.store.markInFlight(id, ThreadEvent.hashOf(m.getText()))) return;
+        boolean lastCallShown = d.marks.isLastCallPosted(id, m.getScheduledFor());
         d.marks.setReminded(id, false);
         d.marks.clearLastCall(id);
         checkTimes.put(id, checkTime);
@@ -355,6 +357,8 @@ public final class SendLaterEngine {
         d.broadcaster.stateChanged(id, m.getRecipientE164());
         ScheduledMessage inFlight = d.store.get(id);
         if (inFlight == null) return;
+        // UI M8: the last call's Cancel / Send now no longer apply once the send has started.
+        if (lastCallShown) d.notifier.sending(inFlight);
         boolean started;
         try {
             started = s.start(context, inFlight);
@@ -628,29 +632,42 @@ public final class SendLaterEngine {
     /**
      * "Send anyway" (and "Send now"): skips the thread check and the lateness budget except the
      * self-preemption check over every outbound since the watermark. Stale taps (terminal or
-     * IN_FLIGHT rows, unknown ids) are dropped.
+     * IN_FLIGHT rows, unknown ids) are dropped; {@link #sendAnyway} reports them.
      */
     public static void onSendAnyway(final Context context, final long id) {
-        run(context, () -> {
-            EngineDeps d = deps(context);
-            ScheduledMessage m = d.store.get(id);
-            if (!tappable(m)) return;
-            long now = d.conditions.nowMs();
-            List<ThreadEvent> events = readThread(d, m);
-            Decision decision;
-            try {
-                decision = LadderEvaluator.evaluateSendAnyway(m, events, now, m.getSelfPreemptionBaseline());
-            } catch (IllegalArgumentException stale) {
-                return;
-            }
-            d.networkWaiter.cancel(id);
-            if (decision.getKind() == Decision.Kind.CANCEL) {
-                selfPreempt(d, m);
-            } else if (decision.getKind() == Decision.Kind.SEND) {
-                d.notifier.dismiss(id);
-                startSend(d, context, m, now);
-            }
-        });
+        run(context, () -> doSendAnyway(deps(context), context, id));
+    }
+
+    /**
+     * {@link #onSendAnyway} that returns what happened (UI M4). Runs inline under the engine lock:
+     * call it off the main thread (the action receiver's executor, a worker).
+     */
+    public static TapResult sendAnyway(final Context context, final long id) {
+        EngineDeps d = deps(context);
+        synchronized (LOCK) {
+            return doSendAnyway(d, context, id);
+        }
+    }
+
+    private static TapResult doSendAnyway(EngineDeps d, Context context, long id) {
+        ScheduledMessage m = d.store.get(id);
+        if (!tappable(m)) return TapResult.staleFor(m);
+        long now = d.conditions.nowMs();
+        List<ThreadEvent> events = readThread(d, m);
+        Decision decision;
+        try {
+            decision = LadderEvaluator.evaluateSendAnyway(m, events, now, m.getSelfPreemptionBaseline());
+        } catch (IllegalArgumentException stale) {
+            return staleOrGone(d, id);
+        }
+        d.networkWaiter.cancel(id);
+        if (decision.getKind() == Decision.Kind.CANCEL) {
+            selfPreempt(d, m);
+        } else if (decision.getKind() == Decision.Kind.SEND) {
+            d.notifier.dismiss(id);
+            startSend(d, context, m, now);
+        }
+        return TapResult.DONE;
     }
 
     /**
@@ -661,38 +678,94 @@ public final class SendLaterEngine {
      * user sent by hand between the hold and the snooze still cancels it.
      */
     public static void onSnooze(final Context context, final long id) {
-        run(context, () -> {
-            EngineDeps d = deps(context);
-            ScheduledMessage m = d.store.get(id);
-            if (!tappable(m)) return;
-            long now = d.conditions.nowMs();
-            long at = now + LatenessBudget.HOUR_MS;
-            Watermark fresh = new Watermark(Watermark.Quality.DEVICE_ONLY, null, null, null, now, null);
-            if (!d.store.reschedule(id, at, m.isHoldIfReplied(), m.getLatenessPolicy(), fresh)) return;
-            d.networkWaiter.cancel(id);
-            d.marks.clearLastCall(id);
-            SendLaterScheduler s = schedulerOf(d);
-            s.cancelAll(id);
-            d.notifier.dismiss(id);
-            ScheduledMessage snoozed = d.store.get(id);
-            if (snoozed != null) s.registerAlarms(snoozed);
-            d.broadcaster.stateChanged(id, m.getRecipientE164());
-        });
+        run(context, () -> doSnooze(deps(context), id));
+    }
+
+    /** {@link #onSnooze} that returns what happened; inline under the lock, off the main thread. */
+    public static TapResult snooze(final Context context, final long id) {
+        EngineDeps d = deps(context);
+        synchronized (LOCK) {
+            return doSnooze(d, id);
+        }
+    }
+
+    private static TapResult doSnooze(EngineDeps d, long id) {
+        ScheduledMessage m = d.store.get(id);
+        if (!tappable(m)) return TapResult.staleFor(m);
+        long now = d.conditions.nowMs();
+        long at = now + LatenessBudget.HOUR_MS;
+        Watermark fresh = new Watermark(Watermark.Quality.DEVICE_ONLY, null, null, null, now, null);
+        if (!d.store.reschedule(id, at, m.isHoldIfReplied(), m.getLatenessPolicy(), fresh)) {
+            return staleOrGone(d, id);
+        }
+        d.networkWaiter.cancel(id);
+        d.marks.clearLastCall(id);
+        SendLaterScheduler s = schedulerOf(d);
+        s.cancelAll(id);
+        d.notifier.dismiss(id);
+        ScheduledMessage snoozed = d.store.get(id);
+        if (snoozed != null) s.registerAlarms(snoozed);
+        d.broadcaster.stateChanged(id, m.getRecipientE164());
+        return TapResult.DONE;
     }
 
     /** Cancel tap: SCHEDULED/HELD -> CANCELED, alarms and notification removed. */
     public static void onCancel(final Context context, final long id) {
-        run(context, () -> {
-            EngineDeps d = deps(context);
-            ScheduledMessage m = d.store.get(id);
-            if (!tappable(m)) return;
-            if (!d.store.cancel(id)) return;
-            d.marks.clear(id);
-            d.networkWaiter.cancel(id);
-            schedulerOf(d).cancelAll(id);
-            d.notifier.dismiss(id);
-            d.broadcaster.stateChanged(id, m.getRecipientE164());
-        });
+        run(context, () -> doCancel(deps(context), id));
+    }
+
+    /**
+     * {@link #onCancel} that returns what happened (UI M4: the edit sheet's "Cancel message" and
+     * the notification Cancel). Inline under the engine lock: call it off the main thread.
+     */
+    public static TapResult cancel(final Context context, final long id) {
+        EngineDeps d = deps(context);
+        synchronized (LOCK) {
+            return doCancel(d, id);
+        }
+    }
+
+    private static TapResult doCancel(EngineDeps d, long id) {
+        ScheduledMessage m = d.store.get(id);
+        if (!tappable(m)) return TapResult.staleFor(m);
+        if (!d.store.cancel(id)) return staleOrGone(d, id);
+        d.marks.clear(id);
+        d.networkWaiter.cancel(id);
+        schedulerOf(d).cancelAll(id);
+        d.notifier.dismiss(id);
+        d.broadcaster.stateChanged(id, m.getRecipientE164());
+        return TapResult.DONE;
+    }
+
+    /**
+     * A notification tap (action receiver, unlock activity): applies {@code action} and, when the
+     * row had changed before the tap landed, posts a short notice of what happened instead (UI M4).
+     * Inline under the engine lock; call it on the engine executor. Edit is not handled here.
+     */
+    static TapResult onNotificationTap(Context context, String action, long id) {
+        EngineDeps d = deps(context);
+        synchronized (LOCK) {
+            TapResult r;
+            boolean cancelTap = false;
+            if (SendLaterIntents.ACTION_SEND_ANYWAY.equals(action) || SendLaterIntents.ACTION_SEND_NOW.equals(action)) {
+                r = doSendAnyway(d, context, id);
+            } else if (SendLaterIntents.ACTION_SNOOZE.equals(action)) {
+                r = doSnooze(d, id);
+            } else if (SendLaterIntents.ACTION_CANCEL.equals(action)) {
+                cancelTap = true;
+                r = doCancel(d, id);
+            } else {
+                return null;
+            }
+            if (r != TapResult.DONE) d.notifier.staleTap(id, d.store.get(id), r, cancelTap);
+            return r;
+        }
+    }
+
+    /** After a failed write on a tappable row: what it is now. */
+    private static TapResult staleOrGone(EngineDeps d, long id) {
+        TapResult r = TapResult.staleFor(d.store.get(id));
+        return r != null ? r : TapResult.NOT_PENDING;
     }
 
     /** Whether {@code id} can still be edited from a notification (SCHEDULED or HELD). */

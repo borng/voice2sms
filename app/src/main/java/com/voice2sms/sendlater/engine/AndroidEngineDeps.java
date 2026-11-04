@@ -196,6 +196,10 @@ final class AndroidEngineDeps {
         @Override public void mayHaveSent(ScheduledMessage m) { SendLaterNotifications.mayHaveSent(app, m); }
         @Override public void sendFailed(ScheduledMessage m) { SendLaterNotifications.sendFailed(app, m); }
         @Override public void dismiss(long id) { SendLaterNotifications.dismiss(app, id); }
+        @Override public void sending(ScheduledMessage m) { SendLaterNotifications.sending(app, m); }
+        @Override public void staleTap(long id, ScheduledMessage m, TapResult r, boolean cancelTap) {
+            SendLaterNotifications.staleTap(app, id, m, r, cancelTap);
+        }
     }
 
     // ------------------------------------------------------------------ broadcaster
