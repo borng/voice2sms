@@ -1,7 +1,10 @@
 package com.voice2sms.sendlater.listener;
 
 import android.app.Notification;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
@@ -9,7 +12,9 @@ import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.Person;
+import androidx.core.content.ContextCompat;
 
+import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 
@@ -21,6 +26,11 @@ import java.util.concurrent.Executors;
  * Reply detection (R32-R34, D14, D22): watches Google Voice notifications (primary) and voice2sms
  * incoming-SMS notifications (secondary, only while voice2sms is the default SMS app), records an
  * inbound event for conversations with a live Send Later message, and fires the early hold.
+ *
+ * <p>R40: an in-memory {@link LiveConversationKeys} gate (E.164 and name keys of SCHEDULED, HELD
+ * and IN_FLIGHT rows) is built on the worker when the listener connects and rebuilt on
+ * ACTION_STATE_CHANGED / ACTION_SCHEDULED, through a RECEIVER_NOT_EXPORTED receiver that lives
+ * from connect to disconnect. A Voice notification no live key matches makes no database call.
  *
  * <p>Notification content never reaches a log (I7). Room work runs on one background thread.
  * Voice suppresses notifications for the thread open in native Voice; the on-screen reader covers
@@ -41,16 +51,81 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
 
     private static volatile long lastPurgeMs;
 
+    private boolean receiverRegistered;
+
+    /** Rebuilds the live-key gate whenever a Send Later message is scheduled or changes state. */
+    private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            String action = intent == null ? null : intent.getAction();
+            if (!SendLaterIntents.ACTION_STATE_CHANGED.equals(action)
+                    && !SendLaterIntents.ACTION_SCHEDULED.equals(action)) return;
+            scheduleRebuild(context.getApplicationContext(), false);
+        }
+    };
+
     @Override public void onListenerConnected() {
         super.onListenerConnected();
         final Context app = getApplicationContext();
         SendLaterListenerStatus.markConnected(app, System.currentTimeMillis());
-        WORKER.execute(() -> purge(app, System.currentTimeMillis()));
+        registerStateReceiver();
+        // Queued before any notification of this connection, so recording sees the fresh gate.
+        scheduleRebuild(app, true);
     }
 
     @Override public void onListenerDisconnected() {
+        unregisterStateReceiver();
+        // No broadcasts reach us while disconnected: forget the gate so a reconnect rebuilds it.
+        LiveConversationKeys.invalidate();
         SendLaterListenerStatus.markDisconnected(getApplicationContext(), System.currentTimeMillis());
         super.onListenerDisconnected();
+    }
+
+    @Override public void onDestroy() {
+        unregisterStateReceiver();
+        super.onDestroy();
+    }
+
+    private void registerStateReceiver() {
+        if (receiverRegistered) return;
+        IntentFilter f = new IntentFilter();
+        f.addAction(SendLaterIntents.ACTION_STATE_CHANGED);
+        f.addAction(SendLaterIntents.ACTION_SCHEDULED);
+        try {
+            ContextCompat.registerReceiver(this, stateReceiver, f, ContextCompat.RECEIVER_NOT_EXPORTED);
+            receiverRegistered = true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "receiver registration failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void unregisterStateReceiver() {
+        if (!receiverRegistered) return;
+        receiverRegistered = false;
+        try {
+            unregisterReceiver(stateReceiver);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "receiver unregistration failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private static void scheduleRebuild(final Context app, final boolean forcePurge) {
+        WORKER.execute(() -> rebuildGate(app, forcePurge));
+    }
+
+    private static void rebuildGate(Context app, boolean forcePurge) {
+        try {
+            LiveConversationKeys gate = LiveConversationKeys.rebuild(new RepositoryListenerStore(app));
+            // R34: misses no longer reach the purge, so state changes drive it. Nothing live left
+            // means every stored event is an orphan: purge now rather than at the hourly mark.
+            long now = System.currentTimeMillis();
+            if (forcePurge || now - lastPurgeMs > PURGE_INTERVAL_MS || (gate != null && gate.isEmpty())) {
+                purge(app, now);
+            }
+        } catch (RuntimeException e) {
+            // Unknown gate: recording falls back to the store rather than dropping replies.
+            LiveConversationKeys.invalidate();
+            Log.w(TAG, "gate rebuild failed: " + e.getClass().getSimpleName());
+        }
     }
 
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
@@ -72,8 +147,13 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
     private static void record(final Context app, NotificationFields fields) {
         try {
             long now = System.currentTimeMillis();
+            LiveConversationKeys gate = LiveConversationKeys.current();
+            if (gate != null && !gate.mayMatch(NotificationParser.parse(fields))) {
+                // R40: no live conversation can match; no store, no purge.
+                return;
+            }
             ListenerEventRecorder recorder = new ListenerEventRecorder(new RepositoryListenerStore(app),
-                    (String key, ThreadEvent event) -> SendLaterEngine.onInboundEvent(app, key, event));
+                    (String key, ThreadEvent event) -> SendLaterEngine.onInboundEvent(app, key, event), gate);
             recorder.onNotification(fields, now);
             if (now - lastPurgeMs > PURGE_INTERVAL_MS) purge(app, now);
         } catch (RuntimeException e) {
