@@ -246,11 +246,13 @@ public class SendLaterEvaluatorTest {
     }
 
     @Test
-    public void sendAnyway_similarOutboundOlderThan60s_isNotRechecked() {
+    public void sendAnyway_similarOutboundOlderThan60sButSinceWatermark_cancels() {
+        // Orchestrator ruling 2026-11-04 (OD20(2), R28 amended): the send-anyway self-preemption
+        // check covers every outbound event since the watermark, not only the last 60 s.
         long now = DUE + 2 * HOUR;
         Decision d = LadderEvaluator.evaluateSendAnyway(message(AHEAD).status(ScheduledMessage.Status.HELD).build(),
                 events(outboundSms(now - 5 * MIN, TEXT)), now);
-        assertKind(Decision.Kind.SEND, d);
+        assertKind(Decision.Kind.CANCEL, d);
     }
 
     // ---- R29: 24 h expiry ---------------------------------------------------------------
