@@ -699,6 +699,27 @@ public final class SendLaterEngine {
         }
     }
 
+    /**
+     * Ids among {@code rows} that carry the "reminded" mark (R29): SCHEDULED rows that will not
+     * send themselves. Read-only, for the chip and Upcoming labels (deliver fix UI M5); never
+     * throws (an unreadable mark counts as not reminded).
+     */
+    public static java.util.Set<Long> remindedIds(Context context, List<ScheduledMessage> rows) {
+        java.util.Set<Long> out = new java.util.HashSet<>();
+        if (rows == null || rows.isEmpty()) return out;
+        try {
+            EngineMarks marks = deps(context).marks;
+            for (ScheduledMessage m : rows) {
+                if (m != null && m.getStatus() == Status.SCHEDULED && marks.isReminded(m.getId())) {
+                    out.add(m.getId());
+                }
+            }
+        } catch (RuntimeException e) {
+            // labels fall back to "Scheduled"
+        }
+        return out;
+    }
+
     /** SCHEDULED or HELD; everything else is a stale tap. */
     private static boolean tappable(ScheduledMessage m) {
         return m != null && (m.getStatus() == Status.SCHEDULED || m.getStatus() == Status.HELD);

@@ -35,7 +35,7 @@
     <string name="sendlater_settings_accessibility_title">Read the Google Voice screen</string>
     <string name="sendlater_settings_accessibility_on">On. The Voice2SMS accessibility service also watches the Google Voice app.</string>
     <string name="sendlater_settings_accessibility_off">Off. Tap to open Accessibility settings.</string>
-    <string name="sendlater_settings_accessibility_why">Optional. The Voice2SMS accessibility service, which already handles Gemini, now also watches the Google Voice app: it adds the Send Later button to a conversation and reads the messages on screen so a scheduled text is not sent after a reply. It reads nothing in other apps for Send Later.</string>
+    <string name="sendlater_settings_accessibility_why">Needed to add the Send Later button to the Google Voice app. The Voice2SMS accessibility service, which already handles Gemini, then also watches the Google Voice app: it adds the button to a conversation and reads the messages on screen so a scheduled text is not sent after a reply. Without it you can still schedule from the voice2sms Google Voice screen. It reads nothing in other apps for Send Later.</string>
 
     <string name="sendlater_settings_contacts_title">Contacts</string>
     <string name="sendlater_settings_contacts_granted">Allowed. Names are matched to the right number.</string>
@@ -57,7 +57,7 @@
 
     <!-- Onboarding (SetupActivity) -->
     <string name="sendlater_settings_onboarding_title">Optional: Send Later</string>
-    <string name="sendlater_settings_onboarding_body">Send Later lets you schedule a text and have it sent for you. It is off until you turn it on in Settings, and each permission below is optional: without one, Send Later asks you more often instead of breaking.</string>
+    <string name="sendlater_settings_onboarding_body">Send Later lets you schedule a text and have it sent for you. It is off until you turn it on in Settings, and works best with the permissions below. Accessibility is needed to add the Send Later button to the Google Voice app; without it you can still schedule from the voice2sms Google Voice screen. Notification access is optional: without it, Send Later checks the conversation only when a message is due.</string>
     <string name="sendlater_settings_onboarding_accessibility">Accessibility: the same Voice2SMS accessibility service that handles Gemini also watches the Google Voice app, so it can add the Send Later button and see whether they replied before a scheduled text goes out.</string>
     <string name="sendlater_settings_onboarding_listener">Notification access: lets Send Later notice a reply from the Google Voice notification, so it can hold a scheduled text when they text you first.</string>
     <string name="sendlater_settings_onboarding_samsung">Samsung: if a toggle is greyed out, open App info for Voice2SMS, tap the menu and choose Allow restricted settings.</string>
@@ -93,6 +93,8 @@
     <string name="sendlater_upcoming_reason_locked">Held: the phone was locked</string>
     <string name="sendlater_upcoming_reason_unknown">Held</string>
 
+    <!-- UI M5: a SCHEDULED message the engine already reminded about; it will not send by itself. -->
+    <string name="sendlater_upcoming_status_reminded">Reminder sent: waiting for you to send it</string>
     <string name="sendlater_upcoming_status_sent">Sent</string>
     <string name="sendlater_upcoming_status_canceled">Cancelled</string>
     <string name="sendlater_upcoming_status_expired">Expired, not sent</string>

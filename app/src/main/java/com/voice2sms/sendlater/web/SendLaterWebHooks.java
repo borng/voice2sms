@@ -51,6 +51,8 @@ public final class SendLaterWebHooks {
     static final long THREAD_READ_TIMEOUT_MS = 5000;
     /** Undo is accepted this long after the clear (the bar shows for 10 s). */
     static final long UNDO_WINDOW_MS = 12000;
+    /** A second capture this soon after a sheet start is a double tap and is dropped (UI M2). */
+    static final long DOUBLE_TAP_MS = 1500;
     /** A capture older than this no longer matches an ACTION_SCHEDULED broadcast. */
     static final long CAPTURE_MATCH_MS = 30 * 60 * 1000L;
 
@@ -91,6 +93,8 @@ public final class SendLaterWebHooks {
     private boolean resumed;
     private boolean receiverRegistered;
     private boolean sheetOpen;
+    /** elapsedRealtime of the last sheet start; 0 = none since the last resume. */
+    private long sheetStartedAt;
     private String moduleScript;
     /** The current page load got the module (moduleScript() answered non-null for it). */
     private boolean moduleOnPage;
@@ -181,6 +185,7 @@ public final class SendLaterWebHooks {
     public void onResume() {
         resumed = true;
         sheetOpen = false;
+        sheetStartedAt = 0;
         register();
         PendingClear c;
         synchronized (this) {
@@ -246,8 +251,14 @@ public final class SendLaterWebHooks {
         refreshChip();
     }
 
+    /**
+     * Pushes the switch state to the page and has it re-read the chip. The bridge's chip state
+     * answers only for the open thread (L3), so this push is how a page with no thread open
+     * learns whether Send Later is on (tick, R4 directory scrape).
+     */
     private void refreshChip() {
-        host.evaluate("if (window.v2sSendLaterRefresh) window.v2sSendLaterRefresh();");
+        boolean on = SendLaterSettings.isEnabled(app);
+        host.evaluate("if (window.v2sSendLaterRefresh) window.v2sSendLaterRefresh(" + on + ");");
     }
 
     /** ACTION_SCHEDULED: clear the composer when this WebView captured that draft (R11). */
@@ -322,6 +333,10 @@ public final class SendLaterWebHooks {
             Log.w(TAG, "capture dropped: page no longer shows that thread");
             return;
         }
+        // UI M2: a second tab tap before the first sheet covered the page opens no second sheet.
+        if (sheetStartedAt != 0 && SystemClock.elapsedRealtime() - sheetStartedAt < DOUBLE_TAP_MS) {
+            return;
+        }
         long now = System.currentTimeMillis();
         Intent i = new Intent(SendLaterIntents.ACTION_CAPTURE)
                 .setPackage(app.getPackageName())
@@ -343,7 +358,10 @@ public final class SendLaterWebHooks {
             lastCapture = p;
             lastCaptureAt = SystemClock.elapsedRealtime();
         }
-        if (start(i)) sheetOpen = true;
+        if (start(i)) {
+            sheetOpen = true;
+            sheetStartedAt = SystemClock.elapsedRealtime();
+        }
     }
 
     private boolean start(Intent i) {
@@ -364,12 +382,17 @@ public final class SendLaterWebHooks {
      * number answers the disabled state.
      */
     public String bridgeChipState(String e164, String mainFrameUrl) {
+        // L3: the thread binding comes first; nothing (not even the switch) is answered for a
+        // number the main frame does not show. The page learns the switch from refreshChip().
+        if (!ThreadDirectory.isE164(e164) || !ThreadUrl.isThreadOf(mainFrameUrl, e164)) {
+            return ChipState.disabled();
+        }
         if (!SendLaterSettings.isEnabled(app)) return ChipState.disabled();
-        if (!ThreadDirectory.isE164(e164)) return ChipState.toJson(true, null, null, TimeZone.getDefault());
-        if (!ThreadUrl.isThreadOf(mainFrameUrl, e164)) return ChipState.disabled();
         try {
             SendLaterRepository repo = SendLaterRepository.get(app);
-            return ChipState.toJson(true, repo.pendingForThread(e164), repo.heldForThread(e164),
+            List<ScheduledMessage> pending = repo.pendingForThread(e164);
+            return ChipState.toJson(true, pending, repo.heldForThread(e164),
+                    SendLaterEngine.remindedIds(app, pending), System.currentTimeMillis(),
                     TimeZone.getDefault());
         } catch (RuntimeException e) {
             Log.w(TAG, "chip state unavailable: " + e.getClass().getSimpleName());
@@ -389,10 +412,11 @@ public final class SendLaterWebHooks {
             SendLaterRepository repo = SendLaterRepository.get(app);
             List<ScheduledMessage> pending = repo.pendingForThread(e164);
             List<ScheduledMessage> held = repo.heldForThread(e164);
-            long only = ChipState.singleMessageId(pending, held);
+            // OD31 PQ4: a single HELD message opens Upcoming filtered to the thread.
+            long only = ChipState.editMessageId(pending, held);
             if (only > 0) {
                 i = new Intent(SendLaterIntents.ACTION_EDIT).putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, only);
-            } else if (pending.size() + held.size() > 1) {
+            } else if (pending.size() + held.size() >= 1) {
                 i = new Intent(SendLaterIntents.ACTION_UPCOMING).putExtra(SendLaterIntents.EXTRA_E164, e164);
             } else {
                 return;

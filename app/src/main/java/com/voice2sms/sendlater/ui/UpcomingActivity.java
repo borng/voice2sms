@@ -29,6 +29,7 @@ import com.voice2sms.sendlater.store.SendLaterRepository;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -54,6 +55,8 @@ public class UpcomingActivity extends AppCompatActivity {
     private TextView empty;
     private View filterBar;
     private View disabledBanner;
+    /** SCHEDULED ids the engine already reminded about (UI M5); main thread only. */
+    private Set<Long> reminded = new HashSet<>();
 
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
@@ -139,6 +142,7 @@ public class UpcomingActivity extends AppCompatActivity {
             io.execute(() -> {
                 UpcomingSections sections;
                 boolean enabled;
+                Set<Long> remindedIds = new HashSet<>();
                 try {
                     long now = System.currentTimeMillis();
                     SendLaterRepository repo = SendLaterRepository.get(app);
@@ -148,6 +152,7 @@ public class UpcomingActivity extends AppCompatActivity {
                     addAll(all, repo.allHeld());
                     addAll(all, repo.recent(now));
                     sections = UpcomingSections.build(all, filter, now);
+                    remindedIds = SendLaterEngine.remindedIds(app, sections.getPending());
                     enabled = SendLaterSettings.isEnabled(app);
                 } catch (RuntimeException e) {
                     Log.w(TAG, "load failed: " + e.getClass().getSimpleName());
@@ -156,8 +161,10 @@ public class UpcomingActivity extends AppCompatActivity {
                 }
                 final UpcomingSections result = sections;
                 final boolean on = enabled;
+                final Set<Long> marks = remindedIds;
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) return;
+                    reminded = marks;
                     render(result, filter, on);
                 });
             });
@@ -255,6 +262,9 @@ public class UpcomingActivity extends AppCompatActivity {
 
     private String statusText(ScheduledMessage m) {
         Status st = m.getStatus();
+        if (UpcomingSections.isWaitingForUser(m, reminded)) {
+            return getString(R.string.sendlater_upcoming_status_reminded);
+        }
         if (st == Status.HELD) return getString(reasonRes(m.getHoldReason()));
         if (st == Status.IN_FLIGHT) return getString(R.string.sendlater_upcoming_sending);
         if (st == Status.SENT_VERIFIED) return getString(R.string.sendlater_upcoming_status_sent);

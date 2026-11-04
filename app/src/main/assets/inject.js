@@ -888,10 +888,12 @@ function v2sSendLaterInit() {
     window._v2sSl = {
         installed: true,
         e164: null,          // 1:1 thread on screen, or null
-        enabled: false,      // Send Later switched on (from the chip state)
+        enabled: false,      // Send Later on for this page (chip state, or switchOn off-thread)
+        switchOn: true,      // Java installs the module only while on; v2sSendLaterRefresh(on) updates it
         chip: null,          // last V2SBridge.sendLaterChipState answer
         chipAt: 0,
         capture: null,       // {e164, href} of the last tab tap
+        captureBusyUntil: 0, // a tab tap is in flight until then (UI M2: no second sheet)
         undo: null,          // {messageId, draft, href, e164, until}
         barTimer: null,
         title: null,         // {e164, title, at, confirmed} header pairing for R4
@@ -908,11 +910,15 @@ function v2sSendLaterInit() {
 
 /**
  * Java -> page on ACTION_STATE_CHANGED, SPA navigation and resume: re-read the chip for
- * the open thread (R17). This is also how a switched-off page learns it is on again.
+ * the open thread (R17). on = the Send Later switch, pushed by Java: the bridge answers the
+ * chip state only for the open 1:1 thread (L3), so with no thread open this is how the page
+ * learns it is on or off. A refresh also ends a tab tap in flight (the sheet has closed).
  */
-window.v2sSendLaterRefresh = function() {
+window.v2sSendLaterRefresh = function(on) {
     var st = window._v2sSl;
     if (!st) return;
+    if (typeof on === 'boolean') st.switchOn = on;
+    st.captureBusyUntil = 0;
     _v2sSlTick(true);
 };
 
@@ -923,6 +929,7 @@ window.v2sSendLaterRefresh = function() {
  */
 window.v2sSendLaterClear = function(messageId, expectedDraft, scheduledLabel) {
     var st = window._v2sSl;
+    if (st) st.captureBusyUntil = 0;
     var ta = _v2sSlComposer();
     var e164 = _v2sSlThreadE164();
     var sameThread = !!(st && st.capture && e164 && e164 === st.capture.e164
@@ -1067,14 +1074,20 @@ function _v2sSlRefreshChip(st) {
     if (!st) return;
     st.chipAt = Date.now();
     var state = null;
-    try {
-        // With no 1:1 thread open the bridge still answers whether Send Later is on.
-        state = JSON.parse(V2SBridge.sendLaterChipState(st.e164 || ''));
-    } catch (e) {
-        state = null;
+    if (st.e164) {
+        try {
+            // The bridge answers only for the 1:1 thread the main frame shows (L3).
+            state = JSON.parse(V2SBridge.sendLaterChipState(st.e164));
+        } catch (e) {
+            state = null;
+        }
+        st.chip = state;
+        st.enabled = !!(state && state.enabled === true);
+    } else {
+        // No thread open: the switch as Java last pushed it (v2sSendLaterRefresh(on)).
+        st.chip = null;
+        st.enabled = st.switchOn === true;
     }
-    st.chip = st.e164 ? state : null;
-    st.enabled = !!(state && state.enabled === true);
     if (!st.enabled) {
         st.title = null;
         st.pairs = {};
@@ -1220,6 +1233,9 @@ function _v2sSlCapture() {
     var e164 = _v2sSlThreadE164();
     var ta = _v2sSlComposer();
     if (!e164 || e164 !== st.e164 || !_v2sSlHasDraft(ta)) return;
+    // UI M2: a second tap while the first capture is in flight opens no second sheet.
+    if (st.captureBusyUntil && Date.now() < st.captureBusyUntil) return;
+    st.captureBusyUntil = Date.now() + 1500;
     var bubbles = null;
     try {
         bubbles = _v2sSlReadBubbles(20);
@@ -1296,26 +1312,31 @@ function _v2sSlHideBar() {
 }
 
 /**
- * Undo (R11, I4): cancels and restores the draft only while the composer is still
- * empty and the thread URL is unchanged; otherwise the message stays scheduled.
+ * Undo (R11, I4, OD31 PQ1), like the native Undo: always cancels the message, then
+ * restores the draft only while the composer is still empty on the same thread URL.
+ * Otherwise the text is left alone and stays readable in Upcoming under Recent.
  */
 function _v2sSlOnUndoTap() {
     var st = window._v2sSl;
     var u = st ? st.undo : null;
     _v2sSlHideBar();
     if (!u || Date.now() > u.until) return;
-    var ta = _v2sSlComposer();
-    if (ta && ta.value === '' && location.href === u.href && _v2sSlThreadE164() === u.e164) {
+    if (u.messageId) {
         var undone = V2SBridge.requestSendLaterUndo(u.messageId);
-        if (undone === true || undone === 'true') {
+        if (!(undone === true || undone === 'true')) {
+            _v2sSlShowBar('Couldn’t undo — the message is no longer scheduled', null);
+            _v2sSlRefreshChip(st);
+            return;
+        }
+        var ta = _v2sSlComposer();
+        if (ta && ta.value === '' && location.href === u.href && _v2sSlThreadE164() === u.e164) {
             _v2sSlSetInputValue(ta, u.draft, true);
+            _v2sSlShowBar('Canceled — draft restored', null);
         } else {
-            _v2sSlShowBar('Couldn’t undo — it’s still in Upcoming', null);
+            _v2sSlShowBar('Canceled — the composer changed, so your text is in Upcoming under Recent', null);
         }
         _v2sSlRefreshChip(st);
-        return;
     }
-    _v2sSlShowBar('Not undone — the message is still in Upcoming', null);
 }
 
 /** Header title of the open thread, or '' (best effort; selectors unverified). */
