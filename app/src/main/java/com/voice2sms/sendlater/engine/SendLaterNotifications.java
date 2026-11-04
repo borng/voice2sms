@@ -76,10 +76,25 @@ public final class SendLaterNotifications {
         post(c, m.getId(), b.build());
     }
 
-    /** R29: tap opens review mode with the message pre-filled (no auto-send). */
+    /**
+     * R29: tap opens review mode with the message pre-filled (no auto-send). R27: a missing GV
+     * session adds a Sign-in action that opens Google Voice without the message.
+     */
     public static void remind(Context c, ScheduledMessage m, RemindReason reason) {
         NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
                 .setContentTitle(remindTitle(m, reason))
+                .setContentText("Tap to review and send: " + preview(m))
+                .setStyle(new NotificationCompat.BigTextStyle().bigText("Tap to review and send: " + preview(m)))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(reviewMode(c, m, true));
+        if (hasSignInAction(reason)) b.addAction(0, "Sign in", signIn(c, m.getId()));
+        post(c, m.getId(), b.build());
+    }
+
+    /** R31: the send failed and was not retried; tap opens review mode to send it by hand. */
+    public static void sendFailed(Context c, ScheduledMessage m) {
+        NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
+                .setContentTitle(sendFailedTitle(m))
                 .setContentText("Tap to review and send: " + preview(m))
                 .setStyle(new NotificationCompat.BigTextStyle().bigText("Tap to review and send: " + preview(m)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -167,6 +182,15 @@ public final class SendLaterNotifications {
             case NO_SENDER:
             default: return "Send your message to " + who(m);
         }
+    }
+
+    /** R27: only a missing or expired GV session gets the Sign-in action. */
+    static boolean hasSignInAction(RemindReason reason) {
+        return reason == RemindReason.NO_SESSION;
+    }
+
+    static String sendFailedTitle(ScheduledMessage m) {
+        return "Couldn't send your message to " + who(m);
     }
 
     static String who(ScheduledMessage m) {
@@ -269,6 +293,14 @@ public final class SendLaterNotifications {
             return null;
         }
         return i;
+    }
+
+    /** GVoiceWebViewActivity with no recipient or body: Google Voice's own sign-in (R27). */
+    private static PendingIntent signIn(Context c, long id) {
+        Intent i = new Intent(c, GVoiceWebViewActivity.class)
+                .setData(Uri.parse("voice2sms-sendlater://signin/" + id))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return PendingIntent.getActivity(c, 0, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     /** GVoiceWebViewActivity in review mode: recipient (+ body when {@code withBody}). */

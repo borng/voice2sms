@@ -5,6 +5,7 @@ import android.app.KeyguardManager;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
@@ -59,6 +60,7 @@ final class AndroidEngineDeps {
                 .conditions(new Conditions(app))
                 .networkWaiter(new Waiter(app))
                 .executor(EXECUTOR)
+                .marks(new PrefsMarks(app))
                 .hopOffMainThread(true)
                 .build();
     }
@@ -91,6 +93,66 @@ final class AndroidEngineDeps {
         @Override public List<ScheduledMessage> pendingForThread(String e164) { return r().pendingForThread(e164); }
     }
 
+    // ------------------------------------------------------------------ engine marks
+
+    /** {@link EngineMarks} in SharedPreferences {@code sendlater_engine}; survives process death. */
+    static final class PrefsMarks implements EngineMarks {
+        private static final String PREFS = "sendlater_engine";
+        private final Context app;
+        /** Fallback when prefs cannot be opened, so marks still hold for this process. */
+        private final EngineMarks.InMemory memory = new EngineMarks.InMemory();
+
+        PrefsMarks(Context app) { this.app = app; }
+
+        private SharedPreferences prefs() {
+            try {
+                return app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+
+        private static String remindedKey(long id) { return "reminded_" + id; }
+
+        private static String freeKey(long id) { return "free_releases_" + id; }
+
+        @Override public boolean isReminded(long id) {
+            SharedPreferences p = prefs();
+            if (p == null) return memory.isReminded(id);
+            return p.getBoolean(remindedKey(id), false) || memory.isReminded(id);
+        }
+
+        @Override public void setReminded(long id, boolean reminded) {
+            memory.setReminded(id, reminded);
+            SharedPreferences p = prefs();
+            if (p == null) return;
+            if (reminded) {
+                p.edit().putBoolean(remindedKey(id), true).commit();
+            } else if (p.contains(remindedKey(id))) {
+                p.edit().remove(remindedKey(id)).commit();
+            }
+        }
+
+        @Override public int freeReleases(long id) {
+            SharedPreferences p = prefs();
+            if (p == null) return memory.freeReleases(id);
+            return Math.max(p.getInt(freeKey(id), 0), memory.freeReleases(id));
+        }
+
+        @Override public void addFreeRelease(long id) {
+            int next = freeReleases(id) + 1;
+            memory.addFreeRelease(id);
+            SharedPreferences p = prefs();
+            if (p != null) p.edit().putInt(freeKey(id), next).commit();
+        }
+
+        @Override public void clear(long id) {
+            memory.clear(id);
+            SharedPreferences p = prefs();
+            if (p != null) p.edit().remove(remindedKey(id)).remove(freeKey(id)).commit();
+        }
+    }
+
     // ------------------------------------------------------------------ notifier
 
     static final class Notifier implements EngineNotifier {
@@ -106,6 +168,7 @@ final class AndroidEngineDeps {
         @Override public void selfPreempted(ScheduledMessage m) { SendLaterNotifications.selfPreempted(app, m); }
         @Override public void expired(ScheduledMessage m) { SendLaterNotifications.expired(app, m); }
         @Override public void mayHaveSent(ScheduledMessage m) { SendLaterNotifications.mayHaveSent(app, m); }
+        @Override public void sendFailed(ScheduledMessage m) { SendLaterNotifications.sendFailed(app, m); }
         @Override public void dismiss(long id) { SendLaterNotifications.dismiss(app, id); }
     }
 

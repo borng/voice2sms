@@ -65,7 +65,7 @@ public final class SendLaterEngine {
     static void installForTest(EngineDeps d) {
         synchronized (LOCK) {
             deps = d;
-            scheduler = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions);
+            scheduler = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions, d.marks);
             installedForTest = true;
         }
     }
@@ -117,7 +117,7 @@ public final class SendLaterEngine {
         SendLaterScheduler s = scheduler;
         if (s != null) return s;
         synchronized (LOCK) {
-            if (scheduler == null) scheduler = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions);
+            if (scheduler == null) scheduler = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions, d.marks);
             return scheduler;
         }
     }
@@ -174,12 +174,16 @@ public final class SendLaterEngine {
 
     // ================================================================== due time (R25-R27)
 
-    /** The DUE (or RETRY / network-available) alarm for {@code id}. Only SCHEDULED rows act. */
+    /**
+     * The DUE (or RETRY / network-available) alarm for {@code id}. Only SCHEDULED rows that were
+     * not reminded act: a reminded message is the user's to send now and never auto-sends (I6).
+     */
     public static void onDue(final Context context, final long id) {
         run(context, () -> {
             EngineDeps d = deps(context);
             ScheduledMessage m = d.store.get(id);
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
+            if (d.marks.isReminded(id)) return;
             evaluateAndApply(d, context, m);
         });
     }
@@ -190,6 +194,7 @@ public final class SendLaterEngine {
             EngineDeps d = deps(context);
             ScheduledMessage m = d.store.get(id);
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
+            if (d.marks.isReminded(id)) return;
             if (d.conditions.nowMs() >= m.getScheduledFor()) return;
             d.notifier.lastCall(m);
         });
@@ -269,6 +274,7 @@ public final class SendLaterEngine {
             return;
         }
         if (!d.store.markInFlight(id, ThreadEvent.hashOf(m.getText()))) return;
+        d.marks.setReminded(id, false);
         checkTimes.put(id, checkTime);
         schedulerOf(d).cancelAlarms(id);
         d.broadcaster.stateChanged(id, m.getRecipientE164());
@@ -292,6 +298,7 @@ public final class SendLaterEngine {
     private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent) {
         long id = m.getId();
         if (!d.store.hold(id, reason)) return;
+        d.marks.setReminded(id, false);
         schedulerOf(d).cancelAlarms(id);
         ScheduledMessage held = reload(d, m);
         if (mayHaveSent) {
@@ -303,9 +310,13 @@ public final class SendLaterEngine {
         schedulerOf(d).registerExpiry(held);
     }
 
-    /** A reminded message keeps status SCHEDULED (R29) and expires 24 h past its time. */
+    /**
+     * A reminded message keeps status SCHEDULED (R29) and expires 24 h past its time. It is marked
+     * reminded so no later DUE (boot, time change, stray alarm) auto-sends it (I6).
+     */
     private static void remind(EngineDeps d, ScheduledMessage m, RemindReason reason) {
         long id = m.getId();
+        d.marks.setReminded(id, true);
         schedulerOf(d).cancelAlarms(id);
         d.notifier.remind(m, reason);
         d.broadcaster.stateChanged(id, m.getRecipientE164());
@@ -315,6 +326,7 @@ public final class SendLaterEngine {
     private static void selfPreempt(EngineDeps d, ScheduledMessage m) {
         long id = m.getId();
         if (!d.store.selfPreempt(id)) return;
+        d.marks.clear(id);
         schedulerOf(d).cancelAll(id);
         d.notifier.selfPreempted(reload(d, m));
         d.broadcaster.stateChanged(id, m.getRecipientE164());
@@ -323,6 +335,7 @@ public final class SendLaterEngine {
     private static void expire(EngineDeps d, ScheduledMessage m) {
         long id = m.getId();
         if (!d.store.expire(id)) return;
+        d.marks.clear(id);
         schedulerOf(d).cancelAll(id);
         d.networkWaiter.cancel(id);
         d.notifier.expired(reload(d, m));
@@ -338,6 +351,7 @@ public final class SendLaterEngine {
         Long checkTime = checkTimes.remove(id);
         retried.remove(id);
         if (!d.store.markSentVerified(id)) return;
+        d.marks.clear(id);
         schedulerOf(d).cancelAll(id);
         ScheduledMessage sent = reload(d, m);
         if (checkTime != null && inboundAfter(events, checkTime)) {
@@ -488,6 +502,7 @@ public final class SendLaterEngine {
             ScheduledMessage m = d.store.get(id);
             if (!tappable(m)) return;
             if (!d.store.cancel(id)) return;
+            d.marks.clear(id);
             d.networkWaiter.cancel(id);
             schedulerOf(d).cancelAll(id);
             d.notifier.dismiss(id);
@@ -553,8 +568,11 @@ public final class SendLaterEngine {
                 return;
             }
             case CANNOT_SHOW: {
+                // Nothing was typed: the release must not use up the retry after a real failure
+                // (the store counts it in attemptCount; the engine subtracts these).
                 checkTimes.remove(id);
                 if (d.store.releaseForRetry(id, "cannot_show")) {
+                    d.marks.addFreeRelease(id);
                     remind(d, reload(d, m), RemindReason.LOCKED);
                 }
                 return;
@@ -567,13 +585,17 @@ public final class SendLaterEngine {
                     return;
                 }
                 checkTimes.remove(id);
-                if (events != null && canRetry(m, now)) {
+                if (events != null && canRetry(d, m, now)) {
                     retryAfterRead(d, context, m, events, now, detail);
                 } else if (d.store.fail(id, detail != null ? detail : "failed")) {
+                    d.marks.clear(id);
                     schedulerOf(d).cancelAll(id);
                     ScheduledMessage failed = reload(d, m);
-                    d.notifier.remind(failed, now > LatenessBudget.deadlineMs(m)
-                            ? RemindReason.LATE : RemindReason.NO_SENDER);
+                    if (now > LatenessBudget.deadlineMs(m)) {
+                        d.notifier.remind(failed, RemindReason.LATE);
+                    } else {
+                        d.notifier.sendFailed(failed);
+                    }
                     d.broadcaster.stateChanged(id, m.getRecipientE164());
                 }
             }
@@ -589,9 +611,11 @@ public final class SendLaterEngine {
         return dec.getKind() == Decision.Kind.CANCEL;
     }
 
-    private static boolean canRetry(ScheduledMessage m, long now) {
+    /** Real attempts only: CANNOT_SHOW releases (nothing typed) do not count against the retry. */
+    private static boolean canRetry(EngineDeps d, ScheduledMessage m, long now) {
+        int attempts = Math.max(0, m.getAttemptCount() - d.marks.freeReleases(m.getId()));
         return now <= LatenessBudget.deadlineMs(m)
-                && m.getAttemptCount() < MAX_RETRIES
+                && attempts < MAX_RETRIES
                 && !retried.contains(m.getId());
     }
 
@@ -648,7 +672,7 @@ public final class SendLaterEngine {
             return;
         }
         checkTimes.remove(m.getId());
-        if (canRetry(m, now)) {
+        if (canRetry(d, m, now)) {
             retryAfterRead(d, context, m, events, now, "restart");
         } else {
             hold(d, m, HoldReason.UNVERIFIED, now, true);
@@ -679,7 +703,7 @@ public final class SendLaterEngine {
     private static SendLaterScheduler schedulerOf(EngineDeps d) {
         SendLaterScheduler s = scheduler;
         if (s == null) {
-            s = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions);
+            s = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions, d.marks);
             scheduler = s;
         }
         return s;

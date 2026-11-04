@@ -23,12 +23,19 @@ public final class SendLaterScheduler {
     private final EngineStore store;
     private final EngineNotifier notifier;
     private final EngineClock clock;
+    private final EngineMarks marks;
 
     public SendLaterScheduler(AlarmSink alarms, EngineStore store, EngineNotifier notifier, EngineClock clock) {
+        this(alarms, store, notifier, clock, new EngineMarks.InMemory());
+    }
+
+    public SendLaterScheduler(AlarmSink alarms, EngineStore store, EngineNotifier notifier, EngineClock clock,
+                              EngineMarks marks) {
         this.alarms = alarms;
         this.store = store;
         this.notifier = notifier;
         this.clock = clock;
+        this.marks = marks != null ? marks : new EngineMarks.InMemory();
     }
 
     /** The scheduler wired to the engine's production (or installed test) dependencies. */
@@ -39,9 +46,15 @@ public final class SendLaterScheduler {
     /**
      * Registers T-5 and T for {@code m}. Less than 5 min ahead: the last call posts now and only T
      * is registered (R24). Only rung R1 has a last call (R0 is silent; R2/R3 never auto-send).
+     * This is an explicit (re)schedule, so it clears the engine's "reminded" mark (I6).
      */
     public void registerAlarms(ScheduledMessage m) {
         if (m == null) return;
+        marks.setReminded(m.getId(), false);
+        registerTimes(m);
+    }
+
+    private void registerTimes(ScheduledMessage m) {
         long now = clock.nowMs();
         long due = m.getScheduledFor();
         long lastCallAt = due - LAST_CALL_LEAD_MS;
@@ -70,11 +83,21 @@ public final class SendLaterScheduler {
 
     /**
      * Boot, time or time-zone change, exact-alarm permission change: re-registers T-5/T for every
-     * SCHEDULED message and the expiry alarm of every HELD one. HELD rows get no due alarm.
+     * SCHEDULED message that was not reminded, and only the expiry alarm of every reminded or
+     * HELD one. A reminded message never gets a due alarm back: it must not auto-send after the
+     * user was told to send it by hand (I6).
      */
     public void reregisterAll(Context context) {
         List<ScheduledMessage> pending = store.allPending();
-        if (pending != null) for (ScheduledMessage m : pending) registerAlarms(m);
+        if (pending != null) {
+            for (ScheduledMessage m : pending) {
+                if (marks.isReminded(m.getId())) {
+                    registerExpiry(m);
+                } else {
+                    registerTimes(m);
+                }
+            }
+        }
         List<ScheduledMessage> held = store.allHeld();
         if (held != null) for (ScheduledMessage m : held) registerExpiry(m);
     }

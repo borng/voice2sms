@@ -32,6 +32,12 @@ public interface EngineNotifier {
     /** I5: an IN_FLIGHT row could not be verified; the send may have gone out. */
     void mayHaveSent(ScheduledMessage m);
 
+    /**
+     * R31: the send failed within the budget and was not retried (or the retry failed too). The
+     * default falls back to a plain reminder so older notifier fakes keep compiling.
+     */
+    default void sendFailed(ScheduledMessage m) { remind(m, RemindReason.NO_SENDER); }
+
     /** Removes the message's notification (cancel, send under way). */
     default void dismiss(long id) {}
 }

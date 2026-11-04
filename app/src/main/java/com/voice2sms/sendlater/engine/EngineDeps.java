@@ -18,6 +18,8 @@ public final class EngineDeps {
     final EngineConditions conditions;
     final NetworkWaiter networkWaiter;
     final Executor executor;
+    /** Engine-owned per-message marks (reminded, free releases); in-memory unless set. */
+    final EngineMarks marks;
     /** True for the Android wiring: entry points called on the main thread hop to the executor. */
     final boolean hopOffMainThread;
 
@@ -32,6 +34,7 @@ public final class EngineDeps {
         this.conditions = req(b.conditions, "conditions");
         this.networkWaiter = req(b.networkWaiter, "networkWaiter");
         this.executor = req(b.executor, "executor");
+        this.marks = b.marks != null ? b.marks : new EngineMarks.InMemory();
         this.hopOffMainThread = b.hopOffMainThread;
     }
 
@@ -49,6 +52,7 @@ public final class EngineDeps {
         private EngineConditions conditions;
         private NetworkWaiter networkWaiter;
         private Executor executor;
+        private EngineMarks marks;
         private boolean hopOffMainThread;
 
         public Builder store(EngineStore v) { store = v; return this; }
@@ -59,6 +63,7 @@ public final class EngineDeps {
         public Builder conditions(EngineConditions v) { conditions = v; return this; }
         public Builder networkWaiter(NetworkWaiter v) { networkWaiter = v; return this; }
         public Builder executor(Executor v) { executor = v; return this; }
+        public Builder marks(EngineMarks v) { marks = v; return this; }
         Builder hopOffMainThread(boolean v) { hopOffMainThread = v; return this; }
 
         public EngineDeps build() { return new EngineDeps(this); }
