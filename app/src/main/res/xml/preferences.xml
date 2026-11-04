@@ -45,6 +45,19 @@
             android:defaultValue="true" />
     </PreferenceCategory>
 
+    <!-- sendlater:battery-guard start (R38) -->
+    <!-- The "Battery" row belongs in the Send Later category that upcoming-settings creates; when
+         both are present, keep this Preference inside that category and drop this wrapper. -->
+    <PreferenceCategory
+        android:key="sendlater_battery_category"
+        android:title="@string/sendlater_battery_category">
+        <Preference
+            android:key="sendlater_battery"
+            android:title="@string/sendlater_battery_title"
+            android:persistent="false" />
+    </PreferenceCategory>
+    <!-- sendlater:battery-guard end -->
+
     <PreferenceCategory android:title="About">
         <Preference
             android:key="app_version"

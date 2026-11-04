@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.Looper;
 import android.util.Log;
 
+import com.voice2sms.sendlater.battery.BatteryWarning;
 import com.voice2sms.sendlater.domain.Classification;
 import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.Decision;
@@ -189,11 +190,21 @@ public final class SendLaterEngine {
      * not reminded act: a reminded message is the user's to send now and never auto-sends (I6).
      */
     public static void onDue(final Context context, final long id) {
+        onDue(context, id, false);
+    }
+
+    /** The DUE alarm itself fired: also reports how late it was against its target (R39). */
+    static void onDueAlarm(final Context context, final long id) {
+        onDue(context, id, true);
+    }
+
+    private static void onDue(final Context context, final long id, final boolean dueAlarm) {
         run(context, () -> {
             EngineDeps d = deps(context);
             ScheduledMessage m = d.store.get(id);
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
             if (d.marks.isReminded(id)) return;
+            if (dueAlarm) BatteryWarning.onAlarmLate(context, d.conditions.nowMs() - m.getScheduledFor());
             evaluateAndApply(d, context, m);
         });
     }

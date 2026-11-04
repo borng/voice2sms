@@ -22,7 +22,9 @@ public final class SendLaterAlarmReceiver extends BroadcastReceiver {
         SendLaterEngine.runInBackground(app, () -> {
             if (AndroidAlarmSink.ACTION_LAST_CALL.equals(action)) {
                 SendLaterEngine.onLastCall(app, id);
-            } else if (AndroidAlarmSink.ACTION_DUE.equals(action) || AndroidAlarmSink.ACTION_RETRY.equals(action)) {
+            } else if (AndroidAlarmSink.ACTION_DUE.equals(action)) {
+                SendLaterEngine.onDueAlarm(app, id);
+            } else if (AndroidAlarmSink.ACTION_RETRY.equals(action)) {
                 SendLaterEngine.onDue(app, id);
             } else if (SendLaterIntents.ACTION_EXPIRE.equals(action)) {
                 SendLaterEngine.onExpireAlarm(app, id);
