@@ -192,7 +192,7 @@ public class SendLaterEngineRemindedTest {
         @Override public List<ScheduledMessage> pendingForThread(String e164) { return s.pendingForThread(e164); }
     }
 
-    @Test public void cannotShowDoesNotUseUpTheSingleRetry() {
+    @Test public void cannotShowThenSendAnywayThenFailureIsNotRetried() {
         install(new CountingStore(w.store));
         w.store.put(message(ID).build());
         SendLaterEngine.setSender(w.sender);
@@ -203,10 +203,12 @@ public class SendLaterEngineRemindedTest {
         SendLaterEngine.onSendAnyway(null, ID);
         assertEquals(2, w.sender.started.size());
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.FAILED, "x");
-        assertEquals("the real failure still gets its one retry", 3, w.sender.started.size());
+        // OD27: no automatic retry after a real failure either.
+        assertEquals("no automatic retry", 2, w.sender.started.size());
+        assertEquals(Status.HELD, w.store.status(ID));
     }
 
-    @Test public void failedWithinBudgetSaysTheSendFailed() {
+    @Test public void failedWithinBudgetSaysItMayHaveSent() {
         final List<String> failed = new ArrayList<>();
         EngineNotifier n = new EngineNotifier() {
             @Override public void lastCall(ScheduledMessage m) { w.notifier.lastCall(m); }
@@ -228,8 +230,10 @@ public class SendLaterEngineRemindedTest {
         SendLaterEngine.onDue(null, ID);
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.FAILED, "x");
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.FAILED, "x");
-        assertEquals(Status.FAILED, w.store.status(ID));
-        assertEquals(Collections.singletonList("sendFailed " + ID), failed);
+        // OD27: a FAILED attempt may have typed: HELD(UNVERIFIED) + "may have already sent".
+        assertEquals(Status.HELD, w.store.status(ID));
+        assertTrue(failed.isEmpty());
+        assertTrue(w.notifier.posted.toString(), w.notifier.has("mayHaveSent " + ID));
         assertFalse(w.notifier.posted.toString(), w.notifier.has("remind " + ID + " NO_SENDER"));
     }
 

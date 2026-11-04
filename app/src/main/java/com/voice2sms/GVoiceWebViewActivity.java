@@ -11,6 +11,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.inputmethod.EditorInfo;
@@ -35,6 +36,8 @@ import androidx.preference.PreferenceManager;
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.OriginGuard;
+import com.voice2sms.sendlater.send.ForegroundUse;
+import com.voice2sms.sendlater.send.ScheduledSendController;
 import com.voice2sms.sendlater.web.SendLaterWebHooks;
 import com.voice2sms.sendlater.web.ThreadReadCallback;
 import com.voice2sms.sendlater.web.ThreadUrl;
@@ -74,6 +77,8 @@ public class GVoiceWebViewActivity extends Activity {
      * which serve nothing unless OriginGuard.isTrustedGvUrl accepts it.
      */
     private volatile String mainFrameUrl;
+    /** Send Later due-time send (R30/R31, OD11): the scheduled branch; see ScheduledSendController. */
+    private ScheduledSendController scheduledSend;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -106,6 +111,8 @@ public class GVoiceWebViewActivity extends Activity {
         // The singleton WebView may already show a page that no callback will report again.
         mainFrameUrl = webView.getUrl();
         webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
+        scheduledSend = new ScheduledSendController(this, new ScheduledHost());
+        boolean scheduledLaunch = scheduledSend.handle(getIntent(), savedInstanceState != null);
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
@@ -154,7 +161,11 @@ public class GVoiceWebViewActivity extends Activity {
                 return null; // consumed
             });
 
-        if (app.isSpaLoaded() && recipient != null) {
+        if (scheduledLaunch && scheduledSend.skipsPageLoad()) {
+            // R3 (send-hardening): an unclaimed scheduled launch over the keyguard (e.g. the
+            // relaunch after a renderer crash) is finishing; never load the inbox under it.
+            Log.d(TAG, "Unclaimed scheduled launch over the keyguard: finishing without a page load");
+        } else if (app.isSpaLoaded() && recipient != null) {
             // Warm start — SPA already loaded but may be on a stale view.
             // Reload the page for a clean messages-list state.
             // onPageFinished will inject the composer once ready.
@@ -168,7 +179,10 @@ public class GVoiceWebViewActivity extends Activity {
 
             if (cookies != null && cookies.contains("SID")) {
                 loadGoogleVoice();
-            } else {
+            } else if (scheduledSend.isActive()) {
+                // No web session: never open the account picker over the lock screen.
+                scheduledSend.onWebFailure("no_session");
+            } else if (!scheduledLaunch || !scheduledSend.isOverKeyguard()) {
                 attemptAccountAuth();
             }
         }
@@ -179,6 +193,9 @@ public class GVoiceWebViewActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        // Scheduled branch: it reloads the page itself, or queues behind the running send.
+        if (scheduledSend != null && scheduledSend.handle(intent, false)) return;
+        if (scheduledSend != null) scheduledSend.onOtherIntent();
 
         recipient = intent.getStringExtra("recipient");
         body = intent.getStringExtra("body");
@@ -201,6 +218,11 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                // send-lock-cover: over the keyguard only the target thread may load.
+                if (request.isForMainFrame() && scheduledSend != null && !scheduledSend.allowsNavigation(url)) {
+                    Log.d(TAG, "Blocking navigation while a scheduled send is covered");
+                    return true;
+                }
                 if (OriginGuard.isAllowedNavigation(request.getUrl().getScheme(), request.getUrl().getHost())) {
                     return false;
                 }
@@ -231,7 +253,8 @@ public class GVoiceWebViewActivity extends Activity {
                     // Mark SPA as loaded for future warm starts
                     Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
                     app.setSpaLoaded(true);
-                    injectComposer();
+                    if (scheduledSend == null || !scheduledSend.isActive()) injectComposer();
+                    else if (scheduledSend.isComposing()) injectScheduledComposer();
                 } else if (url.startsWith("https://voice.google.com") && !injected) {
                     // No recipient but page loaded — mark SPA ready
                     Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
@@ -447,6 +470,39 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /**
+     * Scheduled branch of the composer (R30): inject.js auto-send for the scheduled message. The
+     * scheduled queue already spaced and capped this send, so the global auto-send rate limiter
+     * and the Wear/Gemini extra are not involved; ScheduledSendController verifies the result.
+     */
+    private void injectScheduledComposer() {
+        injected = true;
+        if (!isActivityAlive() || scheduledSend == null) return;
+        String script = readAssetScript("inject.js");
+        if (script == null) {
+            scheduledSend.onWebFailure("inject_failed");
+            return;
+        }
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        long delayMs = ScheduledSendController.sendDelayMs(prefs.getInt("auto_send_delay", 2) * 1000L);
+        script += "\nvoice2sms(" + jsonEncode(recipient) + ", " + jsonEncode(body != null ? body : "")
+                + ", true, " + delayMs + ");";
+        webView.evaluateJavascript(script, null);
+        scheduledSend.onComposerInjected(delayMs);
+    }
+
+    private String readAssetScript(String name) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(getAssets().open(name)))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line).append("\n");
+            return sb.toString();
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read " + name + ": " + e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
     /** Installs the inject.js Send Later module (v2sSendLaterInit) once per page load. */
     private void installSendLater() {
         if (!isActivityAlive() || sendLaterHooks == null) return;
@@ -489,6 +545,70 @@ public class GVoiceWebViewActivity extends Activity {
         @Override
         public void readThread(String e164, int limit, ThreadReadCallback cb) {
             GVoiceWebViewActivity.this.readThread(e164, limit, cb);
+        }
+    }
+
+    /**
+     * True when the message box (inject.js fillBody's selectors) still holds text. Answers a
+     * boolean only, never the text.
+     */
+    private static final String SCHEDULED_COMPOSER_PROBE_JS = "(function(){var t=document.querySelector("
+            + "'textarea[placeholder=\"Type a message\"], textarea[placeholder*=\"message\"], "
+            + "textarea[placeholder*=\"text\"], textarea[aria-label*=\"message\"], "
+            + "[contenteditable=\"true\"][aria-label*=\"message\"]');"
+            + "if(!t)return false;var v=t.isContentEditable?t.textContent:t.value;"
+            + "return !!(v&&v.trim().length>0);})()";
+
+    /** Activity access for the scheduled branch; every WebView touch is behind isActivityAlive(). */
+    private class ScheduledHost implements ScheduledSendController.Host {
+        @Override
+        public boolean isAlive() {
+            return isActivityAlive();
+        }
+
+        @Override
+        public String mainFrameUrl() {
+            return mainFrameUrl;
+        }
+
+        @Override
+        public boolean beginCompose(String e164, String text) {
+            if (!isActivityAlive()) return false;
+            recipient = e164;
+            body = text;
+            injected = false;
+            webView.onResume();
+            loadGoogleVoice();
+            return true;
+        }
+
+        @Override
+        public void readThread(String e164, int limit, ThreadReadCallback cb) {
+            GVoiceWebViewActivity.this.readThread(e164, limit, cb);
+        }
+
+        @Override
+        public void probeComposer(ScheduledSendController.ComposerProbe cb) {
+            runOnUiThread(() -> {
+                if (!isActivityAlive()) {
+                    cb.onProbe(null);
+                    return;
+                }
+                // Only "is there text in the message box", never the text itself.
+                webView.evaluateJavascript(SCHEDULED_COMPOSER_PROBE_JS,
+                        value -> cb.onProbe("true".equals(value) ? Boolean.TRUE
+                                : "false".equals(value) ? Boolean.FALSE : null));
+            });
+        }
+
+        @Override
+        public void finish() {
+            GVoiceWebViewActivity.this.finish();
+        }
+
+        @Override
+        public View pageView() {
+            return isActivityAlive() ? webView : null;
         }
     }
 
@@ -548,6 +668,8 @@ public class GVoiceWebViewActivity extends Activity {
             Log.d(TAG, "JS requested showKeyboard");
             runOnUiThread(() -> {
                 if (!isActivityAlive()) return;
+                // send-lock-cover: no keyboard over the keyguard while the page is covered.
+                if (scheduledSend != null && scheduledSend.isCovered()) return;
                 webView.setFocusableInTouchMode(true);
                 webView.requestFocus();
                 new Handler(Looper.getMainLooper())
@@ -848,9 +970,39 @@ public class GVoiceWebViewActivity extends Activity {
         }, text.length() * 60L + 300);
     }
 
+    /**
+     * send-hardening R5: while resumed, probe whether the message box holds text (a draft typed
+     * on the soft keyboard sends no touches here). Answers a boolean only, never the text. While
+     * a scheduled send owns the page the text is ours, so it does not count.
+     */
+    private final Handler composerProbeHandler = new Handler(Looper.getMainLooper());
+    private final Runnable composerProbe = new Runnable() {
+        @Override
+        public void run() {
+            if (!isActivityAlive()) return;
+            if (scheduledSend != null && (scheduledSend.isActive() || scheduledSend.isCovered())) {
+                ForegroundUse.noteComposer(false, System.currentTimeMillis());
+            } else {
+                webView.evaluateJavascript(SCHEDULED_COMPOSER_PROBE_JS,
+                        value -> ForegroundUse.noteComposer("true".equals(value), System.currentTimeMillis()));
+            }
+            composerProbeHandler.postDelayed(this, ForegroundUse.COMPOSER_PROBE_INTERVAL_MS);
+        }
+    };
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (scheduledSend != null) scheduledSend.onWindowFocusChanged();
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
+        ForegroundUse.noteResumed(false);
+        composerProbeHandler.removeCallbacks(composerProbe);
+        ForegroundUse.noteComposer(false, System.currentTimeMillis());
+        if (scheduledSend != null) scheduledSend.onPauseOrStop(false);
         if (sendLaterHooks != null) sendLaterHooks.onPause();
         CookieManager.getInstance().flush();
         if (webView != null) {
@@ -861,6 +1013,10 @@ public class GVoiceWebViewActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        ForegroundUse.noteResumed(true);
+        composerProbeHandler.removeCallbacks(composerProbe);
+        composerProbeHandler.post(composerProbe);
+        if (scheduledSend != null) scheduledSend.onResume();
         if (sendLaterHooks != null) sendLaterHooks.onResume();
         if (webView != null) {
             webView.onResume();
@@ -868,7 +1024,39 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        super.onStop();
+        if (scheduledSend != null) scheduledSend.onPauseOrStop(true);
+    }
+
+    /**
+     * send-lock-cover: while a scheduled send is covered over the keyguard, every touch is
+     * consumed here (the WebView underneath only gets inject.js's own events). Otherwise records
+     * the touch so a due send does not take the page over from an active user (OD23).
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (scheduledSend != null && scheduledSend.isCovered()) return true;
+        ForegroundUse.noteTouch(System.currentTimeMillis());
+        return super.dispatchTouchEvent(ev);
+    }
+
+    /** send-lock-cover: keys (and back) are consumed while covered. */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (scheduledSend != null && scheduledSend.isCovered()) return true;
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent ev) {
+        if (scheduledSend != null && scheduledSend.isCovered()) return true;
+        return super.dispatchGenericMotionEvent(ev);
+    }
+
+    @Override
     public void onBackPressed() {
+        if (scheduledSend != null && scheduledSend.isCovered()) return;   // back is consumed while covered
         finish();
     }
 
@@ -894,7 +1082,9 @@ public class GVoiceWebViewActivity extends Activity {
             container.removeView(webView);
         }
 
+        composerProbeHandler.removeCallbacks(composerProbe);
         if (sendLaterHooks != null) sendLaterHooks.onDestroy();
+        if (scheduledSend != null) scheduledSend.onDestroy();
 
         Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
         app.detachActivityContext();

@@ -25,10 +25,8 @@ import com.voice2sms.sendlater.domain.Watermark;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * The Send Later engine (R22-R31, R33, I2, I5, I6): loads a message, reads its thread from the
@@ -43,9 +41,6 @@ import java.util.Set;
 public final class SendLaterEngine {
 
     private static final String TAG = "SendLaterEngine";
-
-    /** At most this many automatic retries after a thread read showed no send (R31). */
-    static final int MAX_RETRIES = 1;
 
     /** Detail the sender passes with SENT_VERIFIED when it saw an inbound after the check (R31). */
     public static final String DETAIL_LATE_REPLY = "late_reply";
@@ -77,8 +72,6 @@ public final class SendLaterEngine {
 
     /** Thread-check time of the attempt now IN_FLIGHT, per id (R31 "replied just as it sent"). */
     private static final Map<Long, Long> checkTimes = new HashMap<>();
-    /** Ids retried in this process (the store's attemptCount is the durable guard). */
-    private static final Set<Long> retried = new HashSet<>();
     /** Extra sources registered by other nodes (production wiring only). */
     private static final List<ThreadEventSource> extraSources = new ArrayList<>();
 
@@ -103,7 +96,6 @@ public final class SendLaterEngine {
             sender = null;
             installedForTest = false;
             checkTimes.clear();
-            retried.clear();
         }
     }
 
@@ -175,7 +167,7 @@ public final class SendLaterEngine {
 
     /**
      * Called once from {@code Voice2SmsApplication.onCreate}: on the background executor, resolves
-     * IN_FLIGHT rows by the Schrödinger rule (R31) first, then sweeps expired HELD/reminded rows,
+     * IN_FLIGHT rows first (HELD(UNVERIFIED) + "may have already sent", OD27), then sweeps expired HELD/reminded rows,
      * then re-arms every remaining alarm ({@link SendLaterScheduler#reregisterAll}).
      *
      * <p>The re-arm covers what no broadcast reports: a force-stop (user, or Samsung "deep
@@ -196,7 +188,7 @@ public final class SendLaterEngine {
         d.executor.execute(() -> {
             try {
                 synchronized (LOCK) {
-                    doResolveInFlight(d, context);
+                    doResolveInFlight(d);
                     // OD24: Send Later off -> only the IN_FLIGHT resolution above; no sweep, no re-arm.
                     if (!enabled(d)) return;
                     doSweepExpired(d);
@@ -313,7 +305,9 @@ public final class SendLaterEngine {
             case CANCEL:
                 d.networkWaiter.cancel(id);
                 if (m.getStatus() == Status.IN_FLIGHT) {
-                    sentVerified(d, m, null);
+                    // OD27: a thread read never verifies a send; only the controller's outcome does.
+                    checkTimes.remove(id);
+                    hold(d, m, HoldReason.UNVERIFIED, now, true);
                 } else {
                     selfPreempt(d, m);
                 }
@@ -369,6 +363,12 @@ public final class SendLaterEngine {
     }
 
     private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent) {
+        hold(d, m, reason, now, mayHaveSent, true);
+    }
+
+    /** {@code armExpiry} false: Send Later is off (OD24); turning it on re-arms HELD expiries. */
+    private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent,
+                             boolean armExpiry) {
         long id = m.getId();
         if (!d.store.hold(id, reason)) return;
         d.marks.setReminded(id, false);
@@ -381,7 +381,7 @@ public final class SendLaterEngine {
             d.notifier.hold(held, reason, now);
         }
         d.broadcaster.stateChanged(id, m.getRecipientE164());
-        schedulerOf(d).registerExpiry(held);
+        if (armExpiry) schedulerOf(d).registerExpiry(held);
     }
 
     /**
@@ -426,21 +426,17 @@ public final class SendLaterEngine {
     }
 
     /**
-     * IN_FLIGHT -> SENT_VERIFIED. {@code events} (read after the send) decide whether an inbound
-     * arrived between the thread check and the send (R31).
-     */
-    private static void sentVerified(EngineDeps d, ScheduledMessage m, List<ThreadEvent> events) {
-        sentVerified(d, m, events, null);
-    }
-
-    /**
-     * {@code detail} is the sender's; {@link #DETAIL_LATE_REPLY} counts only while the outcome
-     * arrives inside the late-reply window (OD23(5)), so a stale one is ignored.
+     * IN_FLIGHT -> SENT_VERIFIED. OD27: called ONLY for the scheduled-send controller's own
+     * {@link SendOutcome#SENT_VERIFIED} (its settle or server-time rule during the job); no thread
+     * read ever leads here. {@code events} are the listener's inbound events (never a read that
+     * sees outbound bubbles), used only to word the notification: an inbound between the thread
+     * check and the send is "replied just as your message sent" (R31). {@code detail} is the
+     * sender's; {@link #DETAIL_LATE_REPLY} counts only while the outcome arrives inside the
+     * late-reply window (OD23(5)), so a stale one is ignored.
      */
     private static void sentVerified(EngineDeps d, ScheduledMessage m, List<ThreadEvent> events, String detail) {
         long id = m.getId();
         Long checkTime = checkTimes.remove(id);
-        retried.remove(id);
         if (!d.store.markSentVerified(id)) return;
         d.marks.clear(id);
         schedulerOf(d).cancelAll(id);
@@ -488,36 +484,34 @@ public final class SendLaterEngine {
      * Events since the earlier of the message's two baselines (OD22(1)) from every source available
      * for its conversation ({@link ThreadEventSource#isAvailableFor}, OD22(5)), merged; null when no
      * source is available (classifies as UNVERIFIED). A source that throws counts as unavailable.
+     * Used only for the decision before a send (the ladder, Send anyway); OD27: never to verify
+     * or retry a send that has started.
      */
     static List<ThreadEvent> readThread(EngineDeps d, ScheduledMessage m) {
-        return read(d, m).events;
+        return readFrom(d, m, false);
     }
 
-    /** One merged thread read and whether it can prove an interrupted send did not go out. */
-    static final class ThreadRead {
-        /** Merged events; null when no source was available. */
-        final List<ThreadEvent> events;
-        /** At least one {@link OutboundCapableSource} was available and read without failing. */
-        final boolean outboundCapable;
-
-        ThreadRead(List<ThreadEvent> events, boolean outboundCapable) {
-            this.events = events;
-            this.outboundCapable = outboundCapable;
+    /**
+     * OD27: the inbound events the late-reply notice may use, from the listener sources only
+     * (sources that do not see outbound bubbles: never an {@link OutboundCapableSource}). Outbound
+     * events are dropped, so nothing here can say anything about our own send.
+     */
+    static List<ThreadEvent> listenerInbound(EngineDeps d, ScheduledMessage m) {
+        List<ThreadEvent> all = readFrom(d, m, true);
+        if (all == null) return null;
+        List<ThreadEvent> in = new ArrayList<>();
+        for (ThreadEvent e : all) {
+            if (e != null && e.isInbound()) in.add(e);
         }
-
-        /** OD21: an empty-of-own-bubble read is evidence of "not sent" only with outbound vision. */
-        boolean canRetryOn() {
-            return events != null && outboundCapable;
-        }
+        return in;
     }
 
-    /** Like {@link #readThread} and records whether an outbound-capable source took part (OD21). */
-    static ThreadRead read(EngineDeps d, ScheduledMessage m) {
+    private static List<ThreadEvent> readFrom(EngineDeps d, ScheduledMessage m, boolean listenerOnly) {
         ConversationRef ref = ConversationRef.of(m);
         List<ThreadEvent> out = null;
-        boolean outboundCapable = false;
         for (ThreadEventSource s : d.sources) {
             if (s == null) continue;
+            if (listenerOnly && s instanceof OutboundCapableSource) continue;
             boolean available;
             try {
                 available = s.isAvailableFor(ref);
@@ -529,12 +523,11 @@ public final class SendLaterEngine {
                 List<ThreadEvent> got = s.readSince(ref, readBaseline(m));
                 if (out == null) out = new ArrayList<>();
                 if (got != null) out.addAll(got);
-                if (s instanceof OutboundCapableSource) outboundCapable = true;
             } catch (RuntimeException e) {
                 Log.w(TAG, "thread source failed: " + e.getClass().getSimpleName());
             }
         }
-        return new ThreadRead(out, outboundCapable);
+        return out;
     }
 
     /**
@@ -686,15 +679,16 @@ public final class SendLaterEngine {
 
     /**
      * The only path from the sender to a status change. Ignored unless the row is IN_FLIGHT.
+     * OD27: only the scheduled-send controller produces SENT_VERIFIED, from its own settle or
+     * server-time rule during the job; the engine never upgrades an outcome from a thread read
+     * and never retries a started send automatically.
      * <ul>
-     *   <li>SENT_VERIFIED: the sender saw its bubble. SENT_VERIFIED, then "Sent" or, when an
-     *       inbound was read timed after the thread check, "replied just as your message sent".</li>
-     *   <li>SENT_UNVERIFIED: own bubble in the thread read -> SENT_VERIFIED; otherwise
-     *       HELD(UNVERIFIED) + "may have already sent" (never retried).</li>
-     *   <li>FAILED: own bubble read -> SENT_VERIFIED; otherwise, when the read included an
-     *       {@link OutboundCapableSource}, one retry within budget decided on the thread just read
-     *       (I5), else FAILED + reminder. Without such a source: HELD(UNVERIFIED) + "may have
-     *       already sent" (OD21).</li>
+     *   <li>SENT_VERIFIED: SENT_VERIFIED, then "Sent" or, when the listener saw an inbound timed
+     *       after the thread check (or the sender says {@link #DETAIL_LATE_REPLY}), "replied just
+     *       as your message sent".</li>
+     *   <li>SENT_UNVERIFIED and FAILED (something may have been typed): HELD(UNVERIFIED) + "may
+     *       have already sent", no thread read, no retry. A retry happens only through the
+     *       user's Send anyway.</li>
      *   <li>CANNOT_SHOW: nothing was typed; back to SCHEDULED + a reminder worded by the
      *       detail ({@link RemindCause#fromDetail}: no_session gets Sign in, daily_cap, user_busy,
      *       else locked).</li>
@@ -717,22 +711,13 @@ public final class SendLaterEngine {
         long now = d.conditions.nowMs();
         switch (outcome) {
             case SENT_VERIFIED: {
-                sentVerified(d, m, readThread(d, m), detail);
-                return;
-            }
-            case SENT_UNVERIFIED: {
-                List<ThreadEvent> events = readThread(d, m);
-                if (events != null && ownBubbleSeen(d, m, events, now)) {
-                    sentVerified(d, m, events);
-                } else {
-                    checkTimes.remove(id);
-                    hold(d, m, HoldReason.UNVERIFIED, now, true);
-                }
+                // The one producer of SENT_VERIFIED (OD27).
+                sentVerified(d, m, listenerInbound(d, m), detail);
                 return;
             }
             case CANNOT_SHOW: {
-                // Nothing was typed: the release must not use up the retry after a real failure
-                // (the store counts it in attemptCount; the engine subtracts these).
+                // Nothing was typed: back to SCHEDULED with a reminder (the store counts the
+                // release in attemptCount; it is recorded as a free release).
                 checkTimes.remove(id);
                 RemindCause cause = RemindCause.fromDetail(detail);
                 if (d.store.releaseForRetry(id, "cannot_show")) {
@@ -741,114 +726,39 @@ public final class SendLaterEngine {
                 }
                 return;
             }
+            case SENT_UNVERIFIED:
             case FAILED:
             default: {
-                ThreadRead read = read(d, m);
-                List<ThreadEvent> events = read.events;
-                if (events != null && ownBubbleSeen(d, m, events, now)) {
-                    sentVerified(d, m, events);
-                    return;
-                }
+                // OD27: nothing the engine can read proves the send did or did not go out.
                 checkTimes.remove(id);
-                if (!read.canRetryOn()) {
-                    // OD21: no source that sees outbound messages was read, so nothing proves the
-                    // failed attempt did not go out. Never retried; the user decides.
-                    hold(d, m, HoldReason.UNVERIFIED, now, true);
-                } else if (canRetry(d, m, now)) {
-                    retryAfterRead(d, context, m, events, now, detail);
-                } else if (d.store.fail(id, detail != null ? detail : "failed")) {
-                    d.marks.clear(id);
-                    schedulerOf(d).cancelAll(id);
-                    ScheduledMessage failed = reload(d, m);
-                    if (now > LatenessBudget.deadlineMs(m)) {
-                        d.notifier.remind(failed, RemindReason.LATE);
-                    } else {
-                        d.notifier.sendFailed(failed);
-                    }
-                    d.broadcaster.stateChanged(id, m.getRecipientE164());
-                }
+                hold(d, m, HoldReason.UNVERIFIED, now, true);
             }
         }
-    }
-
-    /** Whether the IN_FLIGHT message's own outbound appears in {@code events} (CANCEL for IN_FLIGHT). */
-    private static boolean ownBubbleSeen(EngineDeps d, ScheduledMessage inFlight, List<ThreadEvent> events,
-                                         long now) {
-        Decision dec = LadderEvaluator.evaluate(inFlight, inFlight.getRung(), events, now,
-                d.conditions.session(), d.conditions.network(), d.conditions.listenerEnabled(),
-                d.conditions.outboundPolicy());
-        return dec.getKind() == Decision.Kind.CANCEL;
-    }
-
-    /** Real attempts only: CANNOT_SHOW releases (nothing typed) do not count against the retry. */
-    private static boolean canRetry(EngineDeps d, ScheduledMessage m, long now) {
-        int attempts = Math.max(0, m.getAttemptCount() - d.marks.freeReleases(m.getId()));
-        return now <= LatenessBudget.deadlineMs(m)
-                && attempts < MAX_RETRIES
-                && !retried.contains(m.getId());
-    }
-
-    /**
-     * R31 retry: only after {@code events} were read and showed no send. IN_FLIGHT -> SCHEDULED,
-     * then the ladder runs on the same read (so a reply in it still holds).
-     */
-    private static void retryAfterRead(EngineDeps d, Context context, ScheduledMessage m, List<ThreadEvent> events,
-                                       long now, String detail) {
-        long id = m.getId();
-        if (!d.store.releaseForRetry(id, detail != null ? detail : "retry")) return;
-        retried.add(id);
-        ScheduledMessage released = d.store.get(id);
-        if (released == null || released.getStatus() != Status.SCHEDULED) return;
-        // OD24: off -> stays SCHEDULED without alarms; turning Send Later on re-arms it.
-        if (!enabled(d)) return;
-        Decision decision = LadderEvaluator.evaluate(released, released.getRung(), events, now,
-                d.conditions.session(), d.conditions.network(), d.conditions.listenerEnabled(),
-                d.conditions.outboundPolicy());
-        apply(d, context, released, decision, now);
     }
 
     // ================================================================== startup resolution (R23, R31, I5)
 
     /**
-     * Schrödinger rule for every IN_FLIGHT row: read the thread first. Own bubble -> SENT_VERIFIED.
-     * No source -> HELD(UNVERIFIED) + "may have already sent", never retried (I5). No bubble ->
-     * one retry within budget only when an {@link OutboundCapableSource} was read (OD21), else
-     * HELD(UNVERIFIED) + "may have already sent".
+     * Every IN_FLIGHT row found at process start: the attempt was interrupted, so whether it went
+     * out is unknown. OD27: HELD(UNVERIFIED) + "may have already sent", with no thread read, never
+     * SENT_VERIFIED and never an automatic retry (I5).
      */
     public static void resolveInFlight(final Context context) {
-        run(context, () -> doResolveInFlight(deps(context), context));
+        run(context, () -> doResolveInFlight(deps(context)));
     }
 
-    private static void doResolveInFlight(EngineDeps d, Context context) {
+    private static void doResolveInFlight(EngineDeps d) {
         List<ScheduledMessage> rows = d.store.inFlight();
         if (rows == null) return;
+        long now = d.conditions.nowMs();
+        boolean on = enabled(d);   // OD24: while off, no alarm is registered at process start
         for (ScheduledMessage m : rows) {
             try {
-                resolveOne(d, context, m);
+                checkTimes.remove(m.getId());
+                hold(d, m, HoldReason.UNVERIFIED, now, true, on);
             } catch (RuntimeException e) {
                 Log.e(TAG, "resolve failed for id " + m.getId() + ": " + e.getClass().getSimpleName());
             }
-        }
-    }
-
-    private static void resolveOne(EngineDeps d, Context context, ScheduledMessage m) {
-        long now = d.conditions.nowMs();
-        ThreadRead read = read(d, m);
-        List<ThreadEvent> events = read.events;
-        if (events == null) {
-            checkTimes.remove(m.getId());
-            hold(d, m, HoldReason.UNVERIFIED, now, true);
-            return;
-        }
-        if (ownBubbleSeen(d, m, events, now)) {
-            sentVerified(d, m, events);
-            return;
-        }
-        checkTimes.remove(m.getId());
-        if (read.canRetryOn() && canRetry(d, m, now)) {
-            retryAfterRead(d, context, m, events, now, "restart");
-        } else {
-            hold(d, m, HoldReason.UNVERIFIED, now, true);
         }
     }
 

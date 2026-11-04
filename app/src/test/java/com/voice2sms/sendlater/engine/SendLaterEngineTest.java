@@ -324,16 +324,19 @@ public class SendLaterEngineTest {
 
     // ================================================================== IN_FLIGHT resolution (R23, R31, I5)
 
-    @Test public void inFlightWithOwnBubbleResolvesToSentVerifiedAfterAThreadRead() {
+    @Test public void inFlightWithOwnBubbleInTheThreadIsHeldNotVerified() {
         seed(message(ID).status(Status.IN_FLIGHT).build());
         withSender();
         w.cond.now = T + MIN;
         w.source.events.add(outboundSame(T + 10_000));
         SendLaterEngine.resolveInFlight(null);
-        assertEquals("IN_FLIGHT + own bubble = sent, not SELF_PREEMPTED", Status.SENT_VERIFIED, w.store.status(ID));
+        // OD27: a thread read never verifies; HELD(UNVERIFIED) + "may have already sent".
+        assertEquals("IN_FLIGHT at restart is held", Status.HELD, w.store.status(ID));
+        assertEquals(HoldReason.UNVERIFIED, w.store.rows.get(ID).getHoldReason());
+        assertTrue(w.notifier.has("mayHaveSent " + ID));
         assertFalse(w.notifier.has("selfPreempted " + ID));
-        assertTrue(w.j.indexOf("source.read") >= 0
-                && w.j.indexOf("source.read") < w.j.indexOf("store.markSentVerified"));
+        assertTrue("no read, no verification: " + w.j,
+                w.j.indexOf("source.read") < 0 && w.j.indexOf("store.markSentVerified") < 0);
         assertNoSend();
         assertBroadcast(ID);
     }
@@ -353,18 +356,16 @@ public class SendLaterEngineTest {
         assertEquals(0, w.j.count("store.releaseForRetry"));
     }
 
-    @Test public void inFlightWithoutBubbleIsRetriedOnlyAfterTheThreadRead() {
+    @Test public void inFlightWithoutBubbleIsNeverRetried() {
         seed(message(ID).status(Status.IN_FLIGHT).build());
         withSender();
         w.cond.now = T + MIN;
         SendLaterEngine.resolveInFlight(null);
-        int read = w.j.indexOf("source.read");
-        assertTrue("thread read first (I5): " + w.j, read >= 0);
-        int start = w.j.indexOf("sender.start");
-        int release = w.j.indexOf("store.releaseForRetry");
-        if (start >= 0) assertTrue("no retry before the read: " + w.j, start > read);
-        if (release >= 0) assertTrue("no release before the read: " + w.j, release > read);
-        assertTrue("at most one retry: " + w.j, w.sender.started.size() <= 1);
+        // OD27 (amends OD21(1)): no automatic retry; the user's Send anyway is the only retry.
+        assertTrue("no retry: " + w.j, w.j.indexOf("sender.start") < 0);
+        assertTrue("no release: " + w.j, w.j.indexOf("store.releaseForRetry") < 0);
+        assertTrue(w.sender.started.isEmpty());
+        assertEquals(Status.HELD, w.store.status(ID));
         assertNotEquals(Status.SENT_VERIFIED, w.store.status(ID));
     }
 
@@ -456,10 +457,12 @@ public class SendLaterEngineTest {
 
         for (int guard = 0; !w.queued.isEmpty() && guard < 20; guard++) w.queued.remove(0).run();
 
-        assertEquals(Status.SENT_VERIFIED, w.store.status(1));
+        // OD27: held, never verified from the thread.
+        assertEquals(Status.HELD, w.store.status(1));
         assertEquals(Status.EXPIRED, w.store.status(2));
+        int resolved = w.j.indexOf("store.hold 1 UNVERIFIED");
         assertTrue("IN_FLIGHT resolved before anything else (R23): " + w.j,
-                w.j.indexOf("store.markSentVerified 1") < w.j.indexOf("store.expire 2"));
+                resolved >= 0 && resolved < w.j.indexOf("store.expire 2"));
         assertNoSend();
     }
 

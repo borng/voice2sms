@@ -97,7 +97,8 @@ public class SendLaterEngineFollowupsTest {
         w.store.put(message(ID).status(Status.IN_FLIGHT).build());
         w.cond.now = T + MIN;
         SendLaterEngine.resolveInFlight(null);
-        assertTrue("the thread was read: " + w.j, w.j.indexOf("listener.read") >= 0);
+        // OD27: the hold needs no thread read.
+        assertTrue("the thread was not read: " + w.j, w.j.indexOf("listener.read") < 0);
         assertEquals(Status.HELD, w.store.status(ID));
         assertEquals(HoldReason.UNVERIFIED, w.store.rows.get(ID).getHoldReason());
         assertTrue(w.notifier.posted.toString(), w.notifier.has("mayHaveSent " + ID));
@@ -105,23 +106,26 @@ public class SendLaterEngineFollowupsTest {
         assertTrue(w.sender.started.isEmpty());
     }
 
-    @Test public void inFlightWithAnOutboundCapableSourceShowingNoBubbleRetriesOnce() {
-        install(w.source);
+    @Test public void inFlightWithAnOutboundCapableSourceShowingNoBubbleIsHeldNotRetried() {
+        install(new EngineFakes.FakeOutboundSource(w.j));
         w.store.put(message(ID).status(Status.IN_FLIGHT).build());
         w.cond.now = T + MIN;
         SendLaterEngine.resolveInFlight(null);
-        assertEquals(1, w.j.count("store.releaseForRetry"));
-        assertEquals("one retry within budget", 1, w.sender.started.size());
-        assertTrue("read before retry: " + w.j, w.j.indexOf("source.read") < w.j.indexOf("sender.start"));
-        assertFalse(w.notifier.has("mayHaveSent " + ID));
+        // OD27: an empty outbound-capable read no longer proves "not sent".
+        assertEquals(0, w.j.count("store.releaseForRetry"));
+        assertTrue("no retry", w.sender.started.isEmpty());
+        assertEquals(HoldReason.UNVERIFIED, w.store.rows.get(ID).getHoldReason());
+        assertTrue(w.notifier.has("mayHaveSent " + ID));
     }
 
-    @Test public void listenerPlusAvailableOutboundCapableSourceRetries() {
-        install(listener, w.source);
+    @Test public void listenerPlusAvailableOutboundCapableSourceDoesNotRetry() {
+        install(listener, new EngineFakes.FakeOutboundSource(w.j));
         w.store.put(message(ID).status(Status.IN_FLIGHT).build());
         w.cond.now = T + MIN;
         SendLaterEngine.resolveInFlight(null);
-        assertEquals(1, w.sender.started.size());
+        // OD27: no automatic retry whatever sources are available.
+        assertTrue(w.sender.started.isEmpty());
+        assertEquals(Status.HELD, w.store.status(ID));
     }
 
     @Test public void unavailableOutboundCapableSourceDoesNotCount() {
@@ -161,14 +165,17 @@ public class SendLaterEngineFollowupsTest {
         assertTrue(w.notifier.has("mayHaveSent " + ID));
     }
 
-    @Test public void failedOutcomeWithAnOutboundCapableSourceRetriesOnce() {
-        install(w.source);
+    @Test public void failedOutcomeWithAnOutboundCapableSourceIsHeldNotRetried() {
+        install(new EngineFakes.FakeOutboundSource(w.j));
         w.store.put(message(ID).build());
         SendLaterEngine.onDue(null, ID);
         w.cond.now = T + 30_000;
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.FAILED, "x");
-        assertEquals(2, w.sender.started.size());
-        assertEquals(1, w.j.count("store.releaseForRetry"));
+        // OD27: FAILED after typing -> HELD(UNVERIFIED) + "may have already sent", no retry.
+        assertEquals(1, w.sender.started.size());
+        assertEquals(0, w.j.count("store.releaseForRetry"));
+        assertEquals(HoldReason.UNVERIFIED, w.store.rows.get(ID).getHoldReason());
+        assertTrue(w.notifier.has("mayHaveSent " + ID));
     }
 
     // ================================================================== (2) snooze watermark

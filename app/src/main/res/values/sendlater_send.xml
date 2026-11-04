@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- send-lock-cover: shown over the keyguard while a scheduled message sends. -->
+    <string name="sendlater_send_cover_title">Sending scheduled message…</string>
+    <!-- %1$s: masked number (last four digits only). -->
+    <string name="sendlater_send_cover_recipient">To %1$s</string>
+</resources>

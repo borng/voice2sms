@@ -95,9 +95,10 @@ public class SendLaterEngineFixPass2Test {
         SendLaterEngine.onProcessStart(null);
         drain();
 
-        assertEquals(Status.SENT_VERIFIED, w.store.status(1));
+        // OD27: an IN_FLIGHT row at restart is held, whatever the thread shows.
+        assertEquals(Status.HELD, w.store.status(1));
         assertEquals(Status.EXPIRED, w.store.status(2));
-        int resolved = w.j.indexOf("store.markSentVerified 1");
+        int resolved = w.j.indexOf("store.hold 1 UNVERIFIED");
         int swept = w.j.indexOf("store.expire 2");
         int armed = w.j.indexOf("alarm.exact DUE 3");
         assertTrue(w.j.toString(), resolved >= 0 && swept > resolved && armed > swept);

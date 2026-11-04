@@ -243,10 +243,11 @@ final class EngineFakes {
     // ------------------------------------------------------------------ sources
 
     /**
-     * A source that sees the whole thread, own outbound bubbles included (the WebView read or the
-     * on-screen bubbles), so an empty read of it allows the R31 retry (OD21).
+     * A plain thread source (OD27: like the notification listener, not outbound-capable), so its
+     * inbound events feed the late-reply notice. No source, of either kind, can verify or retry a
+     * started send; {@link FakeOutboundSource} is the outbound-capable variant.
      */
-    static final class FakeSource implements OutboundCapableSource {
+    static class FakeSource implements ThreadEventSource {
         boolean available = true;
         final List<ThreadEvent> events = new ArrayList<>();
         final Journal j;
@@ -260,6 +261,11 @@ final class EngineFakes {
             j.add("source.read");
             return new ArrayList<>(events);
         }
+    }
+
+    /** An outbound-capable source (the on-screen bubbles): read before a send, never after it. */
+    static final class FakeOutboundSource extends FakeSource implements OutboundCapableSource {
+        FakeOutboundSource(Journal j) { super(j); }
     }
 
     // ------------------------------------------------------------------ notifier / broadcaster

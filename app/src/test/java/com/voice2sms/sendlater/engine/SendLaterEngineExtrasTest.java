@@ -108,10 +108,11 @@ public class SendLaterEngineExtrasTest {
         SendLaterEngine.setSender(w.sender);
         SendLaterEngine.onDue(null, ID);
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.FAILED, "x");
-        assertEquals("one retry", 2, w.sender.started.size());
+        // OD27: no automatic retry at all; the user decides with Send anyway.
+        assertEquals("no retry", 1, w.sender.started.size());
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.FAILED, "x");
-        assertEquals("no second retry", 2, w.sender.started.size());
-        assertEquals(Status.FAILED, w.store.status(ID));
+        assertEquals("no second retry", 1, w.sender.started.size());
+        assertEquals(Status.HELD, w.store.status(ID));
         assertFalse(w.notifier.posted.isEmpty());
     }
 
