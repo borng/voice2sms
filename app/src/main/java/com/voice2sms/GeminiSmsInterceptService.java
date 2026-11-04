@@ -13,6 +13,9 @@ import android.view.accessibility.AccessibilityNodeInfo;
 
 import androidx.preference.PreferenceManager;
 
+import com.voice2sms.sendlater.voice.logic.VoiceScreenSignature;
+import com.voice2sms.sendlater.voice.overlay.VoiceOverlayController;
+
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -60,6 +63,10 @@ public class GeminiSmsInterceptService extends AccessibilityService {
     private static final long WATCHDOG_DELAY_MS = 4000; // 4 seconds after last cache update
     private final Runnable watchdogRunnable = this::checkVoiceConfirmPath;
 
+    // Send Later on the native Google Voice thread screen (A3: same service, same toggle).
+    // Has its own debounce; never touches the Gemini cache or scan throttle.
+    private final VoiceOverlayController voiceOverlay = new VoiceOverlayController();
+
     @Override
     public void onServiceConnected() {
         AccessibilityServiceInfo info = getServiceInfo();
@@ -76,6 +83,7 @@ public class GeminiSmsInterceptService extends AccessibilityService {
         info.notificationTimeout = 100;
         setServiceInfo(info);
         Log.d(TAG, "GeminiSmsInterceptService connected");
+        voiceOverlay.attach(this);
     }
 
     @Override
@@ -103,6 +111,15 @@ public class GeminiSmsInterceptService extends AccessibilityService {
                 }
             }
             return;
+        }
+
+        // Send Later (A3): Google Voice events go to the overlay controller, which only debounces
+        // here. Other packages' window changes are forwarded only while an overlay is up, so it
+        // can be removed when Voice leaves the screen.
+        if (eventPkg != null && VoiceScreenSignature.VOICE_PACKAGE.contentEquals(eventPkg)) {
+            voiceOverlay.onEvent(event);
+        } else if (voiceOverlay.isShowing()) {
+            voiceOverlay.onForeignEvent(event);
         }
 
         // For non-Gemini packages, only handle notifications (above)
@@ -438,5 +455,12 @@ public class GeminiSmsInterceptService extends AccessibilityService {
     @Override
     public void onInterrupt() {
         Log.d(TAG, "GeminiSmsInterceptService interrupted");
+        voiceOverlay.hideOverlays();
+    }
+
+    @Override
+    public void onDestroy() {
+        voiceOverlay.detach();
+        super.onDestroy();
     }
 }
