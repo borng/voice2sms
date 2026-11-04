@@ -2,6 +2,7 @@ package com.voice2sms.sendlater.engine;
 
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LatenessPolicy;
+import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.Watermark;
 
@@ -39,4 +40,12 @@ public interface EngineStore {
     List<ScheduledMessage> inFlight();
 
     List<ScheduledMessage> pendingForThread(String e164);
+
+    /**
+     * OD22(4): SCHEDULED/HELD at rung {@code from} -> {@code to}, rung reason cleared. Default: not
+     * supported (false), so the message stays at its stored rung.
+     */
+    default boolean upgradeRung(long id, Rung from, Rung to) {
+        return false;
+    }
 }

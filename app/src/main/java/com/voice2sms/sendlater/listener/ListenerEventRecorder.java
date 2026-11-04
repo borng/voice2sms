@@ -23,6 +23,8 @@ import java.util.Map;
  *   <li>Stored fields are what R32 needs: direction, kind, time and textHash. The text itself is not
  *       kept (inbound events need no text to classify).</li>
  *   <li>UNKNOWN kinds (T4) are dropped. A repost of an event already stored is not stored again.</li>
+ *   <li>A match by number is noted ({@link ListenerEventStore#noteNumberMatch}) so the thread
+ *       source can vouch for a message that has no display name (OD22(5)).</li>
  * </ul>
  */
 public final class ListenerEventRecorder {
@@ -51,6 +53,8 @@ public final class ListenerEventRecorder {
 
         boolean stored = false;
         for (Map.Entry<String, ConversationRef> e : matched.entrySet()) {
+            // OD22(5): the listener has now seen this conversation by its number.
+            if (p.getNumber() != null) store.noteNumberMatch(e.getKey());
             if (alreadyStored(e.getKey(), event)) continue;
             store.recordEvent(e.getValue(), event, ThreadEventEntity.SOURCE_LISTENER, nowMs);
             stored = true;

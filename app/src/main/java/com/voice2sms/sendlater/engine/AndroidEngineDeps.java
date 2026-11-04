@@ -22,10 +22,13 @@ import com.voice2sms.sendlater.domain.NetworkState;
 import com.voice2sms.sendlater.domain.OutboundPolicy;
 import com.voice2sms.sendlater.domain.RemindReason;
 import com.voice2sms.sendlater.domain.RpcThreadEventSource;
+import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.SessionState;
 import com.voice2sms.sendlater.domain.ThreadEventSource;
 import com.voice2sms.sendlater.domain.Watermark;
+import com.voice2sms.sendlater.listener.NotificationThreadEventSource;
+import com.voice2sms.sendlater.listener.SendLaterListenerStatus;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 
 import java.util.ArrayList;
@@ -46,7 +49,8 @@ final class AndroidEngineDeps {
 
     static EngineDeps create(Context app, List<ThreadEventSource> extra) {
         List<ThreadEventSource> sources = new ArrayList<>();
-        sources.add(new NotificationEventSource(app));
+        // OD22(7): the reply-listener node's source is the only listener-backed source.
+        sources.add(NotificationThreadEventSource.create(app));
         sources.add(new RpcThreadEventSource());
         if (extra != null) sources.addAll(extra);
         return new EngineDeps.Builder()
@@ -89,6 +93,7 @@ final class AndroidEngineDeps {
         @Override public List<ScheduledMessage> allHeld() { return r().allHeld(); }
         @Override public List<ScheduledMessage> inFlight() { return r().inFlight(); }
         @Override public List<ScheduledMessage> pendingForThread(String e164) { return r().pendingForThread(e164); }
+        @Override public boolean upgradeRung(long id, Rung from, Rung to) { return r().upgradeRung(id, from, to); }
     }
 
     // ------------------------------------------------------------------ engine marks
@@ -251,8 +256,13 @@ final class AndroidEngineDeps {
             }
         }
 
+        /** Same rule as the listener source's availability: enabled and bound recently (OD22(7)). */
         @Override public boolean listenerEnabled() {
-            return NotificationEventSource.listenerEnabled(app);
+            try {
+                return SendLaterListenerStatus.isAvailable(app);
+            } catch (RuntimeException e) {
+                return false;
+            }
         }
 
         @Override public OutboundPolicy outboundPolicy() {

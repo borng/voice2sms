@@ -32,18 +32,43 @@ public final class ThreadEventClassifier {
 
     private ThreadEventClassifier() {}
 
+    /**
+     * {@link #classify(ScheduledMessage, List, boolean, Watermark, Watermark)} with the message's
+     * own baselines: replies from {@link ScheduledMessage#getWatermark()}, self-preemption from
+     * {@link ScheduledMessage#getSelfPreemptionBaseline()} (OD22(1)).
+     */
     public static Classification classify(ScheduledMessage message, List<ThreadEvent> events,
                                           boolean listenerEnabled) {
+        return classify(message, events, listenerEnabled, message.getWatermark(),
+                message.getSelfPreemptionBaseline());
+    }
+
+    /**
+     * Classifies with two explicit baselines (OD22(1)). {@code replyBaseline} bounds inbound
+     * events and outbound texts that are not similar to the message; {@code selfPreemptionBaseline}
+     * bounds outbound texts similar to the message, so after a snooze (fresh reply baseline) a text
+     * the user sent by hand since the ORIGINAL watermark still cancels. Either baseline may be null
+     * (DEVICE_ONLY at {@code createdAt}).
+     */
+    public static Classification classify(ScheduledMessage message, List<ThreadEvent> events,
+                                          boolean listenerEnabled, Watermark replyBaseline,
+                                          Watermark selfPreemptionBaseline) {
         if (events == null) return Classification.UNVERIFIED;
 
+        long createdAt = message.getCreatedAt();
         boolean selfPreempted = false, replied = false, reachedOut = false, outbound = false;
         for (ThreadEvent e : events) {
-            if (e == null || !counts(message, e)) continue;
+            if (e == null) continue;
             if (e.isInbound()) {
+                if (!counts(replyBaseline, createdAt, e)) continue;
                 if (e.isCallLike()) reachedOut = true; else replied = true;
             } else if (e.getKind() == ThreadEvent.Kind.SMS || e.getKind() == ThreadEvent.Kind.MMS) {
-                if (similar(message, e)) selfPreempted = true; else outbound = true;
-            } else {
+                if (similar(message, e)) {
+                    if (counts(selfPreemptionBaseline, createdAt, e)) selfPreempted = true;
+                } else if (counts(replyBaseline, createdAt, e)) {
+                    outbound = true;
+                }
+            } else if (counts(replyBaseline, createdAt, e)) {
                 outbound = true; // The user called them: acted in the thread, but not with this text.
             }
         }
@@ -54,12 +79,19 @@ public final class ThreadEventClassifier {
         return listenerEnabled ? Classification.UNCHANGED : Classification.UNVERIFIED;
     }
 
-    /** Whether {@code e} is newer than the message's watermark (see class doc for margins). */
+    /** Whether {@code e} is newer than the message's (reply) watermark (see class doc for margins). */
     static boolean counts(ScheduledMessage m, ThreadEvent e) {
-        Watermark wm = m.getWatermark();
+        return counts(m.getWatermark(), m.getCreatedAt(), e);
+    }
+
+    /**
+     * Whether {@code e} is newer than baseline {@code wm} (see class doc for margins); a null
+     * baseline is DEVICE_ONLY at {@code createdAt}.
+     */
+    static boolean counts(Watermark wm, long createdAt, ThreadEvent e) {
         long t = e.getTimeMs();
         if (wm == null || wm.getQuality() == Watermark.Quality.DEVICE_ONLY) {
-            long captured = wm == null ? m.getCreatedAt() : wm.getCapturedAtDevice();
+            long captured = wm == null ? createdAt : wm.getCapturedAtDevice();
             return e.isInbound()
                     ? t >= captured - DEVICE_ONLY_MARGIN_MS
                     : t > captured + DEVICE_ONLY_MARGIN_MS;

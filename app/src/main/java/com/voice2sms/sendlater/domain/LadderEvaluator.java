@@ -55,7 +55,23 @@ public final class LadderEvaluator {
     public static Decision evaluate(ScheduledMessage message, Rung rung, List<ThreadEvent> events, long nowMs,
                                     SessionState session, NetworkState network, boolean listenerEnabled,
                                     OutboundPolicy outboundPolicy) {
-        Decision d = evaluateLadder(message, rung, events, nowMs, session, network, listenerEnabled, outboundPolicy);
+        if (message == null) throw new IllegalArgumentException("message");
+        return evaluate(message, rung, events, nowMs, session, network, listenerEnabled, outboundPolicy,
+                message.getWatermark(), message.getSelfPreemptionBaseline());
+    }
+
+    /**
+     * {@link #evaluate(ScheduledMessage, Rung, List, long, SessionState, NetworkState, boolean, OutboundPolicy)}
+     * with the two baselines given explicitly (OD22(1)): replies (and other thread activity) are
+     * judged from {@code replyBaseline}, a similar outbound text from {@code selfPreemptionBaseline}.
+     * After a snooze these differ: the snooze's fresh watermark and the message's original one.
+     */
+    public static Decision evaluate(ScheduledMessage message, Rung rung, List<ThreadEvent> events, long nowMs,
+                                    SessionState session, NetworkState network, boolean listenerEnabled,
+                                    OutboundPolicy outboundPolicy, Watermark replyBaseline,
+                                    Watermark selfPreemptionBaseline) {
+        Decision d = evaluateLadder(message, rung, events, nowMs, session, network, listenerEnabled, outboundPolicy,
+                replyBaseline, selfPreemptionBaseline);
         // R29: a reminded message (status stays SCHEDULED) ignored for 24 h expires, like a HELD one.
         if (d.getKind() == Decision.Kind.REMIND
                 && message.getStatus() == ScheduledMessage.Status.SCHEDULED
@@ -67,7 +83,8 @@ public final class LadderEvaluator {
 
     private static Decision evaluateLadder(ScheduledMessage message, Rung rung, List<ThreadEvent> events, long nowMs,
                                            SessionState session, NetworkState network, boolean listenerEnabled,
-                                           OutboundPolicy outboundPolicy) {
+                                           OutboundPolicy outboundPolicy, Watermark replyBaseline,
+                                           Watermark selfPreemptionBaseline) {
         if (message == null) throw new IllegalArgumentException("message");
         ScheduledMessage.Status status = message.getStatus();
         if (status.isTerminal()) {
@@ -76,7 +93,8 @@ public final class LadderEvaluator {
         if (rung == null) rung = message.getRung();
         if (outboundPolicy == null) outboundPolicy = OutboundPolicy.STILL_SEND;
 
-        Classification c = ThreadEventClassifier.classify(message, events, listenerEnabled);
+        Classification c = ThreadEventClassifier.classify(message, events, listenerEnabled,
+                replyBaseline, selfPreemptionBaseline);
 
         if (status == ScheduledMessage.Status.HELD) {
             if (nowMs - message.getScheduledFor() >= EXPIRY_MS) return Decision.expired();
@@ -142,6 +160,16 @@ public final class LadderEvaluator {
      */
     public static Decision evaluateSendAnyway(ScheduledMessage message, List<ThreadEvent> events, long nowMs) {
         if (message == null) throw new IllegalArgumentException("message");
+        return evaluateSendAnyway(message, events, nowMs, message.getSelfPreemptionBaseline());
+    }
+
+    /**
+     * {@link #evaluateSendAnyway(ScheduledMessage, List, long)} with an explicit self-preemption
+     * baseline (OD22(1): the ORIGINAL watermark, also after a snooze).
+     */
+    public static Decision evaluateSendAnyway(ScheduledMessage message, List<ThreadEvent> events, long nowMs,
+                                              Watermark selfPreemptionBaseline) {
+        if (message == null) throw new IllegalArgumentException("message");
         ScheduledMessage.Status status = message.getStatus();
         if (status.isTerminal() || status == ScheduledMessage.Status.IN_FLIGHT) {
             throw new IllegalArgumentException("cannot send anyway a message in status " + status);
@@ -149,7 +177,8 @@ public final class LadderEvaluator {
         if (events != null) {
             for (ThreadEvent e : events) {
                 if (e == null || e.isInbound() || e.isCallLike()) continue;
-                if (ThreadEventClassifier.counts(message, e) && ThreadEventClassifier.similar(message, e)) {
+                if (ThreadEventClassifier.counts(selfPreemptionBaseline, message.getCreatedAt(), e)
+                        && ThreadEventClassifier.similar(message, e)) {
                     return Decision.cancel(Classification.SELF_PREEMPTED);
                 }
             }

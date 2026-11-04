@@ -40,7 +40,7 @@ public class SendLaterEngineFollowupsTest {
     private static final long ID = 7L;
     private EngineFakes.World w;
     private EngineMarks marks;
-    /** Stands in for NotificationEventSource: sees inbound messages only. */
+    /** Stands in for listener.NotificationThreadEventSource: sees inbound messages only. */
     private InboundOnlySource listener;
 
     /** A plain ThreadEventSource (not outbound-capable), like the notification listener's. */
@@ -86,7 +86,9 @@ public class SendLaterEngineFollowupsTest {
     // ================================================================== (1) retry rule
 
     @Test public void notificationEventSourceIsNotOutboundCapable() {
-        assertFalse(OutboundCapableSource.class.isAssignableFrom(NotificationEventSource.class));
+        // OD22(7): the engine's NotificationEventSource was removed; the one listener source left.
+        assertFalse(OutboundCapableSource.class.isAssignableFrom(
+                com.voice2sms.sendlater.listener.NotificationThreadEventSource.class));
         assertTrue(ThreadEventSource.class.isAssignableFrom(OutboundCapableSource.class));
     }
 

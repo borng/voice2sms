@@ -28,4 +28,5 @@
     <string name="sendlater_sheet_empty_draft">There is no message text to schedule.</string>
     <string name="sendlater_sheet_loading">Loading…</string>
     <string name="sendlater_sheet_clock_desc">Clock</string>
+    <string name="sendlater_sheet_bad_source">Send later could not tell where this message came from. Nothing was saved.</string>
 </resources>

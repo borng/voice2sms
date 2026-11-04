@@ -47,6 +47,25 @@ public final class NotificationThreadEventSource implements ThreadEventSource {
         }
     }
 
+    /**
+     * OD22(5), fail closed on names: the listener matches a notification to a message by its
+     * display name, or by number only when the notification shows one. For a message with no
+     * display name the source vouches only once a notification has been matched to that
+     * conversation by number; otherwise it is unavailable for it and the thread check yields
+     * UNVERIFIED (hold) instead of UNCHANGED.
+     */
+    @Override public boolean isAvailableFor(ConversationRef ref) {
+        if (ref == null || !isAvailable()) return false;
+        String name = ref.getDisplayName();
+        if (name != null && !name.trim().isEmpty()) return true;
+        if (ref.getE164() == null) return false;
+        try {
+            return store.hasNumberMatch(ref.key());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     @Override public List<ThreadEvent> readSince(ConversationRef ref, Watermark wm) {
         if (ref == null) return new ArrayList<>();
         List<ThreadEvent> got = store.eventsSince(ref.key(), sinceMs(wm));
