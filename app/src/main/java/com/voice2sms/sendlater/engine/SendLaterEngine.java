@@ -52,11 +52,21 @@ public final class SendLaterEngine {
 
     /**
      * "Replied just as your message sent" counts only inbound events timed in
-     * [checkTime, checkTime + this] (OD23(5)). The send starts at the check, so this is the
-     * sender's whole attempt: compose timeout (40 s), the inject delay (at least 3 s) and the
-     * verify window (45 s), with slack. A later inbound is an ordinary reply to a sent message.
+     * [checkTime, sendTime + verify window] (OD23(5)). The engine does not see when a queued
+     * attempt really starts (several messages due together are sent one after another, R30), but
+     * the sender reports its outcome when its verify window ends, so the outcome's arrival time is
+     * that end. The window is therefore [checkTime, outcome time + this slack]; the slack only
+     * absorbs clock differences between thread timestamps and the device. A later inbound is an
+     * ordinary reply to a sent message.
      */
     static final long LATE_REPLY_WINDOW_MS = 2 * 60_000L;
+
+    /**
+     * An outcome arriving more than this long after the thread check is stale (a stuck sender);
+     * its window end is capped at checkTime + this. Far above any queue of attempts (about 90 s
+     * each), so a queued send is never cut short.
+     */
+    static final long LATE_REPLY_MAX_SPAN_MS = 30 * 60_000L;
 
     private static final Object LOCK = new Object();
 
@@ -444,17 +454,27 @@ public final class SendLaterEngine {
     }
 
     /**
-     * R31 / OD23(5): an inbound timed in [checkTime, checkTime + {@link #LATE_REPLY_WINDOW_MS}],
-     * or the sender's {@link #DETAIL_LATE_REPLY} reported while still inside that window.
+     * R31 / OD23(5): an inbound timed in [checkTime, end], or the sender's
+     * {@link #DETAIL_LATE_REPLY} reported no later than {@link #LATE_REPLY_MAX_SPAN_MS} after the
+     * check. {@code end} is the outcome's arrival ({@code nowMs}, the end of the sender's verify
+     * window), capped at checkTime + {@link #LATE_REPLY_MAX_SPAN_MS}, plus
+     * {@link #LATE_REPLY_WINDOW_MS} slack.
      */
     static boolean repliedJustAsSent(List<ThreadEvent> events, String detail, long checkTime, long nowMs) {
-        long end = checkTime + LATE_REPLY_WINDOW_MS;
+        long end = lateReplyWindowEnd(checkTime, nowMs);
         if (events != null) {
             for (ThreadEvent e : events) {
                 if (e != null && e.isInbound() && e.getTimeMs() >= checkTime && e.getTimeMs() <= end) return true;
             }
         }
-        return DETAIL_LATE_REPLY.equals(detail) && nowMs >= checkTime && nowMs <= end;
+        return DETAIL_LATE_REPLY.equals(detail) && nowMs >= checkTime
+                && nowMs - checkTime <= LATE_REPLY_MAX_SPAN_MS;
+    }
+
+    /** End of the late-reply window for an outcome arriving at {@code nowMs}. */
+    static long lateReplyWindowEnd(long checkTime, long nowMs) {
+        long outcomeAt = Math.max(checkTime, Math.min(nowMs, checkTime + LATE_REPLY_MAX_SPAN_MS));
+        return outcomeAt + LATE_REPLY_WINDOW_MS;
     }
 
     private static ScheduledMessage reload(EngineDeps d, ScheduledMessage fallback) {

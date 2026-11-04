@@ -324,11 +324,24 @@ public class SendLaterEngineFollowups3Test {
 
     @Test public void inboundAfterTheVerifyWindowIsAnOrdinarySend() {
         sendAtT();
+        // The outcome arrives at T + 40 s (end of the sender's verify window); an inbound timed
+        // past that end plus the clock slack is an ordinary reply to a sent message.
         w.source.events.add(outboundSame(T + 20_000));
-        w.source.events.add(inboundSms(T + SendLaterEngine.LATE_REPLY_WINDOW_MS + 60_000));
-        w.cond.now = T + SendLaterEngine.LATE_REPLY_WINDOW_MS + 2 * MIN;
+        w.source.events.add(inboundSms(T + 40_000 + SendLaterEngine.LATE_REPLY_WINDOW_MS + 60_000));
+        w.cond.now = T + 40_000;
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.SENT_VERIFIED, null);
         assertEquals(Status.SENT_VERIFIED, w.store.status(ID));
+        assertTrue(w.notifier.posted.toString(), w.notifier.has("sent " + ID));
+        assertFalse(w.notifier.has("repliedDuringSend " + ID));
+    }
+
+    @Test public void staleOutcomeIgnoresInboundPastTheCap() {
+        sendAtT();
+        long cap = SendLaterEngine.LATE_REPLY_MAX_SPAN_MS;
+        w.source.events.add(outboundSame(T + 20_000));
+        w.source.events.add(inboundSms(T + cap + SendLaterEngine.LATE_REPLY_WINDOW_MS + 1));
+        w.cond.now = T + cap + HOUR;
+        SendLaterEngine.onSendOutcome(null, ID, SendOutcome.SENT_VERIFIED, null);
         assertTrue(w.notifier.posted.toString(), w.notifier.has("sent " + ID));
         assertFalse(w.notifier.has("repliedDuringSend " + ID));
     }
@@ -342,10 +355,29 @@ public class SendLaterEngineFollowups3Test {
         assertTrue(w.notifier.posted.toString(), w.notifier.has("repliedDuringSend " + ID));
     }
 
+    /** Verifier fix pass 1: the 3rd of three messages due together sends about 170 s after its check. */
+    @Test public void queuedSendWhoseOutcomeArrivesLateStillNotifiesForAnInboundBeforeIt() {
+        sendAtT();
+        w.source.events.add(inboundSms(T + 150_000)); // between this job's check and its send
+        w.source.events.add(outboundSame(T + 160_000));
+        w.cond.now = T + 175_000; // > T + LATE_REPLY_WINDOW_MS
+        assertTrue(w.cond.now > T + SendLaterEngine.LATE_REPLY_WINDOW_MS);
+        SendLaterEngine.onSendOutcome(null, ID, SendOutcome.SENT_VERIFIED, null);
+        assertTrue(w.notifier.posted.toString(), w.notifier.has("repliedDuringSend " + ID));
+    }
+
+    @Test public void queuedSendLateReplyDetailMoreThanTwoMinutesAfterTheCheckNotifies() {
+        sendAtT();
+        w.source.events.add(outboundSame(T + 160_000));
+        w.cond.now = T + 170_000;
+        SendLaterEngine.onSendOutcome(null, ID, SendOutcome.SENT_VERIFIED, SendLaterEngine.DETAIL_LATE_REPLY);
+        assertTrue(w.notifier.posted.toString(), w.notifier.has("repliedDuringSend " + ID));
+    }
+
     @Test public void lateReplyDetailOutsideTheWindowIsIgnored() {
         sendAtT();
         w.source.events.add(outboundSame(T + 20_000));
-        w.cond.now = T + SendLaterEngine.LATE_REPLY_WINDOW_MS + MIN;
+        w.cond.now = T + SendLaterEngine.LATE_REPLY_MAX_SPAN_MS + MIN;
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.SENT_VERIFIED, SendLaterEngine.DETAIL_LATE_REPLY);
         assertTrue(w.notifier.posted.toString(), w.notifier.has("sent " + ID));
         assertFalse(w.notifier.has("repliedDuringSend " + ID));
@@ -361,17 +393,32 @@ public class SendLaterEngineFollowups3Test {
 
     @Test public void windowBoundsArePure() {
         long check = T;
+        long slack = SendLaterEngine.LATE_REPLY_WINDOW_MS;
         List<com.voice2sms.sendlater.domain.ThreadEvent> before =
                 Collections.singletonList(inboundSms(check - 1));
         assertFalse(SendLaterEngine.repliedJustAsSent(before, null, check, check + 10_000));
         assertTrue(SendLaterEngine.repliedJustAsSent(Collections.singletonList(inboundSms(check)), null,
                 check, check + 10_000));
-        long end = check + SendLaterEngine.LATE_REPLY_WINDOW_MS;
-        assertTrue(SendLaterEngine.repliedJustAsSent(Collections.singletonList(inboundSms(end)), null,
-                check, end + HOUR));
-        assertFalse(SendLaterEngine.repliedJustAsSent(Collections.singletonList(inboundSms(end + 1)), null,
-                check, end + HOUR));
+        // The window ends at the outcome's arrival plus the slack.
+        long outcome = check + 170_000;
+        assertEquals(outcome + slack, SendLaterEngine.lateReplyWindowEnd(check, outcome));
+        assertTrue(SendLaterEngine.repliedJustAsSent(Collections.singletonList(inboundSms(outcome + slack)),
+                null, check, outcome));
+        assertFalse(SendLaterEngine.repliedJustAsSent(Collections.singletonList(inboundSms(outcome + slack + 1)),
+                null, check, outcome));
+        // A stale outcome is capped.
+        long capEnd = check + SendLaterEngine.LATE_REPLY_MAX_SPAN_MS + slack;
+        assertEquals(capEnd, SendLaterEngine.lateReplyWindowEnd(check, check + 5 * HOUR));
+        assertTrue(SendLaterEngine.repliedJustAsSent(Collections.singletonList(inboundSms(capEnd)), null,
+                check, check + 5 * HOUR));
+        assertFalse(SendLaterEngine.repliedJustAsSent(Collections.singletonList(inboundSms(capEnd + 1)), null,
+                check, check + 5 * HOUR));
+        // An outcome stamped before the check (clock change) still gets the slack after the check.
+        assertEquals(check + slack, SendLaterEngine.lateReplyWindowEnd(check, check - MIN));
         assertFalse(SendLaterEngine.repliedJustAsSent(null, "other", check, check + 1));
+        assertTrue(SendLaterEngine.repliedJustAsSent(null, SendLaterEngine.DETAIL_LATE_REPLY, check, check + 170_000));
+        assertFalse(SendLaterEngine.repliedJustAsSent(null, SendLaterEngine.DETAIL_LATE_REPLY, check,
+                check + SendLaterEngine.LATE_REPLY_MAX_SPAN_MS + 1));
         assertFalse("outbound never counts", SendLaterEngine.repliedJustAsSent(
                 Collections.singletonList(outboundSame(check + 1)), null, check, check + 2));
     }
