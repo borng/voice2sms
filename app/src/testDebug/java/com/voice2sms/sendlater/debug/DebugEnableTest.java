@@ -22,7 +22,7 @@ import java.util.Arrays;
 public class DebugEnableTest {
 
     private static final String E164 = "+1202" + "555" + "0142";
-    private static final Path PKG = Paths.get("src/main/java/com/voice2sms/sendlater/debug");
+    private static final Path PKG = Paths.get("src/debug/java/com/voice2sms/sendlater/debug");
     private static final Path DEBUG_MANIFEST = Paths.get("src/debug/AndroidManifest.xml");
 
     private SendLaterDebugCommandsTest.FakeBackend b;
