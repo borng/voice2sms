@@ -213,6 +213,20 @@ public class GVoiceWebViewActivity extends Activity {
         loadGoogleVoice();
     }
 
+    /**
+     * I7: a URL for logs, cut at the first '?' or '#'. Thread pages carry the recipient's E.164 in
+     * the query (itemId=t.+...), so production logs never get the query or fragment.
+     */
+    static String withoutQuery(String url) {
+        if (url == null) return null;
+        int cut = url.length();
+        int q = url.indexOf('?');
+        if (q >= 0) cut = q;
+        int h = url.indexOf('#');
+        if (h >= 0 && h < cut) cut = h;
+        return url.substring(0, cut);
+    }
+
     private void setupWebViewClient() {
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -226,7 +240,7 @@ public class GVoiceWebViewActivity extends Activity {
                 if (OriginGuard.isAllowedNavigation(request.getUrl().getScheme(), request.getUrl().getHost())) {
                     return false;
                 }
-                Log.d(TAG, "Blocking non-Google URL: " + url);
+                Log.d(TAG, "Blocking non-Google URL: " + withoutQuery(url));
                 return true;
             }
 
@@ -243,7 +257,7 @@ public class GVoiceWebViewActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 mainFrameUrl = url;
-                Log.d(TAG, "onPageFinished: " + url);
+                Log.d(TAG, "onPageFinished: " + withoutQuery(url));
 
                 CookieManager.getInstance().flush();
                 // Send Later module (v2sSendLaterInit), once per page load.
