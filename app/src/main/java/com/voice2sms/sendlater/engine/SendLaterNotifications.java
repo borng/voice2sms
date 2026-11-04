@@ -5,6 +5,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.service.notification.StatusBarNotification;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -33,6 +34,8 @@ public final class SendLaterNotifications {
     static final String CHANNEL_HOLD = "sendlater_hold";
     static final String CHANNEL_INFO = "sendlater_info";
     static final String TAG = "sendlater";
+    /** Extra naming the state a posted notification shows ("hold:REPLIED", "lastCall", ...). */
+    static final String EXTRA_KIND = "com.voice2sms.sendlater.notification_kind";
 
     private SendLaterNotifications() {}
 
@@ -54,7 +57,7 @@ public final class SendLaterNotifications {
         PendingIntent edit = editActivity(c, m.getId());
         if (edit != null) b.addAction(0, "Edit", edit).setContentIntent(edit);
         b.addAction(0, "Send now", broadcast(c, SendLaterIntents.ACTION_SEND_NOW, m.getId()));
-        post(c, m.getId(), b.build());
+        post(c, m.getId(), b.build(), "lastCall");
     }
 
     /**
@@ -68,12 +71,13 @@ public final class SendLaterNotifications {
                 .setContentText(preview(m) + lateSuffix(m, nowMs))
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(preview(m) + lateSuffix(m, nowMs)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setOnlyAlertOnce(true)
                 .addAction(0, sendAnywayLabel(m, nowMs), broadcast(c, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
                 .addAction(0, "Snooze 1 h", broadcast(c, SendLaterIntents.ACTION_SNOOZE, m.getId()))
                 .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
         PendingIntent edit = editActivity(c, m.getId());
         b.setContentIntent(edit != null ? edit : reviewMode(c, m, true));
-        post(c, m.getId(), b.build());
+        post(c, m.getId(), b.build(), "hold:" + reason);
     }
 
     /**
@@ -86,9 +90,10 @@ public final class SendLaterNotifications {
                 .setContentText("Tap to review and send: " + preview(m))
                 .setStyle(new NotificationCompat.BigTextStyle().bigText("Tap to review and send: " + preview(m)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setOnlyAlertOnce(true)
                 .setContentIntent(reviewMode(c, m, true));
         if (hasSignInAction(reason)) b.addAction(0, "Sign in", signIn(c, m.getId()));
-        post(c, m.getId(), b.build());
+        post(c, m.getId(), b.build(), "remind:" + reason);
     }
 
     /** R31: the send failed and was not retried; tap opens review mode to send it by hand. */
@@ -99,26 +104,27 @@ public final class SendLaterNotifications {
                 .setStyle(new NotificationCompat.BigTextStyle().bigText("Tap to review and send: " + preview(m)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(reviewMode(c, m, true));
-        post(c, m.getId(), b.build());
+        post(c, m.getId(), b.build(), "sendFailed");
     }
 
     public static void sent(Context c, ScheduledMessage m) {
-        info(c, m, "Sent to " + who(m), preview(m), null);
+        info(c, m, "Sent to " + who(m), preview(m), null, "sent");
     }
 
     /** R31: an inbound arrived between the thread check and the send. */
     public static void repliedDuringSend(Context c, ScheduledMessage m) {
-        info(c, m, who(m) + " replied just as your message sent", preview(m), reviewMode(c, m, false));
+        info(c, m, who(m) + " replied just as your message sent", preview(m), reviewMode(c, m, false),
+                "repliedDuringSend");
     }
 
     public static void selfPreempted(Context c, ScheduledMessage m) {
-        info(c, m, "Not sent: you already messaged " + who(m), preview(m), null);
+        info(c, m, "Not sent: you already messaged " + who(m), preview(m), null, "selfPreempted");
     }
 
     /** R29: also posted when no reminder came first (UP_TO_24H). */
     public static void expired(Context c, ScheduledMessage m) {
         info(c, m, "Scheduled message to " + who(m) + " expired",
-                "Not sent. Tap to review: " + preview(m), reviewMode(c, m, true));
+                "Not sent. Tap to review: " + preview(m), reviewMode(c, m, true), "expired");
     }
 
     /** I5: an interrupted send could not be verified. Never retried automatically. */
@@ -130,9 +136,10 @@ public final class SendLaterNotifications {
                         .bigText("Check the conversation before sending again: " + preview(m)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(reviewMode(c, m, false))
-                .addAction(0, "Send anyway", broadcast(c, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
+                .addAction(0, sendAnywayLabel(m, System.currentTimeMillis(), true),
+                        broadcast(c, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
                 .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
-        post(c, m.getId(), b.build());
+        post(c, m.getId(), b.build(), "mayHaveSent");
     }
 
     public static void dismiss(Context c, long id) {
@@ -144,8 +151,27 @@ public final class SendLaterNotifications {
 
     /** "Send anyway" within the lateness budget, "Send anyway (3 h late)" past it (R28). */
     public static String sendAnywayLabel(ScheduledMessage m, long nowMs) {
+        return sendAnywayLabel(m, nowMs, false);
+    }
+
+    /**
+     * As {@link #sendAnywayLabel(ScheduledMessage, long)}; after "may have already sent" (I5) the
+     * button reads "Send anyway (may be a duplicate)" instead (OD21), lateness or not.
+     */
+    public static String sendAnywayLabel(ScheduledMessage m, long nowMs, boolean mayHaveSent) {
+        if (mayHaveSent) return "Send anyway (may be a duplicate)";
         if (nowMs <= LatenessBudget.deadlineMs(m)) return "Send anyway";
         return "Send anyway (" + lateness(nowMs - m.getScheduledFor()) + " late)";
+    }
+
+    /**
+     * Whether the slot must be cleared before posting {@code newKind}: hold and remind use
+     * setOnlyAlertOnce so a re-post of the same state (a re-arm after TIME_SET) stays silent, but
+     * that flag also silences any update of a showing notification, so a different state (a hold
+     * replacing the last call) is posted fresh to alert.
+     */
+    static boolean needsFreshPost(String activeKind, String newKind) {
+        return activeKind != null && !activeKind.equals(newKind);
     }
 
     /** "3 h", "45 min". */
@@ -207,13 +233,14 @@ public final class SendLaterNotifications {
 
     // ================================================================== plumbing
 
-    private static void info(Context c, ScheduledMessage m, String title, String content, PendingIntent tap) {
+    private static void info(Context c, ScheduledMessage m, String title, String content, PendingIntent tap,
+                             String kind) {
         NotificationCompat.Builder b = base(c, CHANNEL_INFO, m)
                 .setContentTitle(title)
                 .setContentText(content)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT);
         if (tap != null) b.setContentIntent(tap);
-        post(c, m.getId(), b.build());
+        post(c, m.getId(), b.build(), "info:" + kind);
     }
 
     private static NotificationCompat.Builder base(Context c, String channel, ScheduledMessage m) {
@@ -224,7 +251,7 @@ public final class SendLaterNotifications {
                 .setAutoCancel(true);
     }
 
-    private static void post(Context c, long id, Notification n) {
+    private static void post(Context c, long id, Notification n, String kind) {
         if (c == null) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && ContextCompat.checkSelfPermission(c, Manifest.permission.POST_NOTIFICATIONS)
@@ -234,7 +261,26 @@ public final class SendLaterNotifications {
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
         ensureChannels(nm);
+        if (n.extras != null) n.extras.putString(EXTRA_KIND, kind);
+        if (needsFreshPost(activeKind(nm, id), kind)) nm.cancel(TAG, slot(id));
         nm.notify(TAG, slot(id), n);
+    }
+
+    /** The kind of the notification showing in {@code id}'s slot, or null (none, or unreadable). */
+    private static String activeKind(NotificationManager nm, long id) {
+        try {
+            StatusBarNotification[] active = nm.getActiveNotifications();
+            if (active == null) return null;
+            int slot = slot(id);
+            for (StatusBarNotification sbn : active) {
+                if (sbn == null || sbn.getId() != slot || !TAG.equals(sbn.getTag())) continue;
+                Notification shown = sbn.getNotification();
+                return shown != null && shown.extras != null ? shown.extras.getString(EXTRA_KIND) : null;
+            }
+        } catch (RuntimeException e) {
+            // Unreadable: post as an update (may stay silent under setOnlyAlertOnce).
+        }
+        return null;
     }
 
     private static int slot(long id) {
