@@ -1021,11 +1021,15 @@ function _v2sSlTick() {
         st.e164 = e164;
         st.title = null;
         _v2sSlRefreshChip(st);
-    } else if (e164 && Date.now() - st.chipAt > 15000) {
+    } else if (Date.now() - st.chipAt > 15000) {
         _v2sSlRefreshChip(st);
     }
-    _v2sSlNoteThreadTitle(st);
-    _v2sSlScrapeDirectory(st);
+    if (st.enabled) {
+        // Pairing and the thread-list scrape only while Send Later is on (R4): no contact
+        // data is collected for a feature that is switched off.
+        _v2sSlNoteThreadTitle(st);
+        _v2sSlScrapeDirectory(st);
+    }
     _v2sSlLayout(st);
 }
 
@@ -1033,20 +1037,20 @@ function _v2sSlTick() {
 function _v2sSlRefreshChip(st) {
     if (!st) return;
     st.chipAt = Date.now();
-    if (!st.e164) {
-        st.chip = null;
-        st.enabled = false;
-        _v2sSlLayout(st);
-        return;
-    }
     var state = null;
     try {
-        state = JSON.parse(V2SBridge.sendLaterChipState(st.e164));
+        // With no 1:1 thread open the bridge still answers whether Send Later is on.
+        state = JSON.parse(V2SBridge.sendLaterChipState(st.e164 || ''));
     } catch (e) {
         state = null;
     }
-    st.chip = state;
+    st.chip = st.e164 ? state : null;
     st.enabled = !!(state && state.enabled === true);
+    if (!st.enabled) {
+        st.title = null;
+        st.pairs = {};
+        st.directorySig = '';
+    }
     _v2sSlLayout(st);
 }
 
@@ -1188,7 +1192,7 @@ function _v2sSlCapture() {
     st.capture = { e164: e164, href: location.href };
     V2SBridge.requestSendLater(JSON.stringify({
         e164: e164,
-        displayName: _v2sSlThreadTitle() || null,
+        displayName: _v2sSlConfirmedName(st, e164),
         draftText: ta.value,
         newestMessageId: newestId,
         newestMessageTimeMs: newestTime,
@@ -1304,12 +1308,27 @@ function _v2sSlNoteThreadTitle(st) {
     }
 }
 
+/**
+ * Display name for the capture payload: only a pairing that passed the R4 check (stable
+ * header, different from the previous thread's), never the raw header, else null.
+ */
+function _v2sSlConfirmedName(st, e164) {
+    if (st.title && st.title.confirmed && st.title.e164 === e164 && st.title.title) {
+        return st.title.title;
+    }
+    if (Object.prototype.hasOwnProperty.call(st.pairs, e164) && st.pairs[e164]) {
+        return st.pairs[e164];
+    }
+    return null;
+}
+
 function _v2sSlHasLetter(s) {
     return /[A-Za-zÀ-￿]/.test(s) && s.indexOf(',') < 0;
 }
 
 /** Thread-list scrape (R4): {displayName, e164} pairs -> V2SBridge.onThreadDirectory. */
 function _v2sSlScrapeDirectory(st) {
+    if (!st || !st.enabled) return;
     var out = [];
     var seen = {};
     var items = document.querySelectorAll(

@@ -447,6 +447,8 @@ public final class SendLaterWebHooks {
 
     /** Binder thread: upserts the (name, number) pairs the page saw in its thread list. */
     public void bridgeThreadDirectory(String json) {
+        // Nothing is stored for a feature that is switched off (default: off).
+        if (!SendLaterSettings.isEnabled(app)) return;
         List<DirectoryReport.Entry> entries = DirectoryReport.parse(json);
         if (entries.isEmpty()) return;
         try {
