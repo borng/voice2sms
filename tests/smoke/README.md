@@ -38,6 +38,10 @@ adb shell holds and other apps cannot). The flow:
 
 1. installs the debug APK when `INSTALL=1` or the app is missing (otherwise uses the installed one;
    it must be a debuggable build so `run-as` works);
+   then reads the Send Later master switch from `DEBUG_DUMP`'s leading `"enabled"` field and turns
+   it on with `DEBUG_ENABLE --ez on true` (the engine does nothing while it is off). On every exit
+   path the previous value is restored; when the dump has no `"enabled"` field the switch is left
+   off;
 2. seeds a record 3 minutes ahead to the test recipient (stored at rung R2: the engine never
    auto-sends it);
 3. fires the T-5 last-call alarm through the debug broadcast (`adb shell cmd alarm` cannot fire one
@@ -85,13 +89,14 @@ only) and mask numbers to the last 4 digits.
 
 | action (`com.voice2sms.sendlater.…`) | extras | effect |
 |---|---|---|
-| `DEBUG_SEED` | `--es e164`, `--es text`, `--ei offset_min` (3), `--ez hold` (true), `--es source` (`NATIVE_GV`/`WEBVIEW`), `--ez allow_send`, `--es allowed_recipient` | stores a SCHEDULED record with a DEVICE_ONLY watermark and registers its alarms; rung R1 only when `allow_send` is true and `e164` equals `allowed_recipient`, otherwise R2 (never auto-sent); result `id=N` |
-| `DEBUG_DUMP` | none | all records with watermarks, plus stored events, as one JSON line in logcat tag `SendLaterDump` and in `cache/sendlater-dump.json` (`adb shell run-as com.voice2sms cat cache/sendlater-dump.json`) |
+| `DEBUG_SEED` | `--es e164`, `--es text`, `--ei offset_min` (3), `--ez hold` (true), `--es source` (`NATIVE_GV`/`WEBVIEW`), `--ez allow_send`, `--es allowed_recipient` | stores a SCHEDULED record with a DEVICE_ONLY watermark, registers its alarms and broadcasts `ACTION_STATE_CHANGED` (app-internal) so the chip and Upcoming tab reload; rung R1 only when `allow_send` is true and `e164` equals `allowed_recipient`, otherwise R2 (never auto-sent); result `id=N` |
+| `DEBUG_DUMP` | none | `{"enabled":B,"now":..}`: the master switch, then all records with watermarks, plus stored events, as one JSON line in logcat tag `SendLaterDump` and in `cache/sendlater-dump.json` (`adb shell run-as com.voice2sms cat cache/sendlater-dump.json`) |
 | `DEBUG_EVALUATE` | `--el id` | runs the ladder and returns the Decision (stored rung and as R1); applies nothing |
 | `DEBUG_FIRE` | `--el id`, `--ez allow_send`, `--es allowed_recipient` | only with `allow_send true` AND the record's recipient equal to `allowed_recipient`: moves the time to now and calls `SendLaterEngine.onDue` (may send). Otherwise downgrades to HOLD(UNVERIFIED), cancels the alarms and never calls the engine |
 | `DEBUG_INBOUND` | `--es e164`, `--es text` | records a fake inbound SMS event and calls `SendLaterEngine.onInboundEvent` |
 | `DEBUG_LAST_CALL` | `--el id` | `SendLaterEngine.onLastCall` (the T-5 alarm) |
 | `DEBUG_CANCEL` | `--el id` | `SendLaterEngine.onCancel` |
+| `DEBUG_ENABLE` | `--ez on true\|false` | writes the `sendlater_enabled` preference and calls `SendLaterEngine.applySwitch` (off: alarms and network waiters cancelled, records kept; on: expiry sweep and re-arm), then broadcasts `ACTION_STATE_CHANGED`; result `enabled=B previous=B`. Without `--ez on` it changes nothing (`error=no_on`) |
 
 #### Device setup checklist (Samsung One UI, e.g. Galaxy S22)
 

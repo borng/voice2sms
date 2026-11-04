@@ -2,6 +2,7 @@
 # On-device smoke test for Send Later (debug build only).
 #
 # Drives the adb-only SendLaterDebugReceiver (app/src/debug/AndroidManifest.xml):
+#   turn Send Later on (DEBUG_ENABLE, previous value restored on exit) ->
 #   seed a record 3 min ahead -> fire the T-5 (last-call) alarm via the debug broadcast ->
 #   assert the last-call notification -> EVALUATE the ladder (applies nothing) -> inject a fake
 #   inbound reply -> assert HELD -> cancel -> assert CANCELED -> no FATAL EXCEPTION in logcat.
@@ -190,6 +191,33 @@ start_marker="$(adbq shell date "'+%m-%d %H:%M:%S.000'" | tail -n 1)"
 stamp="$(date +%s)"
 
 echo "Send Later smoke: recipient $(mask "$RECIPIENT_E164"), SEND=${SEND}, device ${SERIAL:-default}"
+
+# ------------------------------------------------------------------ master switch
+
+# The engine does nothing while Send Later is off (OD24), so turn it on for the run and put the
+# previous value back on every exit path. The previous value comes from DEBUG_DUMP's leading
+# "enabled" field; when the dump does not carry it (older debug APK), the switch is left off.
+enabled_of() {
+  { grep -o '"enabled":\(true\|false\)' <<<"$1" || true; } | head -n 1 | sed 's/.*://'
+}
+PREV_ENABLED="$(enabled_of "$(dump_json)")"
+[ -n "$PREV_ENABLED" ] || PREV_ENABLED=false
+SWITCH_TOUCHED=0
+restore_switch() {
+  if [ "$SWITCH_TOUCHED" = 1 ]; then
+    local r
+    r="$(bcast ENABLE --ez on "$PREV_ENABLED" || true)"
+    echo "      restore ENABLE ${PREV_ENABLED}: ${r:-no result}"
+  fi
+}
+trap restore_switch EXIT
+
+SWITCH_TOUCHED=1
+r="$(bcast ENABLE --ez on true)"
+case "$r" in
+  enabled=true*) ok "Send Later on for the run (was ${PREV_ENABLED}; $r)" ;;
+  *) fail "DEBUG_ENABLE on true returned '${r:-nothing}'" ;;
+esac
 
 # ------------------------------------------------------------------ optional guarded real send
 

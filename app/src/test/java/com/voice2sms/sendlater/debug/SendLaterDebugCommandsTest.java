@@ -258,5 +258,13 @@ public class SendLaterDebugCommandsTest {
         }
 
         @Override public void engineOnDue(long id) { onDueCalls++; }
+
+        // gate-residuals: master switch + ACTION_STATE_CHANGED (recorded in order).
+        boolean enabled;
+        final List<String> calls = new ArrayList<>();
+        @Override public boolean sendLaterEnabled() { calls.add("read"); return enabled; }
+        @Override public void setSendLaterEnabled(boolean on) { calls.add("set:" + on); enabled = on; }
+        @Override public void applySwitch() { calls.add("applySwitch:" + enabled); }
+        @Override public void broadcastStateChanged() { calls.add("stateChanged"); }
     }
 }

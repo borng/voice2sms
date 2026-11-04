@@ -40,6 +40,8 @@ public final class SendLaterDebugCommands {
     public static final String ACTION_INBOUND = ACTION_PREFIX + "INBOUND";
     public static final String ACTION_LAST_CALL = ACTION_PREFIX + "LAST_CALL";
     public static final String ACTION_CANCEL = ACTION_PREFIX + "CANCEL";
+    /** Debug only: sets the Send Later master switch ({@code --ez on true|false}). */
+    public static final String ACTION_ENABLE = ACTION_PREFIX + "ENABLE";
 
     public static final String EXTRA_E164 = "e164";
     public static final String EXTRA_TEXT = "text";
@@ -49,6 +51,7 @@ public final class SendLaterDebugCommands {
     public static final String EXTRA_ID = "id";
     public static final String EXTRA_ALLOW_SEND = "allow_send";
     public static final String EXTRA_ALLOWED_RECIPIENT = "allowed_recipient";
+    public static final String EXTRA_ON = "on";
 
     public static final int DEFAULT_OFFSET_MIN = 3;
     static final String REGION = "US";
@@ -106,6 +109,8 @@ public final class SendLaterDebugCommands {
         }
         ScheduledMessage saved = b.get(id);
         if (saved != null) b.registerAlarms(saved);
+        // The chip and the Upcoming tab reload on this, as after a real schedule.
+        b.broadcastStateChanged();
         return "id=" + id + " rung=" + m.getRung().name() + " scheduledFor=" + m.getScheduledFor();
     }
 
@@ -173,10 +178,39 @@ public final class SendLaterDebugCommands {
         return "id=" + id + " status=" + (after == null ? "unknown" : after.getStatus().name());
     }
 
+    // ------------------------------------------------------------------ ENABLE (master switch)
+
+    /**
+     * Sets the {@code sendlater_enabled} preference and applies it through the engine's one
+     * serialized switch path (off: alarms and waiters cancelled, records kept; on: expiry sweep and
+     * re-arm), exactly as the Settings toggle does. {@code on} null (no {@code --ez on}) changes
+     * nothing. The result names the previous value so a caller can restore it.
+     */
+    String enable(Boolean on) {
+        if (on == null) return "error=no_on";
+        boolean previous;
+        try {
+            previous = b.sendLaterEnabled();
+        } catch (RuntimeException e) {
+            previous = false;
+        }
+        b.setSendLaterEnabled(on);
+        b.applySwitch();
+        return "enabled=" + on + " previous=" + previous;
+    }
+
     // ------------------------------------------------------------------ DUMP
 
+    /** {@code {"enabled":B,"now":..,"records":[..],..}}: the master switch leads the JSON. */
     String dump() {
-        return DebugDump.toJson(b.nowMs(), b.allRecords(), b.allEvents());
+        String json = DebugDump.toJson(b.nowMs(), b.allRecords(), b.allEvents());
+        boolean enabled;
+        try {
+            enabled = b.sendLaterEnabled();
+        } catch (RuntimeException e) {
+            enabled = false;
+        }
+        return json.startsWith("{") ? "{\"enabled\":" + enabled + "," + json.substring(1) : json;
     }
 
     // ------------------------------------------------------------------ helpers

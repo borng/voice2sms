@@ -47,4 +47,14 @@ interface DebugBackend {
     boolean makeDueNow(long id, long nowMs);
     /** {@code SendLaterEngine.onDue}: may start a real send. */
     void engineOnDue(long id);
+
+    // ---- master switch and UI refresh (gate-residuals)
+    /** The stored {@code sendlater_enabled} preference (unreadable = off). */
+    boolean sendLaterEnabled();
+    /** Writes {@code sendlater_enabled} synchronously, so the switch below re-reads the new value. */
+    void setSendLaterEnabled(boolean on);
+    /** {@code SendLaterEngine.applySwitch}, then ACTION_STATE_CHANGED (the settings path, OD24). */
+    void applySwitch();
+    /** App-internal ACTION_STATE_CHANGED (setPackage) so the chip and Upcoming tab reload. */
+    void broadcastStateChanged();
 }
