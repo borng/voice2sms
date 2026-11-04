@@ -11,7 +11,7 @@ import com.voice2sms.sendlater.domain.ThreadEventSource;
  * one available source of this kind. A read from other sources alone (the notification listener
  * sees inbound messages only) cannot prove the send did not happen, so the message goes to
  * HELD(UNVERIFIED) with the "may have already sent" notification instead.
- * {@link NotificationEventSource} deliberately does not implement this.
+ * {@code listener.NotificationThreadEventSource} deliberately does not implement this.
  */
 public interface OutboundCapableSource extends ThreadEventSource {
 }

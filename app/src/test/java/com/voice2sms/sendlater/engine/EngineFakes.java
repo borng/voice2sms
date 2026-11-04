@@ -8,6 +8,7 @@ import com.voice2sms.sendlater.domain.LatenessPolicy;
 import com.voice2sms.sendlater.domain.NetworkState;
 import com.voice2sms.sendlater.domain.OutboundPolicy;
 import com.voice2sms.sendlater.domain.RemindReason;
+import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ScheduledMessage.Status;
 import com.voice2sms.sendlater.domain.SessionState;
@@ -200,8 +201,25 @@ final class EngineFakes {
             if (m == null || (m.getStatus() != Status.SCHEDULED && m.getStatus() != Status.HELD)) return false;
             ScheduledMessage.Builder b = m.toBuilder().status(Status.SCHEDULED).holdReason(null)
                     .scheduledFor(scheduledFor).holdIfReplied(holdIfReplied).latenessPolicy(policy);
-            if (wm != null) b.watermark(wm);
+            if (wm != null) {
+                // Mirrors SendLaterRepository/StoreMapping.replacing (OD22(1)): the first watermark
+                // stays as the self-preemption baseline.
+                Watermark orig = m.getOriginalWatermark() != null ? m.getOriginalWatermark() : m.getWatermark();
+                if (orig == null) {
+                    orig = new Watermark(Watermark.Quality.DEVICE_ONLY, null, null, null, m.getCreatedAt(), null);
+                }
+                b.watermark(wm).originalWatermark(orig);
+            }
             rows.put(id, b.build());
+            return true;
+        }
+
+        @Override public boolean upgradeRung(long id, Rung from, Rung to) {
+            j.add("store.upgradeRung " + id + " " + from + " " + to);
+            ScheduledMessage m = rows.get(id);
+            if (m == null || m.getRung() != from
+                    || (m.getStatus() != Status.SCHEDULED && m.getStatus() != Status.HELD)) return false;
+            rows.put(id, m.toBuilder().rung(to).rungReason(null).build());
             return true;
         }
 

@@ -35,6 +35,8 @@ public final class ScheduledMessage {
     private final String lastError;
     private final int attemptCount;
     private final Watermark watermark;
+    private final Watermark originalWatermark;
+    private final RemindReason rungReason;
 
     private ScheduledMessage(Builder b) {
         this.id = b.id;
@@ -53,6 +55,8 @@ public final class ScheduledMessage {
         this.lastError = b.lastError;
         this.attemptCount = b.attemptCount;
         this.watermark = b.watermark;
+        this.originalWatermark = b.originalWatermark;
+        this.rungReason = b.rungReason;
     }
 
     public long getId() { return id; }
@@ -70,7 +74,30 @@ public final class ScheduledMessage {
     public HoldReason getHoldReason() { return holdReason; }
     public String getLastError() { return lastError; }
     public int getAttemptCount() { return attemptCount; }
+    /** The reply baseline: replies and other thread activity count from here (R20, R26). */
     public Watermark getWatermark() { return watermark; }
+
+    /**
+     * The first watermark the message had, kept when a snooze (or edit) replaces
+     * {@link #getWatermark()} (OD22(1)); null while the watermark was never replaced.
+     */
+    public Watermark getOriginalWatermark() { return originalWatermark; }
+
+    /**
+     * The self-preemption baseline (OD22(1)): a similar outbound text counts from the ORIGINAL
+     * watermark, so a text the user sent by hand between a hold and a snooze still cancels.
+     * {@link #getOriginalWatermark()} when set, else {@link #getWatermark()} (may be null).
+     */
+    public Watermark getSelfPreemptionBaseline() {
+        return originalWatermark != null ? originalWatermark : watermark;
+    }
+
+    /**
+     * Why the message was saved below R1, or null. {@link RemindReason#NO_SESSION}: saved at R3
+     * only because voice2sms had no GV web session (D23); evaluated at R1 at due time when a
+     * session exists then (OD22(4)).
+     */
+    public RemindReason getRungReason() { return rungReason; }
 
     public Builder toBuilder() {
         return new Builder()
@@ -78,7 +105,8 @@ public final class ScheduledMessage {
                 .recipientE164(recipientE164).recipientDisplayName(recipientDisplayName)
                 .threadItemId(threadItemId).source(source).rung(rung).holdIfReplied(holdIfReplied)
                 .latenessPolicy(latenessPolicy).status(status).holdReason(holdReason)
-                .lastError(lastError).attemptCount(attemptCount).watermark(watermark);
+                .lastError(lastError).attemptCount(attemptCount).watermark(watermark)
+                .originalWatermark(originalWatermark).rungReason(rungReason);
     }
 
     /** Never includes text, name or number. */
@@ -108,6 +136,8 @@ public final class ScheduledMessage {
         private String lastError;
         private int attemptCount;
         private Watermark watermark;
+        private Watermark originalWatermark;
+        private RemindReason rungReason;
 
         public Builder id(long v) { id = v; return this; }
         public Builder createdAt(long v) { createdAt = v; return this; }
@@ -125,6 +155,8 @@ public final class ScheduledMessage {
         public Builder lastError(String v) { lastError = v; return this; }
         public Builder attemptCount(int v) { attemptCount = v; return this; }
         public Builder watermark(Watermark v) { watermark = v; return this; }
+        public Builder originalWatermark(Watermark v) { originalWatermark = v; return this; }
+        public Builder rungReason(RemindReason v) { rungReason = v; return this; }
 
         public ScheduledMessage build() {
             if (source == null) throw new IllegalStateException("source");

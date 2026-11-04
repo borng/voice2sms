@@ -21,4 +21,21 @@ public interface ListenerEventStore {
     List<ThreadEvent> eventsSince(String conversationKey, long sinceMs);
 
     int purgeEvents(long olderThanMs, boolean orphans);
+
+    /**
+     * OD22(5): records that a notification carrying this conversation's number was matched to it
+     * (the listener can see this conversation without a display name). Default: nothing durable;
+     * {@link #hasNumberMatch} then falls back to the stored events.
+     */
+    default void noteNumberMatch(String conversationKey) {}
+
+    /**
+     * OD22(5): whether a notification was ever matched to this conversation by its number.
+     * Default: any event is stored for the key (a message without a display name can only be
+     * matched by number).
+     */
+    default boolean hasNumberMatch(String conversationKey) {
+        List<ThreadEvent> e = eventsSince(conversationKey, 0L);
+        return e != null && !e.isEmpty();
+    }
 }

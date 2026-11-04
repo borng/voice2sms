@@ -12,6 +12,8 @@ import androidx.room.PrimaryKey;
  * message, kept so the event purge (R34) can find conversations with live messages in SQL.
  * {@code inFlightBodyHash} is the R31 body hash recorded by {@code markInFlight};
  * {@code updatedAt} is the time of the last status change (drives {@code recent}).
+ * {@code rungReason} (schema v2) is {@code RemindReason.name()} of why the message sits below R1,
+ * e.g. NO_SESSION for a D23 save (OD22(4)); null otherwise.
  */
 @Entity(tableName = "scheduled_message",
         indices = {@Index("status"), @Index("recipientE164"), @Index("conversationKey")})
@@ -36,4 +38,6 @@ public class ScheduledMessageEntity {
     public String inFlightBodyHash;
     @ColumnInfo(defaultValue = "0")
     public long updatedAt;
+    // v2 (OD22(4))
+    public String rungReason;
 }

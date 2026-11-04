@@ -11,9 +11,11 @@ import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LadderEvaluator;
 import com.voice2sms.sendlater.domain.LatenessBudget;
 import com.voice2sms.sendlater.domain.RemindReason;
+import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ScheduledMessage.Status;
 import com.voice2sms.sendlater.domain.SendOutcome;
+import com.voice2sms.sendlater.domain.SessionState;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.domain.ThreadEventClassifier;
 import com.voice2sms.sendlater.domain.ThreadEventSource;
@@ -194,8 +196,28 @@ public final class SendLaterEngine {
             ScheduledMessage m = d.store.get(id);
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
             if (d.marks.isReminded(id)) return;
+            m = upgradeSessionRung(d, m);
+            if (m == null || m.getStatus() != Status.SCHEDULED) return;
             evaluateAndApply(d, context, m);
         });
+    }
+
+    /**
+     * OD22(4) / D23: a message saved at R3 only because there was no GV web session
+     * ({@code rungReason == NO_SESSION}) is evaluated at R1 once a session exists at due time; the
+     * stored rung is updated first. Without a session (or when the store refuses) it stays at its
+     * stored rung. Returns the message to evaluate (reloaded after an upgrade).
+     */
+    static ScheduledMessage upgradeSessionRung(EngineDeps d, ScheduledMessage m) {
+        if (m.getRung() != Rung.R3 || m.getRungReason() != RemindReason.NO_SESSION) return m;
+        if (!hasWebSession(d.conditions.session())) return m;
+        if (!d.store.upgradeRung(m.getId(), Rung.R3, Rung.R1)) return m;
+        return d.store.get(m.getId());
+    }
+
+    /** {@code GvSession.hasWebSession} as the conditions report it: MISSING/EXPIRED mean none. */
+    private static boolean hasWebSession(SessionState s) {
+        return s == SessionState.READY || s == SessionState.LOCKED_UNSHOWABLE;
     }
 
     /** The T-5 alarm: last-call notification if the message is still SCHEDULED (R24). */
@@ -230,8 +252,10 @@ public final class SendLaterEngine {
     private static void evaluateAndApply(EngineDeps d, Context context, ScheduledMessage m) {
         long now = d.conditions.nowMs();
         List<ThreadEvent> events = readThread(d, m);
+        // OD22(1): replies from the (possibly snoozed) watermark, self-preemption from the original.
         Decision decision = LadderEvaluator.evaluate(m, m.getRung(), events, now, d.conditions.session(),
-                d.conditions.network(), d.conditions.listenerEnabled(), d.conditions.outboundPolicy());
+                d.conditions.network(), d.conditions.listenerEnabled(), d.conditions.outboundPolicy(),
+                m.getWatermark(), m.getSelfPreemptionBaseline());
         apply(d, context, m, decision, now);
     }
 
@@ -392,8 +416,9 @@ public final class SendLaterEngine {
     // ================================================================== thread read (R32)
 
     /**
-     * Events since the watermark from every available source, merged; null when no source is
-     * available (classifies as UNVERIFIED). A source that throws counts as unavailable.
+     * Events since the earlier of the message's two baselines (OD22(1)) from every source available
+     * for its conversation ({@link ThreadEventSource#isAvailableFor}, OD22(5)), merged; null when no
+     * source is available (classifies as UNVERIFIED). A source that throws counts as unavailable.
      */
     static List<ThreadEvent> readThread(EngineDeps d, ScheduledMessage m) {
         return read(d, m).events;
@@ -426,13 +451,13 @@ public final class SendLaterEngine {
             if (s == null) continue;
             boolean available;
             try {
-                available = s.isAvailable();
+                available = s.isAvailableFor(ref);
             } catch (RuntimeException e) {
                 available = false;
             }
             if (!available) continue;
             try {
-                List<ThreadEvent> got = s.readSince(ref, m.getWatermark());
+                List<ThreadEvent> got = s.readSince(ref, readBaseline(m));
                 if (out == null) out = new ArrayList<>();
                 if (got != null) out.addAll(got);
                 if (s instanceof OutboundCapableSource) outboundCapable = true;
@@ -441,6 +466,23 @@ public final class SendLaterEngine {
             }
         }
         return new ThreadRead(out, outboundCapable);
+    }
+
+    /**
+     * The baseline sources read from: the earlier of the reply watermark and the self-preemption
+     * baseline, so a similar text sent before a snooze is still in the read (OD22(1)).
+     */
+    static Watermark readBaseline(ScheduledMessage m) {
+        Watermark reply = m.getWatermark();
+        Watermark orig = m.getSelfPreemptionBaseline();
+        if (reply == null || orig == null || reply == orig) return reply;
+        return floorOf(orig) <= floorOf(reply) ? orig : reply;
+    }
+
+    private static long floorOf(Watermark w) {
+        long f = w.getCapturedAtDevice();
+        if (w.getNewestTs() != null) f = Math.min(f, w.getNewestTs());
+        return f;
     }
 
     // ================================================================== early hold (R33)
@@ -502,7 +544,7 @@ public final class SendLaterEngine {
             List<ThreadEvent> events = readThread(d, m);
             Decision decision;
             try {
-                decision = LadderEvaluator.evaluateSendAnyway(m, events, now);
+                decision = LadderEvaluator.evaluateSendAnyway(m, events, now, m.getSelfPreemptionBaseline());
             } catch (IllegalArgumentException stale) {
                 return;
             }
@@ -517,9 +559,11 @@ public final class SendLaterEngine {
     }
 
     /**
-     * Snooze (OD12, OD21): +1 h from now at the same rung; budget follows the new time. The
-     * watermark is replaced by a fresh DEVICE_ONLY one taken now, so the reply that caused the hold
-     * (already seen by the user) does not hold the snoozed message again.
+     * Snooze (OD12, OD21, OD22(1)): +1 h from now at the same rung; budget follows the new time.
+     * The reply watermark is replaced by a fresh DEVICE_ONLY one taken now, so the reply that
+     * caused the hold (already seen by the user) does not hold the snoozed message again. The
+     * store keeps the original watermark as the self-preemption baseline, so a similar text the
+     * user sent by hand between the hold and the snooze still cancels it.
      */
     public static void onSnooze(final Context context, final long id) {
         run(context, () -> {

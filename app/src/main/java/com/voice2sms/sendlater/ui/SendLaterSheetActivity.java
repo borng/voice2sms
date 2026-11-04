@@ -21,6 +21,7 @@ import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -30,6 +31,7 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.datepicker.CalendarConstraints;
 import com.google.android.material.datepicker.DateValidatorPointForward;
 import com.google.android.material.datepicker.MaterialDatePicker;
+import com.google.android.material.textfield.TextInputLayout;
 import com.google.android.material.timepicker.MaterialTimePicker;
 import com.google.android.material.timepicker.TimeFormat;
 import com.voice2sms.R;
@@ -37,6 +39,7 @@ import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.domain.LatenessPolicy;
 import com.voice2sms.sendlater.domain.PresetSlots;
+import com.voice2sms.sendlater.domain.RemindReason;
 import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.Watermark;
@@ -85,7 +88,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     private TextView cardDraft;
     private View recipientSection;
     private RadioGroup recipientChoices;
-    private View numberEntryLayout;
+    private TextInputLayout numberEntryLayout;
     private EditText numberEntry;
     private TextView sessionHint;
     private RadioGroup presets;
@@ -188,7 +191,9 @@ public class SendLaterSheetActivity extends AppCompatActivity {
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
             @Override public void afterTextChanged(Editable s) {
                 if (binding || logic == null) return;
-                logic.enterNumber(s.toString());
+                boolean ok = logic.enterNumber(s.toString());
+                // OD22(8): an invalid manual number says so inline (empty field: no message yet).
+                showNumberError(!ok && s.toString().trim().length() > 0);
                 render();
             }
         });
@@ -200,7 +205,14 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     // ================================================================== capture (R4, R9, R15)
 
     private void setupCapture(Intent in) {
-        source = parseSource(in.getStringExtra(SendLaterIntents.EXTRA_SOURCE));
+        ScheduledMessage.Source parsed = parseSource(in.getStringExtra(SendLaterIntents.EXTRA_SOURCE));
+        if (parsed == null) {
+            // OD22(8): a capture must say where it came from; nothing is shown or saved otherwise.
+            Toast.makeText(app, R.string.sendlater_sheet_bad_source, Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+        source = parsed;
         displayName = in.getStringExtra(SendLaterIntents.EXTRA_DISPLAY_NAME);
         draft = in.getStringExtra(SendLaterIntents.EXTRA_DRAFT);
         threadItemId = in.getStringExtra(SendLaterIntents.EXTRA_THREAD_ITEM_ID);
@@ -215,13 +227,14 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         if (isDraftEmpty()) showError(R.string.sendlater_sheet_empty_draft);
     }
 
-    private static ScheduledMessage.Source parseSource(String s) {
+    /** The capture's EXTRA_SOURCE, or null when missing or unknown (the capture is rejected). */
+    static ScheduledMessage.Source parseSource(String s) {
         if (s != null) {
             for (ScheduledMessage.Source v : ScheduledMessage.Source.values()) {
                 if (v.name().equals(s)) return v;
             }
         }
-        return ScheduledMessage.Source.NATIVE_GV;
+        return null;
     }
 
     private static Watermark readWatermark(Intent in) {
@@ -430,6 +443,11 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         error.setVisibility(View.GONE);
     }
 
+    /** Inline "Enter a full phone number" under the manual number field (OD22(8)). */
+    private void showNumberError(boolean show) {
+        numberEntryLayout.setError(show ? getString(R.string.sendlater_sheet_number_invalid) : null);
+    }
+
     // ================================================================== pickers (R14)
 
     private void openDatePicker() {
@@ -539,6 +557,8 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                 .source(source)
                 // R9 / D23: without a web session it is saved at R3 (the engine reminds).
                 .rung(hasWebSession ? Rung.R1 : Rung.R3)
+                // OD22(4): the engine evaluates it at R1 if a session exists at due time.
+                .rungReason(hasWebSession ? null : RemindReason.NO_SESSION)
                 .holdIfReplied(logic.isHoldIfReplied())
                 .latenessPolicy(logic.getLatenessPolicy())
                 .status(ScheduledMessage.Status.SCHEDULED)
@@ -608,42 +628,46 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         clearError();
         setBusy(true);
         io.execute(() -> {
-            SendLaterRepository repo = SendLaterRepository.get(app);
-            boolean ok;
             try {
-                ok = repo.reschedule(id, when, hold, policy, null);
+                updateArmAndAnnounce(id, when, hold, policy);
             } catch (RuntimeException e) {
-                Log.w(TAG, "reschedule failed: " + e.getClass().getSimpleName());
+                // OD22(8): a DB or notification error shows the persist error; the sheet stays open.
+                Log.w(TAG, "update failed: " + e.getClass().getSimpleName());
                 runOnUiThread(this::onPersistFailed);
-                return;
             }
-            if (!ok) {
-                runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    setBusy(false);
-                    showNotEditable();
-                });
-                return;
-            }
-            SendLaterNotifications.dismiss(app, id);
-            ScheduledMessage fresh = repo.get(id);
-            if (fresh != null) {
-                try {
-                    SendLaterScheduler s = SendLaterScheduler.get(app);
-                    s.cancelAll(id); // drops a HELD row's stale expiry alarm
-                    s.registerAlarms(fresh);
-                } catch (RuntimeException e) {
-                    Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
-                }
-            }
-            Intent changed = new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
-                    .setPackage(app.getPackageName())
-                    .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id);
-            if (fresh != null) changed.putExtra(SendLaterIntents.EXTRA_E164, fresh.getRecipientE164());
-            app.sendBroadcast(changed);
+        });
+    }
+
+    /** Worker thread. Throws on a store or notification failure (caught by {@link #onUpdate}). */
+    private void updateArmAndAnnounce(long id, long when, boolean hold, LatenessPolicy policy) {
+        SendLaterRepository repo = SendLaterRepository.get(app);
+        boolean ok = repo.reschedule(id, when, hold, policy, null);
+        if (!ok) {
             runOnUiThread(() -> {
-                if (!isFinishing()) finish();
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
+                showNotEditable();
             });
+            return;
+        }
+        SendLaterNotifications.dismiss(app, id);
+        ScheduledMessage fresh = repo.get(id);
+        if (fresh != null) {
+            try {
+                SendLaterScheduler s = SendLaterScheduler.get(app);
+                s.cancelAll(id); // drops a HELD row's stale expiry alarm
+                s.registerAlarms(fresh);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
+            }
+        }
+        Intent changed = new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
+                .setPackage(app.getPackageName())
+                .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id);
+        if (fresh != null) changed.putExtra(SendLaterIntents.EXTRA_E164, fresh.getRecipientE164());
+        app.sendBroadcast(changed);
+        runOnUiThread(() -> {
+            if (!isFinishing()) finish();
         });
     }
 }
