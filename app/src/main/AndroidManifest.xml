@@ -201,6 +201,20 @@
             </intent-filter>
         </service>
 
+        <!-- sendlater:reply-listener start -->
+        <!-- Send Later reply detection (R32-R34): reads Google Voice and voice2sms incoming-SMS
+             notifications; stores events only for conversations with a pending Send Later message. -->
+        <service
+            android:name=".sendlater.listener.SendLaterNotificationListener"
+            android:label="@string/sendlater_listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- sendlater:reply-listener end -->
+
     </application>
 
 </manifest>
