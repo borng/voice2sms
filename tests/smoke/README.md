@@ -32,9 +32,10 @@ Environment variables:
 
 ### `sendlater-smoke.sh` (Send Later, debug build only)
 
-Drives the adb-only `SendLaterDebugReceiver` that exists only in the debug APK
-(`app/src/debug/AndroidManifest.xml`, protected by `android.permission.DUMP`, which the
-adb shell holds and other apps cannot). The flow:
+Drives the adb-only `SendLaterDebugReceiver` that exists only in the debug APK (code in
+`app/src/debug/java`, registered in `app/src/debug/AndroidManifest.xml`, protected by
+`android.permission.DUMP`, which the adb shell holds and other apps cannot). Release APKs contain
+none of these classes. The flow:
 
 1. installs the debug APK when `INSTALL=1` or the app is missing (otherwise uses the installed one;
    it must be a debuggable build so `run-as` works);
@@ -119,6 +120,12 @@ only) and mask numbers to the last 4 digits.
 (e.g., "`prefetchUrlAsync` never reappears in `Voice2SmsApplication`",
 "every `V2SBridge.runOnUiThread` checks `isActivityAlive()`"). These run in
 ~2 seconds, no device needed, and catch most regressions at compile time.
+
+Send Later adds two more guard classes: `SendLaterSourceSafetyTest` (no Wear/Gemini auto-send
+extra or `AutoSendRateLimiter` in the scheduled path, guarded WebView access, Voice id allowlist,
+no message text in logs, `ACTION_SCHEDULED` only after a verified persist) and
+`PrivacyLoggingSourceTest` (no unguarded logging of notification text, click text or raw URLs).
+The debug-hook tests live in `app/src/testDebug` and run only in `testDebugUnitTest`.
 
 Suggested pre-release workflow:
 

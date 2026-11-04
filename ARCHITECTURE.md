@@ -6,11 +6,11 @@
 |------|---------|
 | `SmsHandlerActivity` | Transparent launcher + SMS/share intent router. Parses `sms:`/`smsto:` URIs (including opaque variants with `&body=`). |
 | `GVoiceWebViewActivity` | Hosts the WebView, manages auth flow, injects JS on page load. `singleTask` launch mode for intent reuse. |
-| `Voice2SmsApplication` | Application subclass holding singleton WebView. Configures async WebView startup, renderer warm-up, and URL prefetch. |
-| `GeminiSmsInterceptService` | AccessibilityService monitoring Gemini's SMS compose overlay. Caches phone+body, intercepts Send button (resource ID match), null-source clicks (with SENDTO dedup), and voice "Yes" confirm (watchdog timer). |
+| `Voice2SmsApplication` | Application subclass holding singleton WebView. Configures async WebView startup and renderer warm-up (no URL prefetch: it races `loadUrl`). Registers the Send Later sender and runs `SendLaterEngine.onProcessStart`. |
+| `GeminiSmsInterceptService` | AccessibilityService monitoring Gemini's SMS compose overlay. Caches phone+body, intercepts Send button (resource ID match), null-source clicks (with SENDTO dedup), and voice "Yes" confirm (watchdog timer). Also hosts the Send Later Google Voice overlay. |
 | `SetupActivity` | First-install wizard: default SMS role, ADB commands for blocking Gemini carrier SMS, accessibility service enablement. |
-| `SettingsActivity` | Preferences: set default SMS app, switch Google account, Gemini interception toggle, auto-send switch. |
-| `inject.js` | Core JS injection — SPA detection, compose flow, chip creation, body fill, auto-send. |
+| `SettingsActivity` | Preferences: set default SMS app, switch Google account, Gemini interception toggle, auto-send switch, Send Later category. |
+| `inject.js` | Core JS injection — SPA detection, compose flow, chip creation, body fill, auto-send; Send Later module. |
 | `fingerprint-mask.js` | Anti-fingerprinting overrides + dark mode CSS filter. |
 | `SmsReceiver` | Stub `SMS_DELIVER` receiver (required for default SMS app role). |
 | `MmsReceiver` | Stub `WAP_PUSH_DELIVER` receiver (required for default SMS app role). |
@@ -36,6 +36,20 @@
 ### Generation Counter
 
 Each `voice2sms()` call increments `window._v2sGeneration`. All async callbacks check `isCancelled()` to bail out if a newer invocation has started, preventing race conditions from rapid-fire intents.
+
+### Send Later Module
+
+Appended after `sendImageToGV`. `SendLaterWebHooks.moduleScript()` returns it only while Send Later is on, so with the feature off no Send Later JS runs. `v2sSendLaterInit()` runs once per page load.
+
+- **Tick** — `_v2sSlTick` handles thread changes, chip freshness, the thread-list scrape and layout. A 2 s timer (`V2S_SL_TICK_MS`) runs only while on with a 1:1 thread open (`itemId=t.+E164`), plus one-shot follow-ups at 2 s and 6 s.
+- **Tab and chip** — tab shows when the composer has text; chip from `V2SBridge.sendLaterChipState(e164)`; placed so neither covers Send.
+- **Capture** — `_v2sSlCapture` → `V2SBridge.requestSendLater(json)` with `{e164, displayName?, draftText, newest id/time}` (watermark EXACT with id + time, TIMESTAMP with time only). Repeat taps within 1.5 s are dropped.
+- **Clear + Undo** — `window.v2sSendLaterClear(messageId, expectedDraft, label)` clears through the Angular-safe setter only if the composer still holds that draft on the same thread; Undo bar 10 s → `V2SBridge.requestSendLaterUndo(id)` (engine cancel; text restored only into an empty composer).
+- **Thread read** — `window.v2sReadThread(e164, limit)` → `V2SBridge.onThreadRead(json)`; used by the send controller to verify.
+- **Directory** — thread-list `{displayName, e164}` pairs → `V2SBridge.onThreadDirectory(json)` (stored only while on).
+- **Refresh** — `window.v2sSendLaterRefresh(on)`, pushed from Java on `ACTION_STATE_CHANGED`.
+
+Bridge methods: `requestSendLater`, `sendLaterChipState`, `requestSendLaterChipTap`, `requestSendLaterUndo`, `onThreadRead`, `onThreadDirectory`. All return early unless the main frame is `https://voice.google.com`.
 
 ### Zone Discovery
 
@@ -105,3 +119,109 @@ Gemini uses different titles depending on the flow:
 - "Contact Not Found for Text"
 
 All matched by checking for "Text", "SMS", or "Message" substring.
+
+## Send Later
+
+Scheduled send, in `com.voice2sms.sendlater` (v1.6.0). Off by default
+(`sendlater_enabled`). The rule: judgment is collected when the message is
+scheduled; at the due time only facts can make the app more careful, and only
+a tap from the user makes it less careful.
+
+### Components
+
+| Component | Package / class | Role |
+|---|---|---|
+| Voice overlay | `voice.overlay.VoiceOverlayController`, `voice.logic.*` | Hosted by `GeminiSmsInterceptService`. On a 1:1 native Voice thread (screen signature HIGH: Voice package + `toolbar_title` + `send_message_text` + `send_message_button`) with a non-empty draft, shows the edge tab; shows the chip when the thread has pending/held messages. Positions from the `input_message_container` rect. Reads only the ids in `VoiceOverlayIds.R8_IDS`, re-acquired on every event, 250 ms debounce. Clears the draft with `ACTION_SET_TEXT("")` only after the record is verified persisted; Undo cancels and restores only into an empty box with the same title. |
+| WebView hooks | `web.SendLaterWebHooks`, inject.js module | Same tab and chip in the GV WebView. Capture → `V2SBridge.requestSendLater`. Every bridge method first checks `OriginGuard.isTrustedGvUrl(mainFrameUrl)`; chip calls are bound to the open thread via `ThreadUrl.isThreadOf`. |
+| Sheet | `ui.SendLaterSheetActivity`, `ui.SheetViewModelLogic` | One sheet for both surfaces: recipient card, rolling presets (`domain.PresetSlots`), date/time pickers, "Hold if they text first", "If late". Schedule is disabled until an E.164 is chosen (`voice.logic.RecipientResolver`). Persist → `SendLaterScheduler.registerAlarms` → `ACTION_SCHEDULED` (the capturing surface clears its draft). Edit mode: Update / Cancel message. Without a GV web session the record is saved at R3 (reminder only). |
+| Store | `store.SendLaterDatabase` (Room `sendlater.db`, v2) | Tables `scheduled_message`, `watermark` (FK cascade; `orig*` columns keep the self-preemption baseline across snooze/edit), `thread_event`, `thread_directory`. `MIGRATION_1_2` is explicit and additive; no destructive fallback. `SendLaterRepository.schedule` is transactional and read back before returning, and dedupes an identical capture within 10 s. |
+| Engine and alarms | `engine.SendLaterEngine`, `engine.SendLaterScheduler` | The only writer of status and Send Later notifications; all entry points serialized on one lock and one executor. Exact alarms (`setExactAndAllowWhileIdle`, inexact without permission) at T−5 (last call) and T (due), plus RETRY (network wait) and EXPIRE. `SendLaterBootReceiver` re-arms on boot / time / time-zone change / exact-alarm permission change. `onProcessStart` resolves IN_FLIGHT rows first, then the expiry sweep, data purge and re-arm. |
+| Listener | `listener.SendLaterNotificationListener` | Reads Google Voice (and voice2sms incoming-SMS) notifications. `LiveConversationKeys` drops anything not matching a SCHEDULED/HELD/IN_FLIGHT conversation before any DB call. Stores `{conversationKey, direction, kind, time, textHash}` (no text) and triggers early hold. `NotificationThreadEventSource` is the engine's reply source. |
+| Send controller and cover | `send.WebViewScheduledSender`, `send.ScheduledSendController`, `send.LockCover` | Sender: queue slot (`ScheduledSendQueue`), mark IN_FLIGHT with a body hash, launch `GVoiceWebViewActivity` with `EXTRA_SCHEDULED_MESSAGE_ID` and a one-shot token. Controller: runs the scheduled branch under the cover, drives the existing compose flow, verifies, reports `SendLaterEngine.onSendOutcome`. |
+| Upcoming and Settings | `ui.UpcomingActivity`, `ui.SendLaterSettingsController` | Upcoming: Pending / Held / Recent (30 d) with Change time, Cancel, Send now (Cancel only while off). Settings: one "Send Later" category with live status rows (switch, slots, policies, exact alarm, notifications, accessibility, notification access, contacts, battery, Upcoming). |
+| Battery guard | `battery.BatteryHealth`, `BatteryWarning` | Detects background restriction / battery optimization; Settings row opens the right screen; Samsung "Never sleeping apps" is advice only (no API). A notification at most once a day when scheduling while limited, or when a due alarm fires more than 2 min late. |
+
+Efficiency (R40): no polling, no foreground service while idle, no wakelocks
+beyond the send itself, two exact alarms per pending message. The overlay only
+does work for Google Voice events; the WebView module is not installed and the
+2 s page tick does not run while Send Later is off.
+
+### Due-time flow
+
+1. **Alarm.** DUE → `SendLaterEngine.onDueAlarm` (reports lateness to the
+   battery guard) → nothing if Send Later is off. An R3 row whose GV session now
+   exists is upgraded to R1.
+2. **Thread check.** Merge the available `ThreadEventSource`s (listener store;
+   the on-screen native thread while it is open) and read events since the
+   watermark. No available source ⇒ `UNVERIFIED`.
+3. **Ladder.** `domain.LadderEvaluator.evaluate` (pure) →
+   SEND / HOLD / REMIND / CANCEL / WAIT / EXPIRED:
+   - `REPLIED` / `REACHED_OUT` ⇒ HOLD if "Hold if they text first", else SEND;
+   - `SELF_PREEMPTED` (similar outbound text) ⇒ CANCEL;
+   - `OUTBOUND_ONLY` ⇒ SEND or HOLD per "If I text them first";
+   - `UNCHANGED` ⇒ SEND; `UNVERIFIED` ⇒ HOLD;
+   - past the lateness budget ⇒ REMIND; no session ⇒ REMIND (Sign in);
+     no network ⇒ WAIT, then REMIND; still SCHEDULED or HELD 24 h past due ⇒ EXPIRED.
+   Lateness budget (`LatenessBudget`): automatic = 10 min (scheduled < 1 h
+   ahead), 30 min (≤ 1 day), 2 h (longer); or 30 min / never / 24 h by choice.
+4. **Send.** SEND ⇒ `WebViewScheduledSender.start`: `ScheduledSendQueue` slot
+   (2 s spacing, 50/day; refused ⇒ reminder), `markInFlight(bodyHash)`, then
+   `LaunchPlanner`: DIRECT `startActivity` when the accessibility service is
+   bound, else a full-screen intent when locked or dark, else CANNOT_SHOW.
+   `LaunchRecheck` re-reads the row before a queued launch (late beyond budget
+   + 10 s slack ⇒ CANNOT_SHOW late).
+5. **Verify.** `ScheduledSendController` opens the thread, injects the text
+   through the existing auto-send flow, and polls `readThread` plus a composer
+   probe. The first read with the text still unsent is the baseline; only a new
+   outbound bubble with the body hash beyond it, settled 3 s with the composer
+   empty (or carrying a server time), gives `SENT_VERIFIED`. Nothing within the
+   45 s verify window ⇒ `SENT_UNVERIFIED`; failure before typing ⇒
+   `CANNOT_SHOW` with a detail (`no_session`, `daily_cap`, `user_busy`,
+   `locked`, `late`, `stopped`, else `could_not_send`). An inbound between the
+   check and the send adds "replied just as your message sent".
+6. **Outcome.** The engine applies it: SENT_VERIFIED ⇒ Sent notification;
+   SENT_UNVERIFIED, or IN_FLIGHT found at process start ⇒ HELD(UNVERIFIED) +
+   "may have already sent". **No automatic retry**: Send anyway (only a
+   self-preemption check) is the only retry. CANNOT_SHOW ⇒ reminder that opens
+   review mode with the text pre-filled (no auto-send).
+
+Early hold: a recorded inbound event for a pending conversation (listener or
+on-screen bubbles) holds the message at once when "Hold if they text first" is on, cancels its alarms and posts the
+hold notification.
+
+### Lock-screen model
+
+- Every claimed scheduled job shows the opaque `LockCover` ("Sending scheduled
+  message…", masked number) for its whole run, locked or not.
+  `showWhenLocked` / `turnScreenOn` / keep-screen-on are set only while the
+  cover is up and cleared before it comes down; the keyguard is never
+  dismissed. The full-screen notification carries no text or name.
+- While covered: touch, key and back events are consumed, no keyboard shows,
+  and navigation is limited to the target thread. 60 s hard timeout and "a
+  pause ends the job" (1 s grace) for every job.
+- On an unlocked phone the cover offers **Stop** before typing starts; Stop
+  ends the current and queued jobs with a "You stopped the send" reminder.
+- An unclaimed launch (stale intent, renderer-crash relaunch) clears the flags
+  and, while locked, finishes without loading the page.
+- Notification actions Send now / Send anyway require unlock:
+  `setAuthenticationRequired(true)` on API 31+, else `SendLaterUnlockActivity`
+  (not show-when-locked; refuses while locked on API 24–25).
+- If the job cannot be shown (screen lit and unlocked without the
+  accessibility service, the user was using voice2sms in the last 60 s or has
+  text in the composer), the result is a reminder, not a send.
+
+### Data at rest
+
+- `sendlater.db` (app-private) holds the scheduled text, number, display name
+  and watermark. Terminal rows and their watermarks are deleted 30 days after
+  they finish; `thread_directory` name/number pairs after 90 days unseen
+  (`DataRetention`, at most daily on process start, whether or not Send Later
+  is on). Listener events keep only a text hash, for live conversations, 7 days.
+- `sendlater.db` (+ `-wal`, `-shm`, `-journal`) and the `sendlater_*`
+  SharedPreferences are excluded from cloud backup and device transfer
+  (`sendlater_backup_rules.xml`, `sendlater_data_extraction_rules.xml`).
+- No message text, draft or name in release-build logs (`SendLaterSourceSafetyTest`
+  G3, `PrivacyLoggingSourceTest`); URL logs drop the query (`withoutQuery`).
+  Debug dumps carry a text hash and length and the last 4 digits only.
+- Every app-internal broadcast is `setPackage`'d, runtime receivers are
+  `RECEIVER_NOT_EXPORTED`, and all PendingIntents are `FLAG_IMMUTABLE`.

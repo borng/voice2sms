@@ -1,6 +1,6 @@
 # Voice2SMS
 
-Route all Android SMS through Google Voice — from any app, Gemini, or your Wear OS watch.
+Route all Android SMS through Google Voice — from any app, Gemini, or your Wear OS watch — and schedule texts to send later.
 
 ## The Problem
 
@@ -122,13 +122,143 @@ The ADB commands persist across reboots.
 
 - **Gemini auto-send** — Automatically send intercepted Gemini SMS (vs. opening for review)
 - **Auto-send confirmation** — Show a "Sent via Google Voice" notification on auto-sends
+- **Send Later** — On/off switch, slot times, hold defaults and permission rows. See [Send Later](#send-later).
 - **Incoming SMS notifications** — Show a heads-up notification for every received SMS (default on; useful for 2FA codes). Toggling off leaves the inbox-persistence path intact — only the live notification is suppressed.
+
+## Send Later
+
+Schedule a text from where you already write it, and Voice2SMS sends it through
+Google Voice at the time you pick. Send Later is **off by default**.
+
+### Scheduling a message
+
+- **In the Google Voice app:** open a one-to-one conversation and type your
+  message. A small light-blue tab appears at the right edge, next to the
+  message box. Tap it to open the **Send later** sheet.
+- **In the Voice2SMS Google Voice screen** (the WebView): the same tab appears
+  next to the message box of a one-to-one conversation.
+
+The sheet shows who the message goes to, the text, and quick times ("In 1 hour",
+then the next morning, afternoon, evening and night slots; the slot times are
+set in Settings), or **Pick date & time**. It also has a **Hold if they text
+first** checkbox (on by default) and an **If late** choice. When a name matches
+several numbers, the sheet asks **Which number?** and won't schedule until you
+pick one. A display name alone is never used as a recipient.
+
+After **Schedule**, the message box is cleared and a confirmation with **Undo**
+shows for about 10 seconds. Undo cancels the scheduled message, and puts the
+text back only if the box is still empty in the same conversation.
+
+A light-blue **chip** above the message box shows what is scheduled in that
+conversation ("Scheduled · Sat 9:00 AM", "2 scheduled", "Held · …"). Tap it to
+edit a single message, or to see that conversation in **Upcoming**. Upcoming
+(Settings → Send Later → Upcoming) lists Pending, Held and Recent (last 30 days)
+messages, with Change time, Cancel and Send now.
+
+Group conversations are not supported.
+
+### Setup
+
+Open Settings → **Send Later**. Each row shows its live status; tap a row to
+fix it.
+
+1. **Turn Send Later on.** While it is off, nothing is sent automatically and
+   no tab or chip appears. Your saved messages are kept and wait for you.
+2. **Accessibility** ("Read the Google Voice screen"). Required to schedule
+   from the Google Voice app. It is the same Voice2SMS accessibility service
+   that handles Gemini; it now also watches the Google Voice app, to add the tab
+   and chip and to read the messages on screen. Without it you can still
+   schedule from the Voice2SMS Google Voice screen. With it on, a scheduled
+   send can also start straight from the background.
+3. **Notification access** ("Notice replies"). Optional but recommended. Send
+   Later reads Google Voice's message notifications so it can hold a scheduled
+   text as soon as the other person replies. Without it, Send Later usually
+   can't confirm the conversation at the send time, so the message is held
+   for you to decide.
+4. **Exact alarms** ("Send at the exact time"), **Notifications**, and
+   **Battery**. Without exact alarms, messages may go out a few minutes late.
+   Without notifications you won't see the last-call and hold notices. For
+   battery, set Voice2SMS's battery use to **Unrestricted**. On Samsung, also
+   add it to Battery → Background usage limits → **Never sleeping apps** (no
+   app can read that list, so the row shows advice for it, not a status).
+   If you schedule while the app is battery-limited, Voice2SMS warns you, at
+   most once a day.
+5. **Contacts** (optional) helps match a name to the right number.
+
+If Voice2SMS is **force-stopped**, Android keeps it stopped, even after a
+reboot, until you open it again. Scheduled messages cannot go out until then.
+
+On Samsung, if the accessibility or notification-access toggle is greyed out,
+open App info for Voice2SMS, tap ⋮ and choose **Allow restricted settings**.
+
+### What happens at the send time
+
+- **Last call.** Five minutes before, a notification counts down
+  ("Sending to … in 5 min") with **Cancel**, **Edit** and **Send now**.
+- **The send.** Voice2SMS opens its Google Voice screen, types the message and
+  sends it. An opaque "Sending scheduled message…" cover hides the screen for
+  the whole send, locked or not. On a locked phone, the screen turns on and the
+  cover shows over the lock screen; the phone stays locked. On an unlocked
+  phone, the cover has a **Stop** button. A send is given at most one minute.
+- **Sent** is shown only when Voice2SMS sees the new message in the
+  conversation during that send.
+- **Hold if they text first.** If they texted or called since you scheduled,
+  the message is **held**, not sent, and a notification asks you: **Send
+  anyway**, **Snooze 1 h** or **Cancel** (tap the notification to edit). With notification access, this
+  happens as soon as their reply arrives, not only at the send time. If you
+  already sent a similar text yourself, the scheduled one is cancelled.
+- **Lateness budget.** A message is never sent automatically later than its
+  budget. The default budget depends on how far ahead you scheduled: 10 minutes
+  (under 1 hour ahead), 30 minutes (up to a day), 2 hours (more than a day).
+  The **If late** choice can change it to 30 minutes, never late, or up to
+  24 hours.
+- **Reminders.** When a message can't go by itself (too late, not signed in to
+  Google Voice in Voice2SMS, no connection for too long, the daily limit, you
+  were using Voice2SMS, or the phone could not show the send), you get a
+  reminder instead. Tapping it opens the message ready to review; nothing is
+  sent until you tap Send.
+- **"May have already sent."** If Voice2SMS cannot confirm the send (for
+  example the app was stopped mid-send), the message is held. There is no
+  automatic retry. Check the conversation; **Send anyway (may be a duplicate)**
+  sends it again only if you tap it.
+- A held or reminded message that you leave for 24 hours expires and stays
+  listed under Recent.
+- **Send now** and **Send anyway** need the phone unlocked.
+
+### Permissions
+
+v1.6.0 adds these permissions, all for Send Later:
+
+| Permission | Why |
+|---|---|
+| `SCHEDULE_EXACT_ALARM` | Wake up at the scheduled time and five minutes before it |
+| `RECEIVE_BOOT_COMPLETED` | Re-arm the alarms after a reboot |
+| `ACCESS_NETWORK_STATE` | Wait for a connection instead of failing a send |
+| `READ_CONTACTS` (optional) | Match a conversation name to its number |
+| `USE_FULL_SCREEN_INTENT` | Show the send over the lock screen when the accessibility service is off |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Open the system prompt that lets alarms fire on time |
+
+Notification access is granted in system settings, not as a permission.
+
+### Privacy
+
+- Scheduled messages are stored only on the phone, in the app's private
+  database (`sendlater.db`). This includes the text and the number.
+- Sent, cancelled and expired messages are deleted 30 days after they finish.
+  Name and number pairs read from the Google Voice conversation list are
+  deleted after 90 days unseen.
+- From notifications, Send Later keeps only a fingerprint (hash) and time of
+  each message, only for conversations with a scheduled message, for 7 days.
+- The Send Later database and settings are excluded from Android backup and
+  device transfer.
+- Release builds log no message text, names or numbers.
 
 ## Tested On
 
 | Device | Role | OS |
 |--------|------|-----|
 | Pixel 10 Pro Fold | Phone | Android 16 |
+| Galaxy S22 Ultra | Phone (Send Later test device) | Android 16 |
 | Galaxy Watch 6 (SM-R960) | Watch | Wear OS 5 |
 
 ## Building
@@ -162,7 +292,7 @@ See `.github/workflows/release.yml` for details. Requires four repository secret
 
 ## Architecture
 
-For technical details — inject.js flow, Angular chip creation, Gemini interception internals, Wearable Data Layer protocol, singleton WebView guards — see [ARCHITECTURE.md](ARCHITECTURE.md).
+For technical details — inject.js flow, Angular chip creation, Gemini interception internals, Send Later, Wearable Data Layer protocol, singleton WebView guards — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Acceptable Use
 
@@ -177,6 +307,27 @@ This project relies on internal details of Google Voice's web UI (Angular compon
 MIT License. See [LICENSE](LICENSE).
 
 ## Version History
+
+### v1.6.0
+
+Send Later: schedule a text and have it sent through Google Voice.
+
+- Schedule from the Google Voice app (accessibility overlay tab) or from the
+  Voice2SMS Google Voice screen; one sheet with rolling time slots, "Hold if
+  they text first" and an "If late" choice
+- In-thread chip and an Upcoming screen to change, cancel or send now
+- Exact alarms with a five-minute last call; re-armed after reboot
+- At the send time, facts only make it more careful: hold on a reply, cancel
+  when you already sent it, remind when late, signed out or offline
+- Every scheduled send runs under an opaque cover, also over the lock screen;
+  only a send seen in the conversation counts as sent, and there is no
+  automatic retry ("may have already sent" → your Send anyway)
+- Optional notification access for reply detection; battery health row and warning
+- Off by default; switching it off cancels alarms and keeps your messages
+- Local-only storage with 30-day deletion, excluded from backup
+- New permissions: `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`,
+  `ACCESS_NETWORK_STATE`, `READ_CONTACTS` (optional), `USE_FULL_SCREEN_INTENT`,
+  `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
 
 ### v1.5.1
 
