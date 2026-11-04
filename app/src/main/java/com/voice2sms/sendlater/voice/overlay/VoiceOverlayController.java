@@ -435,12 +435,25 @@ public final class VoiceOverlayController {
         final VoiceDraftFlow f = flow;
         final RepositoryRecords rec = records;
         WORKER.execute(() -> {
-            final VoiceDraftFlow.UndoOutcome o = f.undo(p.snapshot, p.id);
+            // Clearing off in Settings: the draft was never touched, so Undo only cancels (R6).
+            final VoiceDraftFlow.UndoOutcome o;
+            if (p.clear) {
+                o = f.undo(p.snapshot, p.id);
+            } else {
+                rec.cancel(p.id);
+                o = VoiceDraftFlow.UndoOutcome.NOT_RESTORED;
+            }
             final boolean canceled = rec.lastCancelApplied();
+            // Not restored: either the draft is still in the composer (never cleared, or the clear
+            // failed) or the composer changed and the text stays listed in Upcoming (R6, R35 Recent).
+            final boolean stillThere = o != VoiceDraftFlow.UndoOutcome.RESTORED && canceled
+                    && f.draftStillInComposer(p.snapshot);
             main.post(() -> {
                 if (service == null) return;
                 int res = o == VoiceDraftFlow.UndoOutcome.RESTORED ? R.string.sendlater_overlay_undone
-                        : canceled ? R.string.sendlater_overlay_undone_kept : R.string.sendlater_overlay_undo_failed;
+                        : !canceled ? R.string.sendlater_overlay_undo_failed
+                        : stillThere ? R.string.sendlater_overlay_undone_in_composer
+                        : R.string.sendlater_overlay_undone_kept;
                 windows.showToast(service.getString(res), null);
                 main.removeCallbacks(hideToastRunnable);
                 main.postDelayed(hideToastRunnable, CONFIRM_MS / 2);

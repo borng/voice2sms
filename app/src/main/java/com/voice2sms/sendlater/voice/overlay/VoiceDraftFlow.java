@@ -75,4 +75,17 @@ public final class VoiceDraftFlow {
         }
         return nodes.setDraft(snapshot.getDraftText()) ? UndoOutcome.RESTORED : UndoOutcome.NOT_RESTORED;
     }
+
+    /**
+     * Whether the snapshot's draft is still in the composer of the same thread (exact text). Used
+     * after an Undo that did not restore: the draft was never cleared (clear failed, or clearing is
+     * off in Settings), so the message says it is still there rather than that it was not restored.
+     */
+    public boolean draftStillInComposer(VoiceDraftSnapshot snapshot) {
+        if (snapshot == null) return false;
+        String liveTitle = nodes.readTitle();
+        String liveDraft = nodes.readDraft();
+        return liveTitle != null && liveDraft != null
+                && liveTitle.equals(snapshot.getDisplayName()) && liveDraft.equals(snapshot.getDraftText());
+    }
 }
