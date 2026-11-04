@@ -21,6 +21,7 @@ import androidx.preference.SwitchPreferenceCompat;
 import com.voice2sms.sendlater.ui.SendLaterSettingsController;
 import com.voice2sms.sendlater.battery.BatteryAdvice;
 import com.voice2sms.sendlater.battery.BatteryHealth;
+import com.voice2sms.sendlater.battery.BatteryIndicator;
 import com.voice2sms.sendlater.battery.BatteryStatus;
 
 public class SettingsActivity extends AppCompatActivity {
@@ -48,7 +49,7 @@ public class SettingsActivity extends AppCompatActivity {
     public static class SettingsFragment extends PreferenceFragmentCompat {
         /** "Send Later" category rows (R36); summaries refreshed in onResume. */
         private SendLaterSettingsController sendLater;
-        /** Send Later "Battery" row (R38); summary refreshed in onResume. */
+        /** Send Later "Battery" row (R38, R43); summary and indicator icon refreshed in onResume. */
         private static final String KEY_SENDLATER_BATTERY = "sendlater_battery";
 
         @Override
@@ -169,6 +170,8 @@ public class SettingsActivity extends AppCompatActivity {
         private void updateBatteryStatus(Preference pref) {
             BatteryStatus status = BatteryHealth.check(requireContext());
             pref.setSummary(BatteryAdvice.text(status, status.isSamsung()));
+            // R43: green check / amber warning; the summary above carries the words for TalkBack
+            pref.setIcon(BatteryIndicator.of(status).iconRes);
         }
 
         private void openBatteryFix() {

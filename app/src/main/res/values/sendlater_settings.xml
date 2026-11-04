@@ -56,8 +56,8 @@
     <string name="sendlater_settings_onboarding_listener_fallback">Open Settings &gt; Notifications &gt; Notification access</string>
 
     <!-- Onboarding (SetupActivity) -->
-    <string name="sendlater_settings_onboarding_title">Optional: Send Later</string>
-    <string name="sendlater_settings_onboarding_body">Send Later lets you schedule a text and have it sent for you. It is off until you turn it on in Settings, and works best with the permissions below. Accessibility is needed to add the Send Later button to the Google Voice app; without it you can still schedule from the voice2sms Google Voice screen. Notification access is optional: without it, Send Later checks the conversation only when a message is due.</string>
+    <string name="sendlater_settings_onboarding_title">Send Later</string>
+    <string name="sendlater_settings_onboarding_body">Send Later lets you schedule a text and have it sent for you. It is on by default (you can turn it off in Settings) and works best with the permissions below. Accessibility is needed to add the Send Later button to the Google Voice app; without it you can still schedule from the voice2sms Google Voice screen. Notification access is optional: without it, Send Later checks the conversation only when a message is due.</string>
     <string name="sendlater_settings_onboarding_accessibility">Accessibility: the same Voice2SMS accessibility service that handles Gemini also watches the Google Voice app, so it can add the Send Later button and see whether they replied before a scheduled text goes out.</string>
     <string name="sendlater_settings_onboarding_listener">Notification access: lets Send Later notice a reply from the Google Voice notification, so it can hold a scheduled text when they text you first.</string>
     <string name="sendlater_settings_onboarding_samsung">Samsung: if a toggle is greyed out, open App info for Voice2SMS, tap the menu and choose Allow restricted settings.</string>
@@ -65,6 +65,15 @@
     <string name="sendlater_settings_onboarding_settings_button">Send Later settings</string>
     <string name="sendlater_settings_onboarding_listener_on">Notification access: On</string>
     <string name="sendlater_settings_onboarding_listener_off">Notification access: Off</string>
+    <!-- Setup wizard Send Later step (R42, D27): one button and one live status line each -->
+    <string name="sendlater_setup_listener_on">Status: Notification access on</string>
+    <string name="sendlater_setup_listener_off">Status: Notification access off</string>
+    <string name="sendlater_setup_exact_button">Allow exact alarms</string>
+    <string name="sendlater_setup_exact_on">Status: Exact alarms allowed</string>
+    <string name="sendlater_setup_exact_off">Status: Exact alarms not allowed (messages may go out a few minutes late)</string>
+    <string name="sendlater_setup_notifications_button">Allow notifications</string>
+    <string name="sendlater_setup_notifications_on">Status: Notifications allowed</string>
+    <string name="sendlater_setup_notifications_off">Status: Notifications off (you will not see reminders or held messages)</string>
 
     <!-- Upcoming screen -->
     <string name="sendlater_upcoming_title">Upcoming</string>

@@ -1,41 +1,50 @@
 package com.voice2sms;
 
+import android.Manifest;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
 import android.app.role.RoleManager;
+import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.view.ViewGroup;
+import android.view.View;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.Button;
-import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.voice2sms.sendlater.listener.SendLaterListenerStatus;
 import com.voice2sms.sendlater.battery.BatteryHealth;
+import com.voice2sms.sendlater.battery.BatteryIndicator;
+import com.voice2sms.sendlater.battery.BatteryStatus;
+import com.voice2sms.sendlater.listener.SendLaterListenerStatus;
+import com.voice2sms.sendlater.ui.SendLaterSettingsController;
 
 import java.util.List;
 
 /**
  * First-install onboarding wizard.
- * Walks the user through 3 setup steps:
+ * Walks the user through 5 setup steps:
  *   1. Set Voice2SMS as default SMS app
  *   2. Run ADB commands to block Gemini's direct SMS (future: Shizuku)
  *   3. Enable the Accessibility Service for Gemini interception
- * plus an optional Send Later card (R37) explaining why the accessibility service also watches
- * Google Voice and why notification access helps; both stay opt-in.
+ *   4. Send Later (R42, D27): notification access, exact alarms and notifications, each with a
+ *      button and a live status line, plus the plain-words reasons why the accessibility service
+ *      also watches Google Voice and why notification access helps (R37)
+ *   5. Battery (R42, R43): allow background use, with a green/amber indicator; on Samsung the
+ *      Never sleeping apps advice
+ * Every status line is recomputed in onResume, so coming back from a system screen shows the
+ * new state.
  */
 public class SetupActivity extends Activity {
 
     private static final int REQUEST_DEFAULT_SMS = 4001;
-
-    /** Send Later card status line (R37); null until the card is added. */
-    private TextView sendLaterListenerStatus;
+    private static final int REQUEST_POST_NOTIFICATIONS = 4002;
 
     private static final String ADB_COMMANDS =
             "adb shell pm revoke com.google.android.googlequicksearchbox android.permission.SEND_SMS\n\n"
@@ -80,103 +89,89 @@ public class SetupActivity extends Activity {
             finish();
         });
 
-        addSendLaterCard(btnDone);
-        addBatteryNote(btnDone);
-
-        updateStatusIndicators();
-    }
-
-    /**
-     * Optional Send Later card (R37), inserted above Done. Plain-words reasons for the
-     * accessibility service watching Google Voice and for notification access; nothing is
-     * turned on from here.
-     */
-    private void addSendLaterCard(Button btnDone) {
-        if (!(btnDone.getParent() instanceof LinearLayout)) return;
-        LinearLayout parent = (LinearLayout) btnDone.getParent();
-        float dp = getResources().getDisplayMetrics().density;
-
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackgroundColor(0xFFFFFFFF);
-        int pad = (int) (16 * dp);
-        card.setPadding(pad, pad, pad, pad);
-        card.setElevation(1 * dp);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = (int) (24 * dp);
-        card.setLayoutParams(lp);
-
-        TextView title = new TextView(this);
-        title.setText(R.string.sendlater_settings_onboarding_title);
-        title.setTextSize(18);
-        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
-        title.setTextColor(0xFF1A1A1A);
-        card.addView(title);
-
-        int[] paragraphs = {
-                R.string.sendlater_settings_onboarding_body,
-                R.string.sendlater_settings_onboarding_accessibility,
-                R.string.sendlater_settings_onboarding_listener,
-                R.string.sendlater_settings_onboarding_samsung};
-        for (int res : paragraphs) {
-            TextView t = new TextView(this);
-            t.setText(res);
-            t.setTextSize(14);
-            t.setTextColor(0xFF555555);
-            t.setPadding(0, (int) (8 * dp), 0, 0);
-            card.addView(t);
-        }
-
-        sendLaterListenerStatus = new TextView(this);
-        sendLaterListenerStatus.setTextSize(13);
-        sendLaterListenerStatus.setPadding(0, (int) (8 * dp), 0, 0);
-        card.addView(sendLaterListenerStatus);
-
-        Button listener = new Button(this);
-        listener.setText(R.string.sendlater_settings_onboarding_listener_button);
-        listener.setOnClickListener(v -> {
+        // Step 4: Send Later (R42)
+        findViewById(R.id.btn_sendlater_listener).setOnClickListener(v -> {
             try {
                 startActivity(SendLaterListenerStatus.openSettingsIntent());
-            } catch (android.content.ActivityNotFoundException e) {
+            } catch (ActivityNotFoundException | SecurityException e) {
                 Toast.makeText(this, R.string.sendlater_settings_onboarding_listener_fallback,
                         Toast.LENGTH_LONG).show();
             }
         });
-        card.addView(listener);
+        Button btnExact = findViewById(R.id.btn_sendlater_exact);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            btnExact.setOnClickListener(v -> requestExactAlarms());
+        } else {
+            btnExact.setEnabled(false); // always allowed below API 31
+        }
+        findViewById(R.id.btn_sendlater_notifications).setOnClickListener(v -> requestNotifications());
 
-        Button settings = new Button(this);
-        settings.setText(R.string.sendlater_settings_onboarding_settings_button);
-        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
-        card.addView(settings);
+        // Step 5: Battery (R42, R43)
+        findViewById(R.id.btn_battery_fix).setOnClickListener(v -> openBatteryFix());
+        findViewById(R.id.battery_samsung_advice)
+                .setVisibility(BatteryHealth.isSamsung() ? View.VISIBLE : View.GONE);
 
-        parent.addView(card, parent.indexOfChild(btnDone));
+        updateStatusIndicators();
+    }
+
+    private void requestExactAlarms() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+        Intent i = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:" + getPackageName()));
+        if (!open(i)) openAppDetails();
     }
 
     /**
-     * Send Later battery note (R38, D25), inserted above Done: background use, the force-stop
-     * caveat, and Samsung's Never sleeping apps list on Samsung phones. Changes nothing itself.
+     * API 33+: the POST_NOTIFICATIONS runtime request while the system will still show it;
+     * once it no longer would (asked before and no rationale), the app's notification settings.
      */
-    private void addBatteryNote(Button btnDone) {
-        if (!(btnDone.getParent() instanceof LinearLayout)) return;
-        LinearLayout parent = (LinearLayout) btnDone.getParent();
-        float dp = getResources().getDisplayMetrics().density;
-        StringBuilder text = new StringBuilder()
-                .append(getString(R.string.sendlater_battery_setup_title)).append("\n\n")
-                .append(getString(R.string.sendlater_battery_setup_body)).append(' ')
-                .append(getString(R.string.sendlater_battery_setup_force_stop));
-        if (BatteryHealth.isSamsung()) {
-            text.append(' ').append(getString(R.string.sendlater_battery_setup_samsung));
+    private void requestNotifications() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            boolean asked = getSharedPreferences(SendLaterSettingsController.ASKED_PREFS, MODE_PRIVATE)
+                    .getBoolean(Manifest.permission.POST_NOTIFICATIONS, false);
+            if (!asked || shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
+                getSharedPreferences(SendLaterSettingsController.ASKED_PREFS, MODE_PRIVATE).edit()
+                        .putBoolean(Manifest.permission.POST_NOTIFICATIONS, true).apply();
+                requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS},
+                        REQUEST_POST_NOTIFICATIONS);
+                return;
+            }
         }
-        TextView note = new TextView(this);
-        note.setText(text);
-        note.setTextColor(0xFF444444);
-        note.setTextSize(14);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = (int) (24 * dp);
-        note.setLayoutParams(lp);
-        parent.addView(note, parent.indexOfChild(btnDone));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            if (open(i)) return;
+        }
+        openAppDetails();
+    }
+
+    private void openBatteryFix() {
+        Intent fix = BatteryHealth.fixIntent(this);
+        if (fix == null || !open(fix)) {
+            Toast.makeText(this, R.string.sendlater_battery_no_screen, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private boolean open(Intent i) {
+        try {
+            startActivity(i);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException e) {
+            return false;
+        }
+    }
+
+    private void openAppDetails() {
+        open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName())));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_POST_NOTIFICATIONS) updateStatusIndicators();
     }
 
     @Override
@@ -204,14 +199,30 @@ public class SetupActivity extends Activity {
         step3Status.setText(a11yEnabled ? "Status: Enabled" : "Status: Not enabled");
         step3Status.setTextColor(a11yEnabled ? 0xFF4CAF50 : 0xFF888888);
 
-        // Send Later card: notification access status (R37)
-        if (sendLaterListenerStatus != null) {
-            boolean listenerOn = SendLaterListenerStatus.isEnabled(this);
-            sendLaterListenerStatus.setText(listenerOn
-                    ? R.string.sendlater_settings_onboarding_listener_on
-                    : R.string.sendlater_settings_onboarding_listener_off);
-            sendLaterListenerStatus.setTextColor(listenerOn ? 0xFF4CAF50 : 0xFF888888);
-        }
+        // Step 4: Send Later statuses (R42)
+        boolean listenerOn = SendLaterListenerStatus.isEnabled(this);
+        status(R.id.sendlater_listener_status, listenerOn,
+                R.string.sendlater_setup_listener_on, R.string.sendlater_setup_listener_off);
+        status(R.id.sendlater_exact_status, SendLaterSettingsController.exactAlarmsAllowed(this),
+                R.string.sendlater_setup_exact_on, R.string.sendlater_setup_exact_off);
+        status(R.id.sendlater_notifications_status, SendLaterSettingsController.notificationsAllowed(this),
+                R.string.sendlater_setup_notifications_on, R.string.sendlater_setup_notifications_off);
+
+        // Step 5: Battery status and indicator (R42, R43)
+        BatteryStatus battery = BatteryHealth.check(this);
+        BatteryIndicator indicator = BatteryIndicator.of(battery);
+        status(R.id.battery_status, indicator == BatteryIndicator.OK,
+                R.string.sendlater_battery_setup_status_ok, R.string.sendlater_battery_setup_status_limited);
+        ImageView icon = findViewById(R.id.battery_indicator);
+        icon.setImageResource(indicator.iconRes);
+        icon.setContentDescription(getString(indicator.descriptionRes));
+    }
+
+    /** A step status line, coloured like step 1 and step 3. */
+    private void status(int viewId, boolean on, int onText, int offText) {
+        TextView t = findViewById(viewId);
+        t.setText(on ? onText : offText);
+        t.setTextColor(on ? 0xFF4CAF50 : 0xFF888888);
     }
 
     private boolean isAccessibilityServiceEnabled() {

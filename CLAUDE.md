@@ -5,7 +5,7 @@
 Adds scheduled send (`com.voice2sms.sendlater`): capture a draft in the native
 Google Voice app or the GV WebView, pick a time, and the app sends it through
 the GV WebView at the due time unless facts at that moment (a reply, lateness,
-no session, no confirmation) say hold or remind. Off by default. See
+no session, no confirmation) say hold or remind. On by default (D26). See
 ARCHITECTURE.md → Send Later. Gemini, Wear, RespondViaMessage and review mode
 are unchanged.
 
@@ -35,7 +35,7 @@ Other capture/send paths:
 | `app/src/main/java/com/voice2sms/GVoiceWebViewActivity.java` | WebView activity |
 | `app/src/main/java/com/voice2sms/GeminiSmsInterceptService.java` | AccessibilityService for Gemini SMS interception; delegates Google Voice events to the Send Later overlay |
 | `app/src/main/java/com/voice2sms/SmsHandlerActivity.java` | SMS intent router; exports `EXTRA_FORCE_AUTO_SEND` constant |
-| `app/src/main/java/com/voice2sms/SetupActivity.java` | First-install setup wizard |
+| `app/src/main/java/com/voice2sms/SetupActivity.java` | First-install setup wizard (steps 4 Send Later, 5 Battery; statuses refreshed in onResume) |
 | `app/src/main/java/com/voice2sms/SettingsActivity.java` | Preferences + Gemini toggle + Send Later category + build stamp |
 | `app/src/main/java/com/voice2sms/wear/WearSmsListenerService.java` | Receives `{phone,body,requestId}` from watch; trampolines to `SmsHandlerActivity` |
 | `app/src/main/java/com/voice2sms/wear/WearPayloadValidator.java` | Pure-JVM payload validator (tested by `WearPayloadValidatorTest`) |
@@ -51,7 +51,7 @@ Other capture/send paths:
 | `app/src/main/java/com/voice2sms/sendlater/voice/logic/`, `voice/overlay/` | Native Voice screen signature, bubble parser, recipient resolver; overlay tab/chip/Undo, `OnScreenThreadSource`, `VoiceOverlayIds` (R8 allowlist) |
 | `app/src/main/java/com/voice2sms/sendlater/web/` | `SendLaterWebHooks` (bridge side), `OriginGuard`, `ThreadUrl`, `CapturePayload`, `ChipState` |
 | `app/src/main/java/com/voice2sms/sendlater/ui/` | `SendLaterSheetActivity`, `UpcomingActivity`, `SendLaterSettingsController` |
-| `app/src/main/java/com/voice2sms/sendlater/battery/` | `BatteryHealth`, `BatteryAdvice`, `BatteryWarning` (once-a-day warning) |
+| `app/src/main/java/com/voice2sms/sendlater/battery/` | `BatteryHealth`, `BatteryAdvice`, `BatteryWarning` (once-a-day warning), `BatteryIndicator` (green OK / amber WARN icon for the wizard and the Settings row) |
 | `app/src/debug/java/com/voice2sms/sendlater/debug/` | adb-only `SendLaterDebugReceiver` (debug APK only) |
 
 ### Building & Testing
@@ -81,7 +81,7 @@ paths, and the auth callback — don't hide it behind a wrapper.
 
 ### Send Later Rules
 
-- **Defaults OFF.** Every auto-send trigger checks the master switch; switch changes go through `SendLaterEngine.applySwitch` (never `SendLaterScheduler.reregisterAll` from UI). Off cancels alarms and keeps records.
+- **Defaults ON** (`SendLaterSettings.DEFAULT_ENABLED`, D26; an install that never set the switch reads on). Every auto-send trigger checks the master switch; switch changes go through `SendLaterEngine.applySwitch` (never `SendLaterScheduler.reregisterAll` from UI). Off cancels alarms and keeps records.
 - **No Wear/Gemini auto-send machinery.** The scheduled path never uses `EXTRA_FORCE_AUTO_SEND` / `force_auto_send` or `AutoSendRateLimiter`; it has its own `ScheduledSendQueue` (2 s spacing, 50/day). Enforced by `SendLaterSourceSafetyTest`.
 - **Only `ScheduledSendController` produces SENT_VERIFIED** (a new outbound bubble with the body hash that settles, or a server time, during the job). The engine never verifies or retries from a thread read; unconfirmed / IN_FLIGHT-at-restart → HELD(UNVERIFIED) + "may have already sent". The only retry is the user's Send anyway.
 - **Cover and window flags are one decision.** Every scheduled job shows the opaque `LockCover`; show-when-locked / turn-screen-on / keep-screen-on are set only while it is up. Never dismiss the keyguard.

@@ -11,4 +11,9 @@
          blue. Fills (tab, chip, Schedule button, picker chips) keep sendlater_accent. -->
     <color name="sendlater_accent_text">#1A4F9C</color>
     <color name="sendlater_on_accent_text">#FFFFFF</color>
+    <!-- Battery indicator (R43, D28): one value for light and dark, since the setup wizard is
+         always light and Settings follows the system. #1E8E3E: 4.2:1 on #FFFFFF, 4.5:1 on #121212,
+         3.1:1 on #303030. #C26401: 4.1:1 / 4.6:1 / 3.2:1. White glyphs on them: 4.2:1 / 4.1:1. -->
+    <color name="sendlater_battery_ok">#1E8E3E</color>
+    <color name="sendlater_battery_warn">#C26401</color>
 </resources>

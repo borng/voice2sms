@@ -128,7 +128,8 @@ The ADB commands persist across reboots.
 ## Send Later
 
 Schedule a text from where you already write it, and Voice2SMS sends it through
-Google Voice at the time you pick. Send Later is **off by default**.
+Google Voice at the time you pick. Send Later is **on by default**; you can
+turn it off in Settings → Send Later.
 
 ### Scheduling a message
 
@@ -159,11 +160,24 @@ Group conversations are not supported.
 
 ### Setup
 
-Open Settings → **Send Later**. Each row shows its live status; tap a row to
-fix it.
+The first-install setup wizard has two steps for Send Later, after the
+Gemini steps:
 
-1. **Turn Send Later on.** While it is off, nothing is sent automatically and
-   no tab or chip appears. Your saved messages are kept and wait for you.
+- **Send Later**: buttons for notification access, exact alarms and
+  notifications, each with its own live status line, and a plain-words note on
+  why the accessibility service also watches Google Voice and why notification
+  access helps.
+- **Battery**: a button that opens the right screen to allow background use,
+  with a green check (background use allowed) or an amber warning (limited)
+  next to its status. On Samsung it also shows the Never sleeping apps advice.
+
+The statuses refresh each time you come back to the wizard. Later, the same
+settings are in Settings → **Send Later**. Each row shows its live status; tap
+a row to fix it. The Battery row shows the same green check or amber warning.
+
+1. **Send Later switch** (on by default). While it is off, nothing is sent
+   automatically and no tab or chip appears. Your saved messages are kept and
+   wait for you.
 2. **Accessibility** ("Read the Google Voice screen"). Required to schedule
    from the Google Voice app. It is the same Voice2SMS accessibility service
    that handles Gemini; it now also watches the Google Voice app, to add the tab
@@ -323,7 +337,8 @@ Send Later: schedule a text and have it sent through Google Voice.
   only a send seen in the conversation counts as sent, and there is no
   automatic retry ("may have already sent" → your Send anyway)
 - Optional notification access for reply detection; battery health row and warning
-- Off by default; switching it off cancels alarms and keeps your messages
+- On by default; switching it off cancels alarms and keeps your messages
+- Setup wizard steps for Send Later and Battery, with a battery indicator
 - Local-only storage with 30-day deletion, excluded from backup
 - New permissions: `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`,
   `ACCESS_NETWORK_STATE`, `READ_CONTACTS` (optional), `USE_FULL_SCREEN_INTENT`,

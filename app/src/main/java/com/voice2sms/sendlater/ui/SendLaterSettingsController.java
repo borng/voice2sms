@@ -137,11 +137,7 @@ public final class SendLaterSettingsController {
             if (slot != null) slot.setSummary(formatMinutes(c, slots[i]));
         }
 
-        boolean exact = true;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
-            exact = am != null && am.canScheduleExactAlarms();
-        }
+        boolean exact = exactAlarmsAllowed(c);
         summary(KEY_EXACT_ALARM_ROW, exact ? R.string.sendlater_settings_exact_granted
                 : R.string.sendlater_settings_exact_denied);
 
@@ -285,7 +281,8 @@ public final class SendLaterSettingsController {
         }
     }
 
-    private static final String ASKED_PREFS = "sendlater_settings_asked";
+    /** Which runtime permissions were requested once (shared with the setup wizard, R42). */
+    public static final String ASKED_PREFS = "sendlater_settings_asked";
 
     /**
      * True when the permission was requested before and the system will no longer show its
@@ -311,7 +308,15 @@ public final class SendLaterSettingsController {
         return ContextCompat.checkSelfPermission(c, permission) == PackageManager.PERMISSION_GRANTED;
     }
 
-    static boolean notificationsAllowed(Context c) {
+    /** Exact alarms allowed (always true below API 31). Also read by the setup wizard (R42). */
+    public static boolean exactAlarmsAllowed(Context c) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true;
+        AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+        return am != null && am.canScheduleExactAlarms();
+    }
+
+    /** POST_NOTIFICATIONS granted (API 33+) and app notifications on. Also read by the setup wizard. */
+    public static boolean notificationsAllowed(Context c) {
         if (Build.VERSION.SDK_INT >= 33 && !granted(c, Manifest.permission.POST_NOTIFICATIONS)) {
             return false;
         }

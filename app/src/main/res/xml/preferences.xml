@@ -52,7 +52,7 @@
             android:title="@string/sendlater_settings_enabled_title"
             android:summaryOn="@string/sendlater_settings_enabled_on"
             android:summaryOff="@string/sendlater_settings_enabled_off"
-            android:defaultValue="false" />
+            android:defaultValue="true" />
         <Preference
             android:key="sendlater_upcoming"
             android:title="@string/sendlater_settings_upcoming_title"

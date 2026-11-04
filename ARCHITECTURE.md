@@ -8,7 +8,7 @@
 | `GVoiceWebViewActivity` | Hosts the WebView, manages auth flow, injects JS on page load. `singleTask` launch mode for intent reuse. |
 | `Voice2SmsApplication` | Application subclass holding singleton WebView. Configures async WebView startup and renderer warm-up (no URL prefetch: it races `loadUrl`). Registers the Send Later sender and runs `SendLaterEngine.onProcessStart`. |
 | `GeminiSmsInterceptService` | AccessibilityService monitoring Gemini's SMS compose overlay. Caches phone+body, intercepts Send button (resource ID match), null-source clicks (with SENDTO dedup), and voice "Yes" confirm (watchdog timer). Also hosts the Send Later Google Voice overlay. |
-| `SetupActivity` | First-install wizard: default SMS role, ADB commands for blocking Gemini carrier SMS, accessibility service enablement. |
+| `SetupActivity` | First-install wizard: default SMS role, ADB commands for blocking Gemini carrier SMS, accessibility service enablement, then step 4 Send Later (notification access, exact alarms, notifications: button + live status each) and step 5 Battery (allow background use, `BatteryIndicator`, Samsung Never sleeping apps advice). Statuses refresh in onResume. |
 | `SettingsActivity` | Preferences: set default SMS app, switch Google account, Gemini interception toggle, auto-send switch, Send Later category. |
 | `inject.js` | Core JS injection — SPA detection, compose flow, chip creation, body fill, auto-send; Send Later module. |
 | `fingerprint-mask.js` | Anti-fingerprinting overrides + dark mode CSS filter. |
@@ -122,8 +122,8 @@ All matched by checking for "Text", "SMS", or "Message" substring.
 
 ## Send Later
 
-Scheduled send, in `com.voice2sms.sendlater` (v1.6.0). Off by default
-(`sendlater_enabled`). The rule: judgment is collected when the message is
+Scheduled send, in `com.voice2sms.sendlater` (v1.6.0). On by default
+(`sendlater_enabled`, `SendLaterSettings.DEFAULT_ENABLED`, D26). The rule: judgment is collected when the message is
 scheduled; at the due time only facts can make the app more careful, and only
 a tap from the user makes it less careful.
 
@@ -139,7 +139,7 @@ a tap from the user makes it less careful.
 | Listener | `listener.SendLaterNotificationListener` | Reads Google Voice (and voice2sms incoming-SMS) notifications. `LiveConversationKeys` drops anything not matching a SCHEDULED/HELD/IN_FLIGHT conversation before any DB call. Stores `{conversationKey, direction, kind, time, textHash}` (no text) and triggers early hold. `NotificationThreadEventSource` is the engine's reply source. |
 | Send controller and cover | `send.WebViewScheduledSender`, `send.ScheduledSendController`, `send.LockCover` | Sender: queue slot (`ScheduledSendQueue`), mark IN_FLIGHT with a body hash, launch `GVoiceWebViewActivity` with `EXTRA_SCHEDULED_MESSAGE_ID` and a one-shot token. Controller: runs the scheduled branch under the cover, drives the existing compose flow, verifies, reports `SendLaterEngine.onSendOutcome`. |
 | Upcoming and Settings | `ui.UpcomingActivity`, `ui.SendLaterSettingsController` | Upcoming: Pending / Held / Recent (30 d) with Change time, Cancel, Send now (Cancel only while off). Settings: one "Send Later" category with live status rows (switch, slots, policies, exact alarm, notifications, accessibility, notification access, contacts, battery, Upcoming). |
-| Battery guard | `battery.BatteryHealth`, `BatteryWarning` | Detects background restriction / battery optimization; Settings row opens the right screen; Samsung "Never sleeping apps" is advice only (no API). A notification at most once a day when scheduling while limited, or when a due alarm fires more than 2 min late. |
+| Battery guard | `battery.BatteryHealth`, `BatteryWarning` | Detects background restriction / battery optimization; Settings row opens the right screen and shows `BatteryIndicator` (green check / amber warning) as its icon, as does the wizard's Battery step; Samsung "Never sleeping apps" is advice only (no API). A notification at most once a day when scheduling while limited, or when a due alarm fires more than 2 min late. |
 
 Efficiency (R40): no polling, no foreground service while idle, no wakelocks
 beyond the send itself, two exact alarms per pending message. The overlay only

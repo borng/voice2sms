@@ -233,6 +233,221 @@
                 android:text="Open Accessibility Settings" />
         </LinearLayout>
 
+        <!-- sendlater:wizard-defaults start (R42, R43, R37) -->
+        <!-- Step 4: Send Later -->
+        <LinearLayout
+            android:id="@+id/step_sendlater"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:text="4"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    android:background="@android:color/holo_blue_dark"
+                    android:gravity="center"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sendlater_settings_onboarding_title"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A1A1A" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_settings_onboarding_body"
+                android:textSize="14sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_settings_onboarding_accessibility"
+                android:textSize="13sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_settings_onboarding_listener"
+                android:textSize="13sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_settings_onboarding_samsung"
+                android:textSize="13sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:id="@+id/sendlater_listener_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_setup_listener_off"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btn_sendlater_listener"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_settings_onboarding_listener_button"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:id="@+id/sendlater_exact_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_setup_exact_off"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btn_sendlater_exact"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_setup_exact_button"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:id="@+id/sendlater_notifications_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_setup_notifications_off"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btn_sendlater_notifications"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_setup_notifications_button" />
+        </LinearLayout>
+
+        <!-- Step 5: Battery -->
+        <LinearLayout
+            android:id="@+id/step_battery"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:text="5"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    android:background="@android:color/holo_blue_dark"
+                    android:gravity="center"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sendlater_battery_setup_step_title"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A1A1A" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_battery_setup_body"
+                android:textSize="14sp"
+                android:textColor="#555555"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/battery_samsung_advice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_battery_setup_samsung"
+                android:textSize="13sp"
+                android:textColor="#555555"
+                android:visibility="gone"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_battery_setup_force_stop"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:layout_marginBottom="12dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <ImageView
+                    android:id="@+id/battery_indicator"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/sendlater_ic_battery_warn"
+                    android:contentDescription="@string/sendlater_battery_indicator_warn"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/battery_status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sendlater_battery_setup_status_limited"
+                    android:textSize="13sp"
+                    android:textColor="#888888" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_battery_fix"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_battery_setup_button" />
+        </LinearLayout>
+        <!-- sendlater:wizard-defaults end -->
+
         <!-- Future: Shizuku -->
         <LinearLayout
             android:layout_width="match_parent"
