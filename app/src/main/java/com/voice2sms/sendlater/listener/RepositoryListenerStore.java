@@ -45,21 +45,24 @@ final class RepositoryListenerStore implements ListenerEventStore {
             next.add(h);
             p.edit().putStringSet(KEY_NUMBER_MATCHES, next).apply();
         } catch (RuntimeException ignored) {
-            // The stored events still back hasNumberMatch.
+            // Not recorded: hasNumberMatch stays false and the message stays UNVERIFIED.
         }
     }
 
+    /**
+     * Decided only from the durable number-match marks. Stored events are not consulted: they are
+     * keyed by the E.164 and may have been matched by name for another message to the same number.
+     */
     @Override public boolean hasNumberMatch(String conversationKey) {
         String h = hash(conversationKey);
+        if (h == null) return false;
         try {
             Set<String> cur = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getStringSet(KEY_NUMBER_MATCHES, null);
-            if (h != null && cur != null && cur.contains(h)) return true;
-        } catch (RuntimeException ignored) {
-            // fall back to the events
+            return cur != null && cur.contains(h);
+        } catch (RuntimeException e) {
+            return false;
         }
-        List<ThreadEvent> e = repo.eventsSince(conversationKey, 0L);
-        return e != null && !e.isEmpty();
     }
 
     /** Lowercase hex SHA-256 of {@code key}, or null. */

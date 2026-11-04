@@ -98,13 +98,41 @@ public class ListenerFailClosedTest {
         assertTrue(store.notes.isEmpty());
     }
 
-    @Test public void defaultNumberMatchFallsBackToStoredEvents() {
+    @Test public void defaultNumberMatchIgnoresStoredEvents() {
         ListenerFixtures.FakeStore plain = new ListenerFixtures.FakeStore();
         assertFalse(plain.hasNumberMatch(E164));
         plain.recordEvent(new ConversationRef(E164, null),
                 new ThreadEvent(ThreadEvent.Direction.IN, ThreadEvent.Kind.SMS, T0, null, null), "listener", T0);
-        assertTrue(plain.hasNumberMatch(E164));
+        assertFalse(plain.hasNumberMatch(E164));
         plain.noteNumberMatch(E164); // default: no-op, no throw
+        assertFalse(plain.hasNumberMatch(E164));
+    }
+
+    /**
+     * Verifier F1: a name-only reply stored under the shared number for a named message must not
+     * vouch for a nameless message to the same number.
+     */
+    @Test public void nameMatchedEventsForAnotherMessageDoNotVouchForANamelessOne() {
+        MatchStore store = new MatchStore();
+        ScheduledMessage named = message(1, E164, NAME).build();
+        ScheduledMessage nameless = message(2, E164, null).build();
+        store.inner.seed(named);
+        store.inner.seed(nameless);
+        ListenerEventRecorder rec = new ListenerEventRecorder(store, null);
+        assertTrue(rec.onNotification(gvReply(T0 + 5 * MIN), T0 + 5 * MIN));
+        assertFalse(store.inner.eventsSince(ConversationRef.of(nameless).key(), 0L).isEmpty());
+        assertTrue(store.notes.isEmpty());
+        NotificationThreadEventSource src = new NotificationThreadEventSource(store, () -> true);
+        assertFalse(src.isAvailableFor(ConversationRef.of(nameless)));
+        assertEquals(Classification.UNVERIFIED, check(src, nameless));
+        // Same with the interface default (no durable marks at all).
+        ListenerFixtures.FakeStore plain = new ListenerFixtures.FakeStore();
+        plain.seed(named);
+        plain.seed(nameless);
+        new ListenerEventRecorder(plain, null).onNotification(gvReply(T0 + 5 * MIN), T0 + 5 * MIN);
+        NotificationThreadEventSource src2 = new NotificationThreadEventSource(plain, () -> true);
+        assertFalse(src2.isAvailableFor(ConversationRef.of(nameless)));
+        assertEquals(Classification.UNVERIFIED, check(src2, nameless));
     }
 
     @Test public void repositoryStoreHashesKeysAndNeverStoresTheNumber() {
