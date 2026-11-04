@@ -18,6 +18,10 @@ import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceManager;
 import androidx.preference.SwitchPreferenceCompat;
 
+import com.voice2sms.sendlater.battery.BatteryAdvice;
+import com.voice2sms.sendlater.battery.BatteryHealth;
+import com.voice2sms.sendlater.battery.BatteryStatus;
+
 public class SettingsActivity extends AppCompatActivity {
 
     private static final int REQUEST_ACCOUNT_PICKER = 3001;
@@ -41,6 +45,9 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     public static class SettingsFragment extends PreferenceFragmentCompat {
+        /** Send Later "Battery" row (R38); summary refreshed in onResume. */
+        private static final String KEY_SENDLATER_BATTERY = "sendlater_battery";
+
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
             setPreferencesFromResource(R.xml.preferences, rootKey);
@@ -105,6 +112,16 @@ public class SettingsActivity extends AppCompatActivity {
                 });
             }
 
+            // Send Later battery row (R38): live status, tap opens the right screen
+            Preference battery = findPreference(KEY_SENDLATER_BATTERY);
+            if (battery != null) {
+                updateBatteryStatus(battery);
+                battery.setOnPreferenceClickListener(pref -> {
+                    openBatteryFix();
+                    return true;
+                });
+            }
+
             // Version + build (long-press to copy for bug reports)
             Preference version = findPreference("app_version");
             if (version != null) {
@@ -135,6 +152,30 @@ public class SettingsActivity extends AppCompatActivity {
             Preference geminiToggle = findPreference("gemini_intercept_toggle");
             if (geminiToggle != null) {
                 updateGeminiInterceptStatus(geminiToggle);
+            }
+            Preference battery = findPreference(KEY_SENDLATER_BATTERY);
+            if (battery != null) {
+                updateBatteryStatus(battery);
+            }
+        }
+
+        private void updateBatteryStatus(Preference pref) {
+            BatteryStatus status = BatteryHealth.check(requireContext());
+            pref.setSummary(BatteryAdvice.text(status, status.isSamsung()));
+        }
+
+        private void openBatteryFix() {
+            Intent fix = BatteryHealth.fixIntent(requireContext());
+            if (fix == null) {
+                Toast.makeText(requireContext(), R.string.sendlater_battery_no_screen,
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            try {
+                startActivity(fix);
+            } catch (android.content.ActivityNotFoundException | SecurityException e) {
+                Toast.makeText(requireContext(), R.string.sendlater_battery_no_screen,
+                        Toast.LENGTH_LONG).show();
             }
         }
 
