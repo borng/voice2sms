@@ -150,7 +150,15 @@ public final class SendLaterEngine {
 
     /**
      * Called once from {@code Voice2SmsApplication.onCreate}: on the background executor, resolves
-     * IN_FLIGHT rows by the Schrödinger rule (R31) first, then sweeps expired HELD/reminded rows.
+     * IN_FLIGHT rows by the Schrödinger rule (R31) first, then sweeps expired HELD/reminded rows,
+     * then re-arms every remaining alarm ({@link SendLaterScheduler#reregisterAll}).
+     *
+     * <p>The re-arm covers what no broadcast reports: a force-stop (user, or Samsung "deep
+     * sleeping" apps) and a SCHEDULE_EXACT_ALARM revoke (Android kills the app and drops its exact
+     * alarms; PERMISSION_STATE_CHANGED is sent only on a grant) both cancel every alarm the app
+     * holds. Any later component start (activity, accessibility service bind, SMS_DELIVER, boot)
+     * creates the process and lands here. It is idempotent: the same request codes with
+     * FLAG_UPDATE_CURRENT | FLAG_IMMUTABLE, and reminded rows get only their EXPIRE alarm (I6).
      */
     public static void onProcessStart(final Context context) {
         final EngineDeps d;
@@ -165,6 +173,7 @@ public final class SendLaterEngine {
                 synchronized (LOCK) {
                     doResolveInFlight(d, context);
                     doSweepExpired(d);
+                    schedulerOf(d).reregisterAll(context);
                 }
             } catch (RuntimeException e) {
                 Log.e(TAG, "process start failed: " + e.getClass().getSimpleName());

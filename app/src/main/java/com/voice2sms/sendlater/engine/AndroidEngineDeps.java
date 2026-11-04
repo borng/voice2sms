@@ -29,9 +29,7 @@ import com.voice2sms.sendlater.domain.Watermark;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -248,45 +246,55 @@ final class AndroidEngineDeps {
 
     // ------------------------------------------------------------------ network wait (WAIT, R27)
 
-    /** registerDefaultNetworkCallback per waiting message; the first onAvailable re-runs the ladder. */
+    /**
+     * registerDefaultNetworkCallback per waiting message, gated by {@link NetworkWaitGate}: only an
+     * onCapabilitiesChanged with INTERNET + VALIDATED re-runs the ladder, once, then unregisters.
+     */
     static final class Waiter implements NetworkWaiter {
-        private final Context app;
-        private final Map<Long, ConnectivityManager.NetworkCallback> callbacks = new HashMap<>();
+        private final NetworkWaitGate gate;
 
-        Waiter(Context app) { this.app = app; }
-
-        @Override public synchronized void awaitNetwork(final long id) {
-            if (callbacks.containsKey(id)) return;
-            ConnectivityManager cm = (ConnectivityManager) app.getSystemService(Context.CONNECTIVITY_SERVICE);
-            if (cm == null) return;
-            ConnectivityManager.NetworkCallback cb = new ConnectivityManager.NetworkCallback() {
-                @Override public void onAvailable(Network network) {
-                    if (remove(id) == null) return;
-                    SendLaterEngine.runInBackground(app, () -> SendLaterEngine.onDue(app, id), null);
+        Waiter(final Context app) {
+            this.gate = new NetworkWaitGate(new NetworkWaitGate.Registrar() {
+                @Override public Object register(final long id, final NetworkWaitGate g) {
+                    ConnectivityManager cm =
+                            (ConnectivityManager) app.getSystemService(Context.CONNECTIVITY_SERVICE);
+                    if (cm == null) return null;
+                    ConnectivityManager.NetworkCallback cb = new ConnectivityManager.NetworkCallback() {
+                        @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
+                            if (caps == null) return;
+                            g.onCapabilities(id,
+                                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                                    Build.VERSION.SDK_INT);
+                        }
+                    };
+                    try {
+                        cm.registerDefaultNetworkCallback(cb);
+                        return cb;
+                    } catch (RuntimeException e) {
+                        // Too many callbacks or no permission: the RETRY alarm at the deadline still fires.
+                        return null;
+                    }
                 }
-            };
-            try {
-                cm.registerDefaultNetworkCallback(cb);
-                callbacks.put(id, cb);
-            } catch (RuntimeException e) {
-                // Too many callbacks or no permission: the RETRY alarm at the deadline still fires.
-            }
+
+                @Override public void unregister(Object handle) {
+                    try {
+                        ConnectivityManager cm =
+                                (ConnectivityManager) app.getSystemService(Context.CONNECTIVITY_SERVICE);
+                        if (cm != null) cm.unregisterNetworkCallback((ConnectivityManager.NetworkCallback) handle);
+                    } catch (RuntimeException ignored) {
+                        // already unregistered
+                    }
+                }
+            }, (id, done) -> SendLaterEngine.runInBackground(app, () -> SendLaterEngine.onDue(app, id), done));
+        }
+
+        @Override public void awaitNetwork(long id) {
+            gate.await(id);
         }
 
         @Override public void cancel(long id) {
-            remove(id);
-        }
-
-        private synchronized ConnectivityManager.NetworkCallback remove(long id) {
-            ConnectivityManager.NetworkCallback cb = callbacks.remove(id);
-            if (cb == null) return null;
-            try {
-                ConnectivityManager cm = (ConnectivityManager) app.getSystemService(Context.CONNECTIVITY_SERVICE);
-                if (cm != null) cm.unregisterNetworkCallback(cb);
-            } catch (RuntimeException ignored) {
-                // already unregistered
-            }
-            return cb;
+            gate.cancel(id);
         }
     }
 }
