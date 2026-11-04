@@ -146,13 +146,13 @@ public class SendBaselineTest {
 
     @Test public void thePostSendBaselineIsOneShotPerThreadAndExpires() {
         ThreadBaseline b = new ThreadBaseline(list(in(null, "old")));
-        WebViewThreadEventSource.armPostSendRead(E164, b, NOW);
-        assertNull("another thread does not consume it", WebViewThreadEventSource.takePostSendBaseline("+15550100001", NOW));
-        assertSame(b, WebViewThreadEventSource.takePostSendBaseline(E164, NOW + 1_000L));
-        assertNull("one-shot", WebViewThreadEventSource.takePostSendBaseline(E164, NOW + 1_000L));
+        WebViewThreadEventSource.armPostSendRead(E164, b, true, NOW);
+        assertNull("another thread does not consume it", WebViewThreadEventSource.takePostSendRead("+15550100001", NOW));
+        assertSame(b, WebViewThreadEventSource.takePostSendRead(E164, NOW + 1_000L).baseline);
+        assertNull("one-shot", WebViewThreadEventSource.takePostSendRead(E164, NOW + 1_000L));
 
-        WebViewThreadEventSource.armPostSendRead(E164, b, NOW);
-        assertNull("expired", WebViewThreadEventSource.takePostSendBaseline(E164,
+        WebViewThreadEventSource.armPostSendRead(E164, b, true, NOW);
+        assertNull("expired", WebViewThreadEventSource.takePostSendRead(E164,
                 NOW + WebViewThreadEventSource.POST_SEND_ARM_MS + 1L));
     }
 

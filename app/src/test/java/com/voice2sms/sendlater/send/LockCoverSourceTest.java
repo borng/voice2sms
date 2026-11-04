@@ -114,7 +114,7 @@ public class LockCoverSourceTest {
         assertTrue(body(ctrl, "onHardTimeout").contains("endJob("));
         assertTrue(body(ctrl, "onJobEnded").contains("Event.JOB_ENDED"));
         assertTrue(body(ctrl, "onPausedTooLong").contains("LockCoverPolicy.finishNow("));
-        assertTrue(body(ctrl, "onPausedTooLong").contains("endJob(true)"));
+        assertTrue(body(ctrl, "onPausedTooLong").contains("endJob(finish)"));
         assertTrue("the hard timer is armed per job", body(ctrl, "startNext").contains("hardTimeout"));
         String act = code(ACTIVITY);
         assertTrue(body(act, "onPause").contains("scheduledSend.onPauseOrStop(false)"));
@@ -132,18 +132,23 @@ public class LockCoverSourceTest {
         assertTrue(body(code(CONTROLLER), "allowsNavigation").contains("LockCoverPolicy.allowNavigation("));
     }
 
-    @Test public void unlockedPathUnchanged() throws IOException {
+    @Test public void everyScheduledJobIsCoveredAndTimedRegardlessOfTheKeyguard() throws IOException {
+        // OD26 replaces OD25's "unlocked path unchanged": the keyguard never skips the cover.
         String ctrl = code(CONTROLLER);
-        String settle = body(ctrl, "settle");
-        int els = settle.indexOf("} else {");
-        assertTrue(els > 0);
-        String unlocked = settle.substring(els);
-        assertFalse("not over the keyguard: no finish", unlocked.contains("finish"));
-        assertFalse("not over the keyguard: no cover", unlocked.contains("cover"));
-        assertTrue(unlocked.contains("applyLockFlags(false)"));
-        assertTrue("the hard timer only over the keyguard", body(ctrl, "onHardTimeout").contains("!overKeyguard"));
+        assertFalse("no launch-time keyguard flag gates the cover, timeout or pause", ctrl.contains("overKeyguard"));
         String start = body(ctrl, "startNext");
-        assertTrue(start.indexOf("if (overKeyguard)") < start.indexOf("hardTimeout"));
+        assertTrue("the hard timer is armed for every job", start.contains("postDelayed(hardTimeout"));
+        assertFalse(start.contains("if (lockedNow)"));
+        assertTrue(body(ctrl, "updateCover").contains("LockCoverPolicy.showCover(claimed, jobState, lockedNow)"));
+        String handle = body(ctrl, "handle");
+        int cover = handle.indexOf("updateCover()");
+        int flags = handle.indexOf("LockCoverPolicy.applyLockFlags(");
+        assertTrue("cover first, then the flags", cover >= 0 && flags > cover);
+        assertTrue(handle.contains("cover.isShown()"));
+        String hand = body(ctrl, "onClaimed");
+        assertTrue(hand.indexOf("updateCover()") < hand.indexOf("LockCoverPolicy.applyLockFlags("));
+        String settle = body(ctrl, "settle");
+        assertFalse("settle never drops flags under a cover", settle.contains("applyLockFlags("));
     }
 
     @Test public void webViewTouchesFromTheCoverPathStayGuarded() throws IOException {

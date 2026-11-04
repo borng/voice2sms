@@ -9,6 +9,7 @@ import android.content.IntentFilter;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
@@ -35,34 +36,36 @@ import java.util.concurrent.Executors;
  * controller per instance and delegates to it from onCreate, onNewIntent, onPageFinished and
  * onDestroy; this class holds all the logic.
  *
- * <p>Flow for one launch carrying {@link #EXTRA_SCHEDULED_MESSAGE_ID}: show over the keyguard and
- * turn the screen on (never dismiss the keyguard), take the launch token ({@link LaunchClaims}),
- * load the IN_FLIGHT row off the main thread, ask the activity to open the composer for
- * {e164, text}; once inject.js auto-send is injected, poll the open thread with readThread plus a
- * composer probe ({@link SendWatch}): the first read taken while our text is still unsent is the
- * baseline, and only a NEW outbound bubble with the body hash beyond it verifies
- * ({@link ThreadBaseline}, {@link SendVerifier}): -> SENT_VERIFIED (with a late-reply detail when
- * an inbound landed between the check and the send); nothing new within the window ->
- * SENT_UNVERIFIED (the engine holds it and never re-sends unread, I5); WebView/auth failure ->
- * FAILED. An identical older bubble never proves a send. The outcome goes to
- * {@link SendLaterEngine#onSendOutcome}, which owns every status change. Launches that arrive
- * while one is running queue behind it (several messages due together). When the activity was
- * launched over the keyguard it finishes once the queue is empty and the engine has finished its
- * own post-send read of the thread (its state broadcast, or {@link #FINISH_GRACE_MS}), so the GV
- * page is not left on the lock screen.
+ * <p>Flow for one launch carrying {@link #EXTRA_SCHEDULED_MESSAGE_ID}: take the launch token
+ * ({@link LaunchClaims}); only then put the opaque {@link LockCover} over the WebView and show over
+ * the keyguard / turn the screen on (never dismiss the keyguard); load the IN_FLIGHT row off the
+ * main thread, ask the activity to open the composer for {e164, text}; once inject.js auto-send is
+ * injected, poll the open thread with readThread plus a composer probe ({@link SendWatch}): the
+ * first read taken while our text is still unsent is the baseline, and only a NEW outbound bubble
+ * with the body hash beyond it verifies ({@link ThreadBaseline}, {@link SendVerifier}), once it
+ * has settled: -> SENT_VERIFIED (with a late-reply detail when an inbound landed between the check
+ * and the send); nothing settled within the verify window -> SENT_UNVERIFIED (the engine holds it
+ * and never re-sends unread, I5); a failure before anything was typed -> CANNOT_SHOW with a
+ * {@link SendDetails} detail. An identical older bubble never proves a send. The outcome goes to
+ * {@link SendLaterEngine#onSendOutcome}, which owns every status change, at the latest when the
+ * verify window ends. Launches that arrive while one is running queue behind it.
  *
  * <p>Never uses the Wear/Gemini auto-send extra or the global auto-send rate limiter: the
  * scheduled queue is the limiter (R30).
  *
- * <p>Fix pass 2: a match must settle ({@link SendWatch#settle}, G1) before it verifies; failures
- * before anything was typed report CANNOT_SHOW with the cause (G2, OD23).
- *
- * <p>send-lock-cover ({@link LockCoverPolicy}): lock flags only after a successful launch claim;
- * over the keyguard an opaque {@link LockCover} hides the WebView and eats all input, only the
- * target thread may load, the job ends after {@link LockCoverPolicy#HARD_TIMEOUT_MS} at the
- * latest, and on job end, pause or stop the flags are cleared and the activity finishes. If the
- * phone was unlocked meanwhile, the cover comes off at job end and the activity stays. The
- * unlocked path (not launched over the keyguard) is unchanged.
+ * <p>send-hardening (OD26) on top of fix pass 2 and send-lock-cover:
+ * <ul>
+ *   <li>Every claimed scheduled job is covered for its whole run, locked or not
+ *       ({@link LockCoverPolicy}); the lock flags are set only while the cover is up and cleared
+ *       before it comes down. The {@link LockCoverPolicy#HARD_TIMEOUT_MS} timeout and "a pause
+ *       ends the job" apply to every job. The keyguard state is re-read on resume, pause, focus
+ *       change and screen / unlock broadcasts, and only decides what a job end does (finish while
+ *       locked, else uncover and stay).</li>
+ *   <li>R1: the engine's read after any outcome but a settled SENT_VERIFIED is armed so every
+ *       bubble present is old ({@link WebViewThreadEventSource#armPostSendRead}).</li>
+ *   <li>R3: an unclaimed launch (a stale intent, or the relaunch after a renderer crash) clears
+ *       the lock flags and, while locked, finishes at once without loading the page.</li>
+ * </ul>
  */
 public final class ScheduledSendController {
 
@@ -78,7 +81,7 @@ public final class ScheduledSendController {
     /** Detail passed with SENT_VERIFIED when an inbound landed between the check and the send. */
     public static final String DETAIL_LATE_REPLY = "late_reply";
 
-    /** Page load plus composer injection must happen within this (else FAILED). */
+    /** Page load plus composer injection must happen within this (else CANNOT_SHOW). */
     static final long COMPOSE_TIMEOUT_MS = 40_000L;
     /**
      * After injection: inject.js may poll the page for up to ~25 s before it clicks Send, then
@@ -99,12 +102,12 @@ public final class ScheduledSendController {
      * normally finishes on the engine's state broadcast, well before this.
      */
     static final long FINISH_GRACE_MS = WebViewThreadEventSource.WAIT_MS + 5_000L;
-    /** Over the keyguard with nothing reported (stale or replayed launch). */
+    /** After a job that reported nothing (its row was resolved or canceled meanwhile). */
     static final long IDLE_FINISH_MS = 2_000L;
     /** After the engine's state broadcast for the last outcome. */
     static final long ENGINE_DONE_FINISH_MS = 300L;
     static final int READ_LIMIT = 30;
-    /** A pause/stop over the keyguard shorter than this is a launch transient (screen waking). */
+    /** A pause/stop shorter than this is a launch transient (screen waking). */
     static final long PAUSE_GRACE_MS = 1_000L;
 
     /** What the controller needs from the activity. Every WebView touch is behind isAlive(). */
@@ -147,7 +150,7 @@ public final class ScheduledSendController {
         SendWatch watch;
         boolean injected;
         long deadlineMs;
-        /** Over the keyguard: hard end, {@link LockCoverPolicy#HARD_TIMEOUT_MS} after the claim. */
+        /** Hard end, {@link LockCoverPolicy#HARD_TIMEOUT_MS} after the claim (every job, OD26). */
         final long hardDeadlineMs;
 
         Job(long id, long checkTimeMs, long claimedAtMs) {
@@ -167,17 +170,25 @@ public final class ScheduledSendController {
     private final ArrayDeque<Job> queue = new ArrayDeque<>();
     private Job current;
     private volatile boolean busy;
-    private boolean overKeyguard;
-    /** Id of the last outcome reported over the keyguard; its engine broadcast lets us finish. */
+    /**
+     * The keyguard is locked or the screen is dark, as last re-read (resume, pause, focus change,
+     * screen / unlock broadcasts, and every finish decision). Decides only what a job end does;
+     * never whether the cover shows (OD26).
+     */
+    private boolean lockedNow;
+    /** An unclaimed launch finished at once over the keyguard: the activity must not load GV (R3). */
+    private boolean skipPageLoad;
+    /** Id of the last outcome reported; its engine broadcast ends the job. */
     private long awaitingEngineId = -1L;
     private BroadcastReceiver engineDone;
+    private BroadcastReceiver screenEvents;
     /** A launch claim succeeded in this activity (lock flags may apply). */
     private boolean claimed;
     private LockCoverPolicy.JobState jobState = LockCoverPolicy.JobState.IDLE;
     private final LockCover cover;
     /** Recipient of the running (or last) job: the only thread that may load while covered. */
     private String targetE164;
-    /** Hard deadline of the last job over the keyguard (bounds the post-outcome wait). */
+    /** Hard deadline of the last job (bounds the post-outcome wait). */
     private long lastHardDeadlineMs;
     private boolean resumed;
     private LockCoverPolicy.Event pauseEvent = LockCoverPolicy.Event.PAUSED;
@@ -244,28 +255,49 @@ public final class ScheduledSendController {
         intent.removeExtra(EXTRA_LAUNCH_TOKEN);
         intent.removeExtra(EXTRA_CHECK_TIME);
         boolean fromHistory = (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
-        if (!isActive()) overKeyguard = isKeyguardLocked();
+        refreshLockState();
         if (restored || fromHistory || id <= 0 || !LaunchClaims.INSTANCE.take(id, token)) {
             // Unclaimed, stale or replayed: no lock flags, no cover, nothing sent.
-            if (!isActive()) settle();
+            if (!isActive()) onUnclaimed();
             return true;
         }
-        // Claimed: only now may the activity show over the keyguard (send-lock-cover 1).
+        // Claimed: only now may the cover go up and the activity show over the keyguard.
         claimed = true;
         jobState = LockCoverPolicy.JobState.RUNNING;
-        applyLockFlags(LockCoverPolicy.applyLockFlags(claimed, jobState));
         updateCover();
+        applyLockFlags(LockCoverPolicy.applyLockFlags(claimed, jobState, cover.isShown()));
+        listenForScreen();
         WebViewScheduledSender.cancelLaunchNotification(app, id);
         enqueue(new Job(id, checkTime > 0 ? checkTime : System.currentTimeMillis(), System.currentTimeMillis()));
         return true;
+    }
+
+    /**
+     * R3: a launch with nothing to claim. After a renderer crash recreate() relaunches the same
+     * activity record, which keeps the old instance's show-when-locked, while the restored
+     * instance is unclaimed (no cover). Clear the flags; while locked (or dark) finish at once and
+     * never load the page (it would be the inbox, uncovered, over the keyguard).
+     */
+    private void onUnclaimed() {
+        applyLockFlags(false);
+        if (!lockedNow) return;
+        skipPageLoad = true;
+        endJob(true);
     }
 
     /** A hand-off claim joined this activity: the job runs under the same lock rules. */
     private void onClaimed() {
         claimed = true;
         jobState = LockCoverPolicy.JobState.RUNNING;
-        applyLockFlags(LockCoverPolicy.applyLockFlags(claimed, jobState));
+        refreshLockState();
         updateCover();
+        applyLockFlags(LockCoverPolicy.applyLockFlags(claimed, jobState, cover.isShown()));
+        listenForScreen();
+    }
+
+    /** R3: onCreate must not load GV for this launch (it is finishing over the keyguard). */
+    public boolean skipsPageLoad() {
+        return skipPageLoad;
     }
 
     /** The cover is up: the activity drops every touch, key and back event (send-lock-cover 2). */
@@ -282,40 +314,45 @@ public final class ScheduledSendController {
     public void onResume() {
         resumed = true;
         main.removeCallbacks(pauseCheck);
+        refreshLockState();
     }
 
-    /** Activity.onPause / onStop: over the keyguard, a real pause ends the job and finishes. */
+    /** Activity.onWindowFocusChanged: the keyguard may have come or gone. */
+    public void onWindowFocusChanged() {
+        refreshLockState();
+    }
+
+    /** Activity.onPause / onStop: a real pause ends every running scheduled job (OD26). */
     public void onPauseOrStop(boolean stopped) {
         resumed = false;
         pauseEvent = stopped ? LockCoverPolicy.Event.STOPPED : LockCoverPolicy.Event.PAUSED;
-        if (!claimed || !overKeyguard || jobState == LockCoverPolicy.JobState.IDLE) return;
+        refreshLockState();
+        if (!LockCoverPolicy.endsJob(pauseEvent, claimed, jobState)) return;
         main.removeCallbacks(pauseCheck);
         main.postDelayed(pauseCheck, PAUSE_GRACE_MS);
     }
 
     private void onPausedTooLong() {
         if (resumed || activity.isFinishing()) return;
-        if (!LockCoverPolicy.finishNow(pauseEvent, overKeyguard, isKeyguardLocked())) return;
+        if (!LockCoverPolicy.endsJob(pauseEvent, claimed, jobState)) return;
         main.removeCallbacksAndMessages(null);
+        boolean finish = LockCoverPolicy.finishNow(pauseEvent, refreshLockState());
         abandonAll("paused");
-        endJob(true);
+        endJob(finish);
     }
 
-    /** Over the keyguard: the job has run {@link LockCoverPolicy#HARD_TIMEOUT_MS}. */
+    /** The job has run {@link LockCoverPolicy#HARD_TIMEOUT_MS} since its claim (every job). */
     private void onHardTimeout() {
-        if (!overKeyguard || jobState != LockCoverPolicy.JobState.RUNNING) return;
+        if (!LockCoverPolicy.endsJob(LockCoverPolicy.Event.TIMEOUT, claimed, jobState)) return;
         main.removeCallbacksAndMessages(null);
         Job job = current;
         if (job != null) {
             // Typed -> SENT_UNVERIFIED (never re-sent unread, I5); not typed -> CANNOT_SHOW.
             current = null;
-            if (job.injected && job.watch != null) {
-                WebViewThreadEventSource.armPostSendRead(job.e164, job.watch.baseline(), System.currentTimeMillis());
-            }
-            SendLaterEngine.onSendOutcome(app, job.id, failureOutcome(job.injected), "timeout");
+            toEngine(job, failureOutcome(job.injected), "timeout");
         }
         abandonAll("timeout");   // queued jobs: nothing typed -> CANNOT_SHOW
-        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.TIMEOUT, overKeyguard, isKeyguardLocked()));
+        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.TIMEOUT, refreshLockState()));
     }
 
     /** A scheduled send is queued or running (the activity must not inject its own composer). */
@@ -364,8 +401,8 @@ public final class ScheduledSendController {
         main.removeCallbacksAndMessages(null);
         abandonAll("other_intent");
         stopListeningForEngine();
+        stopListeningForScreen();
         awaitingEngineId = -1L;
-        overKeyguard = false;
         jobState = claimed ? LockCoverPolicy.JobState.ENDED : LockCoverPolicy.JobState.IDLE;
         applyLockFlags(false);
         cover.hide();
@@ -375,13 +412,18 @@ public final class ScheduledSendController {
         if (live.get() == this) live = new WeakReference<>(null);
         main.removeCallbacksAndMessages(null);
         abandonAll("activity_gone");
+        // Without this activity the engine cannot read the page: an armed read would only linger.
+        WebViewThreadEventSource.disarmPostSendRead();
         stopListeningForEngine();
+        stopListeningForScreen();
+        // R3: a recreate() keeps show-when-locked on the activity record; clear it first.
+        applyLockFlags(false);
         cover.hide();   // the WebView is a singleton: restore its long-press and accessibility
     }
 
-    /** Over the keyguard, a stale launch must not open the account picker either. */
+    /** The keyguard is locked (or the screen dark): a stale launch must not open the account picker. */
     public boolean isOverKeyguard() {
-        return overKeyguard;
+        return lockedNow;
     }
 
     // ================================================================== one send
@@ -402,11 +444,10 @@ public final class ScheduledSendController {
         }
         current = job;
         busy = true;
-        if (overKeyguard) {
-            lastHardDeadlineMs = job.hardDeadlineMs;
-            main.removeCallbacks(hardTimeout);
-            main.postDelayed(hardTimeout, Math.max(0L, job.hardDeadlineMs - System.currentTimeMillis()));
-        }
+        // OD26: every scheduled job has the hard timeout, locked or not.
+        lastHardDeadlineMs = job.hardDeadlineMs;
+        main.removeCallbacks(hardTimeout);
+        main.postDelayed(hardTimeout, Math.max(0L, job.hardDeadlineMs - System.currentTimeMillis()));
         IO.execute(() -> {
             ScheduledMessage m = null;
             try {
@@ -497,13 +538,25 @@ public final class ScheduledSendController {
     private void report(Job job, SendOutcome outcome, String detail) {
         if (current != job) return;
         current = null;
-        if (job.watch != null && (outcome == SendOutcome.SENT_VERIFIED || outcome == SendOutcome.SENT_UNVERIFIED)) {
-            // The engine answers these with one read of this thread: date it against the baseline.
-            WebViewThreadEventSource.armPostSendRead(job.e164, job.watch.baseline(), System.currentTimeMillis());
-        }
         awaitingEngineId = job.id;
-        SendLaterEngine.onSendOutcome(app, job.id, outcome, detail);
+        toEngine(job, outcome, detail);
         afterOutcome();
+    }
+
+    /**
+     * The one way an outcome leaves the controller. The engine answers every outcome but
+     * CANNOT_SHOW with one read of this thread; that read is armed first (R1): a SENT_VERIFIED
+     * here has passed the settle gate (its only call sites follow {@link SendWatch#settle}), and
+     * dates bubbles against the baseline; anything else dates every bubble old, so it cannot
+     * verify. CANNOT_SHOW is answered without a read, so nothing is armed for it. The detail is
+     * mapped to the engine's contract ({@link SendDetails#forEngine}).
+     */
+    private void toEngine(Job job, SendOutcome outcome, String cause) {
+        if (job.e164 != null && outcome != SendOutcome.CANNOT_SHOW) {
+            WebViewThreadEventSource.armPostSendRead(job.e164, job.watch != null ? job.watch.baseline() : null,
+                    outcome == SendOutcome.SENT_VERIFIED, System.currentTimeMillis());
+        }
+        SendLaterEngine.onSendOutcome(app, job.id, outcome, SendDetails.forEngine(outcome, cause));
     }
 
     private void afterOutcome() {
@@ -516,44 +569,39 @@ public final class ScheduledSendController {
     }
 
     /**
-     * Nothing left to send. Not over the keyguard: drop the lock flags (unchanged path). Over the
-     * keyguard: the job ends on the engine's state broadcast for the last outcome (it reads this
-     * thread first), at most {@link #FINISH_GRACE_MS} and never past the hard deadline; a stale
-     * launch with nothing reported finishes after {@link #IDLE_FINISH_MS}.
+     * Nothing left to send. The job ends on the engine's state broadcast for the last outcome (it
+     * reads this thread first, so the covered page stays up), at most {@link #FINISH_GRACE_MS}
+     * and never past the hard deadline; a job that reported nothing ends after
+     * {@link #IDLE_FINISH_MS}. Same for every job, locked or not (OD26).
      */
     private void settle() {
-        if (overKeyguard) {
-            main.removeCallbacks(hardTimeout);
-            if (awaitingEngineId > 0) listenForEngine();
-            long wait = IDLE_FINISH_MS;
-            if (awaitingEngineId > 0) {
-                wait = Math.min(FINISH_GRACE_MS, Math.max(0L, lastHardDeadlineMs - System.currentTimeMillis()));
-            }
-            main.postDelayed(() -> {
-                if (!isActive() && !activity.isFinishing()) onJobEnded();
-            }, wait);
-        } else {
-            awaitingEngineId = -1L;
-            if (claimed) jobState = LockCoverPolicy.JobState.ENDED;
-            applyLockFlags(false);
+        if (!claimed || jobState != LockCoverPolicy.JobState.RUNNING) return;
+        main.removeCallbacks(hardTimeout);
+        if (awaitingEngineId > 0) listenForEngine();
+        long wait = IDLE_FINISH_MS;
+        if (awaitingEngineId > 0) {
+            wait = Math.min(FINISH_GRACE_MS, Math.max(0L, lastHardDeadlineMs - System.currentTimeMillis()));
         }
+        main.postDelayed(() -> {
+            if (!isActive() && !activity.isFinishing()) onJobEnded();
+        }, wait);
     }
 
-    /** Over the keyguard, all work is reported and handed off. */
+    /** All work is reported and handed off: finish while locked, else uncover and stay. */
     private void onJobEnded() {
         if (isActive()) return;
-        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.JOB_ENDED, overKeyguard, isKeyguardLocked()));
+        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.JOB_ENDED, refreshLockState()));
     }
 
     /**
      * Ends the scheduled work: clears every lock flag FIRST, then finishes at once (still locked)
-     * or, when the phone was unlocked during the send, removes the cover so the user sees the
-     * thread normally.
+     * or, when the phone is unlocked, removes the cover so the user sees the thread normally.
      */
     private void endJob(boolean finish) {
         main.removeCallbacks(hardTimeout);
         main.removeCallbacks(pauseCheck);
         stopListeningForEngine();
+        stopListeningForScreen();
         awaitingEngineId = -1L;
         if (claimed) jobState = LockCoverPolicy.JobState.ENDED;
         applyLockFlags(false);
@@ -564,9 +612,9 @@ public final class ScheduledSendController {
         updateCover();
     }
 
-    /** Shows or removes the cover per {@link LockCoverPolicy#showCover}. */
+    /** Shows or removes the cover per {@link LockCoverPolicy#showCover} (never skipped while running). */
     private void updateCover() {
-        if (LockCoverPolicy.showCover(claimed, overKeyguard, jobState, isKeyguardLocked())) {
+        if (LockCoverPolicy.showCover(claimed, jobState, lockedNow)) {
             cover.show(host.isAlive() ? host.pageView() : null);
             if (targetE164 != null) cover.setRecipient(targetE164);
         } else {
@@ -604,18 +652,41 @@ public final class ScheduledSendController {
         engineDone = null;
     }
 
+    /** Screen off / on and unlock while a job runs: re-read the keyguard state (OD26). */
+    private void listenForScreen() {
+        if (screenEvents != null) return;
+        screenEvents = new BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent i) {
+                refreshLockState();
+            }
+        };
+        IntentFilter f = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        f.addAction(Intent.ACTION_SCREEN_ON);
+        f.addAction(Intent.ACTION_USER_PRESENT);
+        try {
+            ContextCompat.registerReceiver(activity, screenEvents, f, ContextCompat.RECEIVER_NOT_EXPORTED);
+        } catch (RuntimeException e) {
+            screenEvents = null;   // resume / pause / focus still re-read it
+        }
+    }
+
+    private void stopListeningForScreen() {
+        if (screenEvents == null) return;
+        try {
+            activity.unregisterReceiver(screenEvents);
+        } catch (RuntimeException ignored) {
+            // not registered
+        }
+        screenEvents = null;
+    }
+
     /** Ends the running and queued jobs: typed -> SENT_UNVERIFIED, untyped -> CANNOT_SHOW. */
     private void abandonAll(String detail) {
         Job job = current;
         current = null;
-        if (job != null) {
-            SendLaterEngine.onSendOutcome(app, job.id,
-                    job.injected ? SendOutcome.SENT_UNVERIFIED : SendOutcome.CANNOT_SHOW, detail);
-        }
+        if (job != null) toEngine(job, failureOutcome(job.injected), detail);
         Job q;
-        while ((q = queue.poll()) != null) {
-            SendLaterEngine.onSendOutcome(app, q.id, SendOutcome.CANNOT_SHOW, detail);
-        }
+        while ((q = queue.poll()) != null) toEngine(q, SendOutcome.CANNOT_SHOW, detail);
         busy = false;
     }
 
@@ -626,9 +697,27 @@ public final class ScheduledSendController {
         return km != null && km.isKeyguardLocked();
     }
 
+    /** A dark screen counts as locked: the keyguard follows within its grace period. */
+    private boolean isLockedOrDark() {
+        if (isKeyguardLocked()) return true;
+        PowerManager pm = (PowerManager) app.getSystemService(Context.POWER_SERVICE);
+        return pm != null && !pm.isInteractive();
+    }
+
     /**
-     * Show over the keyguard and wake the screen while a CLAIMED send runs ({@link
-     * LockCoverPolicy#applyLockFlags}); never requests a dismiss. Cleared before any finish.
+     * Re-reads the keyguard state. It decides only what a job end does; a running job keeps its
+     * cover whatever it says. An ended job still covered (locked) uncovers once unlocked.
+     */
+    private boolean refreshLockState() {
+        lockedNow = isLockedOrDark();
+        if (jobState == LockCoverPolicy.JobState.ENDED && cover.isShown()) updateCover();
+        return lockedNow;
+    }
+
+    /**
+     * Show over the keyguard and wake the screen while a CLAIMED send runs under its cover
+     * ({@link LockCoverPolicy#applyLockFlags}); never requests a dismiss. Cleared before any
+     * finish and before the cover comes down.
      */
     private void applyLockFlags(boolean on) {
         if (activity.isFinishing()) return;

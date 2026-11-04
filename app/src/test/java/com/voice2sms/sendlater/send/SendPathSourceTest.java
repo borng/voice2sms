@@ -420,7 +420,7 @@ public class SendPathSourceTest {
         assertTrue("controller reports through SendLaterEngine.onSendOutcome", src.contains("onSendOutcome("));
         assertTrue("verified path reports SENT_VERIFIED", src.contains("SENT_VERIFIED"));
         assertTrue("no-match path reports SENT_UNVERIFIED", src.contains("SENT_UNVERIFIED"));
-        assertTrue("WebView/auth failure reports FAILED", src.contains("SendOutcome.FAILED") || src.contains("FAILED"));
+        assertTrue("failures before anything is typed report CANNOT_SHOW", src.contains("SendOutcome.CANNOT_SHOW"));
         assertTrue("late reply is distinguished", src.contains("VERIFIED_WITH_LATE_REPLY"));
         for (Path p : javaUnder(SEND)) {
             String f = code(p);

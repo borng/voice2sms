@@ -22,10 +22,11 @@ import java.util.List;
  * <ul>
  *   <li>GV web draws the outbound bubble as soon as Send is tapped, before the server takes it
  *       (and keeps it as "Not sent" when it fails). One sighting therefore decides nothing:
- *       {@link #settle} accepts a match only when it carries a server id or time, or when it is
+ *       {@link #settle} accepts a match only when it carries a server time, or when it is
  *       still there with the message box still empty at least {@link #SETTLE_MS} after it was
- *       first seen. A match that never settles before the controller's deadline is
- *       SENT_UNVERIFIED.</li>
+ *       first seen. An id attribute alone never confirms (send-hardening R4: GV's
+ *       {@code data-message-id} / {@code data-id} may be a client id on an optimistic bubble).
+ *       A match that never settles before the controller's deadline is SENT_UNVERIFIED.</li>
  *   <li>Without a baseline (the thread was never readable while our text was pending) an untimed
  *       newest outbound bubble may verify only when it is the ONLY outbound bubble of the read
  *       (a new conversation). In an existing thread it can be an older identical text, so it is
@@ -34,13 +35,13 @@ import java.util.List;
  */
 public final class SendWatch {
 
-    /** A matching bubble without a server id or time must persist this long (G1). */
+    /** A matching bubble without a server time must persist this long (G1, R4). */
     public static final long SETTLE_MS = 3_000L;
 
     private final String bodyHash;
     private ThreadBaseline baseline;
     private boolean sawPending;
-    /** The last onPoll's match carries what only the server gives (an id or a time). */
+    /** The last onPoll's match carries what only the server gives (a time; never just an id). */
     private boolean lastMatchConfirmed;
     /** When the current unconfirmed match was first seen with the box empty; -1 when none. */
     private long firstSightingMs = -1L;
@@ -71,7 +72,9 @@ public final class SendWatch {
         if (bubbles == null) return null;
         int newStart = baseline.newStart(bubbles);
         ThreadBubble match = firstNewOwn(bubbles, newStart);
-        lastMatchConfirmed = match != null && (match.getId() != null || match.getTimeMs() != null);
+        // R4 (OD26): an id attribute proves nothing (an optimistic bubble may carry a client id);
+        // only a time the page shows confirms at once, else the settle rule decides.
+        lastMatchConfirmed = match != null && match.getTimeMs() != null;
         return ThreadBaseline.verificationEvents(bodyHash, bubbles, newStart, nowMs);
     }
 

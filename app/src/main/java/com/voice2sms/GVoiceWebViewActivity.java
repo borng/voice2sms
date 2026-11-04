@@ -161,7 +161,11 @@ public class GVoiceWebViewActivity extends Activity {
                 return null; // consumed
             });
 
-        if (app.isSpaLoaded() && recipient != null) {
+        if (scheduledLaunch && scheduledSend.skipsPageLoad()) {
+            // R3 (send-hardening): an unclaimed scheduled launch over the keyguard (e.g. the
+            // relaunch after a renderer crash) is finishing; never load the inbox under it.
+            Log.d(TAG, "Unclaimed scheduled launch over the keyguard: finishing without a page load");
+        } else if (app.isSpaLoaded() && recipient != null) {
             // Warm start — SPA already loaded but may be on a stale view.
             // Reload the page for a clean messages-list state.
             // onPageFinished will inject the composer once ready.
@@ -966,10 +970,38 @@ public class GVoiceWebViewActivity extends Activity {
         }, text.length() * 60L + 300);
     }
 
+    /**
+     * send-hardening R5: while resumed, probe whether the message box holds text (a draft typed
+     * on the soft keyboard sends no touches here). Answers a boolean only, never the text. While
+     * a scheduled send owns the page the text is ours, so it does not count.
+     */
+    private final Handler composerProbeHandler = new Handler(Looper.getMainLooper());
+    private final Runnable composerProbe = new Runnable() {
+        @Override
+        public void run() {
+            if (!isActivityAlive()) return;
+            if (scheduledSend != null && (scheduledSend.isActive() || scheduledSend.isCovered())) {
+                ForegroundUse.noteComposer(false, System.currentTimeMillis());
+            } else {
+                webView.evaluateJavascript(SCHEDULED_COMPOSER_PROBE_JS,
+                        value -> ForegroundUse.noteComposer("true".equals(value), System.currentTimeMillis()));
+            }
+            composerProbeHandler.postDelayed(this, ForegroundUse.COMPOSER_PROBE_INTERVAL_MS);
+        }
+    };
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (scheduledSend != null) scheduledSend.onWindowFocusChanged();
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
         ForegroundUse.noteResumed(false);
+        composerProbeHandler.removeCallbacks(composerProbe);
+        ForegroundUse.noteComposer(false, System.currentTimeMillis());
         if (scheduledSend != null) scheduledSend.onPauseOrStop(false);
         if (sendLaterHooks != null) sendLaterHooks.onPause();
         CookieManager.getInstance().flush();
@@ -982,6 +1014,8 @@ public class GVoiceWebViewActivity extends Activity {
     protected void onResume() {
         super.onResume();
         ForegroundUse.noteResumed(true);
+        composerProbeHandler.removeCallbacks(composerProbe);
+        composerProbeHandler.post(composerProbe);
         if (scheduledSend != null) scheduledSend.onResume();
         if (sendLaterHooks != null) sendLaterHooks.onResume();
         if (webView != null) {
@@ -1048,6 +1082,7 @@ public class GVoiceWebViewActivity extends Activity {
             container.removeView(webView);
         }
 
+        composerProbeHandler.removeCallbacks(composerProbe);
         if (sendLaterHooks != null) sendLaterHooks.onDestroy();
         if (scheduledSend != null) scheduledSend.onDestroy();
 

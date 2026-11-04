@@ -38,7 +38,9 @@ import java.util.List;
  * then opens GVoiceWebViewActivity with {@link ScheduledSendController#EXTRA_SCHEDULED_MESSAGE_ID}
  * as {@link LaunchPlanner} decides: DIRECT startActivity when voice2sms's accessibility service is
  * enabled, a full-screen-intent notification on a locked or dark screen, otherwise nothing
- * (returns false: the engine records the LOCKED reminder, D15).
+ * (returns false with a null detail: the engine records the LOCKED reminder, D15). Every
+ * CANNOT_SHOW detail goes through {@link SendDetails#forEngine} (no_session / daily_cap /
+ * user_busy, else null).
  *
  * <p>Runs on the engine's background thread. Never writes a status itself: outcomes go through
  * {@link SendLaterEngine#onSendOutcome}. A launch nobody picks up within
@@ -98,7 +100,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
      * "not started" handling then finds the row released and does nothing more.
      */
     private static boolean notStarted(Context app, long id, String detail) {
-        SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW, detail);
+        SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                SendDetails.forEngine(SendOutcome.CANNOT_SHOW, detail));
         return false;
     }
 
@@ -113,7 +116,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
         if (ForegroundUse.isUserBusy(System.currentTimeMillis())) {
             // OD23: the user started using the WebView during the queue delay.
             if (LaunchClaims.INSTANCE.take(id, token)) {
-                SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY);
+                SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                        SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY));
             }
             return;
         }
@@ -128,7 +132,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
             default:
                 // Nothing was typed: the engine releases it with the LOCKED reminder.
                 if (LaunchClaims.INSTANCE.take(id, token)) {
-                    SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW, "cannot_show");
+                    SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                            SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "cannot_show"));
                 }
         }
     }
@@ -222,7 +227,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
         MAIN.postDelayed(() -> {
             if (!LaunchClaims.INSTANCE.take(id, token)) return;
             cancelLaunchNotification(app, id);
-            SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW, "launch_timeout");
+            SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                    SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "launch_timeout"));
         }, delayMs + CLAIM_TIMEOUT_MS);
     }
 

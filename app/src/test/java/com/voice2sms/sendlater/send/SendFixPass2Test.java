@@ -98,14 +98,17 @@ public class SendFixPass2Test {
         assertNull(w.settle(SendVerifier.Result.VERIFIED, true, NOW + 9_000L));
     }
 
-    @Test public void aMatchWithAServerTimeOrIdVerifiesAtOnce() {
+    @Test public void aMatchWithAServerTimeVerifiesAtOnceButAnIdAloneMustSettle() {
         SendWatch timed = new SendWatch(HASH);
         poll(timed, BASE, true, NOW - 5_000L);
         assertEquals(SendVerifier.Result.VERIFIED, poll(timed, withOwn(out(NOW - 1_000L, BODY)), false, NOW));
 
+        // send-hardening R4 (OD26): the id shortcut is gone; an id alone waits for the settle rule.
         SendWatch withId = new SendWatch(HASH);
         poll(withId, BASE, true, NOW - 5_000L);
-        assertEquals(SendVerifier.Result.VERIFIED, poll(withId, withOwn(out(null, BODY, "m-42")), false, NOW));
+        assertNull(poll(withId, withOwn(out(null, BODY, "m-42")), false, NOW));
+        assertEquals(SendVerifier.Result.VERIFIED,
+                poll(withId, withOwn(out(null, BODY, "m-42")), false, NOW + SendWatch.SETTLE_MS));
     }
 
     @Test public void aLateReplySurvivesTheSettle() {

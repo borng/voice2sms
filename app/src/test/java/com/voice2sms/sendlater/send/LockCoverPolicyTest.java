@@ -15,32 +15,40 @@ public class LockCoverPolicyTest {
     private static final String E164 = "+15550100000";
     private static final String THREAD = "https://voice.google.com/u/0/messages?itemId=t.%2B15550100000";
 
-    @Test public void noLockFlagsBeforeASuccessfulClaim() {
+    @Test public void noLockFlagsBeforeASuccessfulClaimOrWithoutTheCover() {
         for (JobState s : JobState.values()) {
-            assertFalse("unclaimed / stale intent: " + s, LockCoverPolicy.applyLockFlags(false, s));
+            assertFalse("unclaimed / stale intent: " + s, LockCoverPolicy.applyLockFlags(false, s, true));
+            assertFalse("OD26: never without the cover: " + s, LockCoverPolicy.applyLockFlags(true, s, false));
         }
-        assertTrue(LockCoverPolicy.applyLockFlags(true, JobState.RUNNING));
-        assertFalse("cleared once the job ended", LockCoverPolicy.applyLockFlags(true, JobState.ENDED));
-        assertFalse(LockCoverPolicy.applyLockFlags(true, JobState.IDLE));
+        assertTrue(LockCoverPolicy.applyLockFlags(true, JobState.RUNNING, true));
+        assertFalse("cleared once the job ended", LockCoverPolicy.applyLockFlags(true, JobState.ENDED, true));
+        assertFalse(LockCoverPolicy.applyLockFlags(true, JobState.IDLE, true));
     }
 
-    @Test public void coverShownWheneverOverTheKeyguardAndTheJobRuns() {
-        assertTrue(LockCoverPolicy.showCover(true, true, JobState.RUNNING, true));
-        assertTrue("unlocked mid-send: the cover stays until the job ends",
-                LockCoverPolicy.showCover(true, true, JobState.RUNNING, false));
-        assertTrue("ended, still locked: stays until the finish", LockCoverPolicy.showCover(true, true, JobState.ENDED, true));
-        assertFalse("ended after an unlock: the user sees the thread", LockCoverPolicy.showCover(true, true, JobState.ENDED, false));
-        assertFalse("never for an unclaimed launch", LockCoverPolicy.showCover(false, true, JobState.RUNNING, true));
+    @Test public void coverShownForEveryClaimedRunningJobLockedOrNot() {
+        assertTrue(LockCoverPolicy.showCover(true, JobState.RUNNING, true));
+        assertTrue("OD26: unlocked too", LockCoverPolicy.showCover(true, JobState.RUNNING, false));
+        assertTrue("ended, still locked: stays until the finish", LockCoverPolicy.showCover(true, JobState.ENDED, true));
+        assertFalse("ended while unlocked: the user sees the thread", LockCoverPolicy.showCover(true, JobState.ENDED, false));
+        for (JobState s : JobState.values()) {
+            assertFalse("never for an unclaimed launch", LockCoverPolicy.showCover(false, s, true));
+            assertFalse(LockCoverPolicy.showCover(false, s, false));
+        }
+        assertFalse(LockCoverPolicy.showCover(true, JobState.IDLE, true));
     }
 
-    @Test public void unlockedPathHasNoCoverNoNavigationRuleAndNoForcedFinish() {
-        for (JobState s : JobState.values()) {
-            assertFalse(LockCoverPolicy.showCover(true, false, s, false));
-        }
-        assertTrue(LockCoverPolicy.allowNavigation(false, E164, "https://voice.google.com/u/0/calls"));
+    @Test public void timeoutAndPauseEndEveryRunningScheduledJob() {
         for (Event e : Event.values()) {
-            assertFalse(LockCoverPolicy.finishNow(e, false, false));
+            assertTrue(e + " ends a running job", LockCoverPolicy.endsJob(e, true, JobState.RUNNING));
+            assertFalse(LockCoverPolicy.endsJob(e, false, JobState.RUNNING));
+            assertFalse(LockCoverPolicy.endsJob(e, true, JobState.ENDED));
+            assertFalse(LockCoverPolicy.endsJob(e, true, JobState.IDLE));
         }
+        assertFalse(LockCoverPolicy.endsJob(null, true, JobState.RUNNING));
+    }
+
+    @Test public void uncoveredPagesHaveNoNavigationRule() {
+        assertTrue(LockCoverPolicy.allowNavigation(false, E164, "https://voice.google.com/u/0/calls"));
     }
 
     @Test public void navigationAllowedOnlyToTheTargetThreadWhileCovered() {
@@ -54,14 +62,17 @@ public class LockCoverPolicyTest {
         assertFalse(LockCoverPolicy.allowNavigation(true, E164, null));
     }
 
-    @Test public void finishNowOnJobEndTimeoutAndPauseWhileOverTheKeyguard() {
-        assertTrue(LockCoverPolicy.finishNow(Event.JOB_ENDED, true, true));
-        assertTrue(LockCoverPolicy.finishNow(Event.TIMEOUT, true, true));
-        assertTrue(LockCoverPolicy.finishNow(Event.PAUSED, true, true));
-        assertTrue(LockCoverPolicy.finishNow(Event.STOPPED, true, true));
-        assertFalse("unlocked during the send: keep the thread for the user",
-                LockCoverPolicy.finishNow(Event.JOB_ENDED, true, false));
-        assertFalse(LockCoverPolicy.finishNow(null, true, true));
+    @Test public void finishNowOnPauseAlwaysAndOnJobEndOrTimeoutWhileLocked() {
+        assertTrue(LockCoverPolicy.finishNow(Event.JOB_ENDED, true));
+        assertTrue(LockCoverPolicy.finishNow(Event.TIMEOUT, true));
+        assertTrue(LockCoverPolicy.finishNow(Event.PAUSED, true));
+        assertTrue(LockCoverPolicy.finishNow(Event.STOPPED, true));
+        assertTrue("the user left: the job ended, nothing to keep", LockCoverPolicy.finishNow(Event.PAUSED, false));
+        assertTrue(LockCoverPolicy.finishNow(Event.STOPPED, false));
+        assertFalse("unlocked at job end: keep the thread for the user",
+                LockCoverPolicy.finishNow(Event.JOB_ENDED, false));
+        assertFalse(LockCoverPolicy.finishNow(Event.TIMEOUT, false));
+        assertFalse(LockCoverPolicy.finishNow(null, true));
     }
 
     @Test public void hardTimeoutIsSixtySeconds() {
