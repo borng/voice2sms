@@ -93,7 +93,9 @@ public class GeminiSmsInterceptService extends AccessibilityService {
 
         // Log all notification events (from any package) for diagnostics
         if (eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
-            Log.d(TAG, "NOTIFICATION: pkg=" + eventPkg
+            // I7: notification text (incoming SMS bodies from Voice and any other app) is
+            // debug-only.
+            if (BuildConfig.DEBUG) Log.d(TAG, "NOTIFICATION: pkg=" + eventPkg
                     + " text=" + event.getText()
                     + " class=" + event.getClassName()
                     + " cached=" + hasCachedSmsData());
@@ -191,7 +193,7 @@ public class GeminiSmsInterceptService extends AccessibilityService {
                 String resourceId = source.getViewIdResourceName();
                 CharSequence contentDesc = source.getContentDescription();
                 CharSequence text = source.getText();
-                Log.d(TAG, "Click: resId=" + resourceId
+                if (BuildConfig.DEBUG) Log.d(TAG, "Click: resId=" + resourceId
                         + " desc=" + contentDesc
                         + " text=" + text);
 
