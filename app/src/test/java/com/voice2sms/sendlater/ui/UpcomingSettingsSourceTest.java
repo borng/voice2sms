@@ -139,8 +139,12 @@ public class UpcomingSettingsSourceTest {
     }
 
     private static List<Element> sendLaterCategories() throws Exception {
+        return sendLaterCategories(parse(PREFS));
+    }
+
+    private static List<Element> sendLaterCategories(Document doc) throws Exception {
         List<Element> out = new ArrayList<>();
-        NodeList cats = parse(PREFS).getElementsByTagName("PreferenceCategory");
+        NodeList cats = doc.getElementsByTagName("PreferenceCategory");
         for (int i = 0; i < cats.getLength(); i++) {
             Element c = (Element) cats.item(i);
             if ("Send Later".equals(resolve(c.getAttribute("android:title")))) out.add(c);
@@ -149,7 +153,11 @@ public class UpcomingSettingsSourceTest {
     }
 
     private static Element sendLaterCategory() throws Exception {
-        List<Element> cats = sendLaterCategories();
+        return sendLaterCategory(parse(PREFS));
+    }
+
+    private static Element sendLaterCategory(Document doc) throws Exception {
+        List<Element> cats = sendLaterCategories(doc);
         assertEquals("exactly one PreferenceCategory titled 'Send Later'", 1, cats.size());
         return cats.get(0);
     }
@@ -203,8 +211,10 @@ public class UpcomingSettingsSourceTest {
     public void everyStoreOwnedKeyIsInTheSendLaterCategoryExactlyOnce() throws Exception {
         Map<String, String> keys = storeKeys();
         assertEquals("SendLaterSettings exposes the 8 pinned KEY_ constants", 8, keys.size());
-        Element cat = sendLaterCategory();
-        Map<String, List<Element>> k = keyed(parse(PREFS));
+        // Orchestrator ruling 2026-11-04: parse once so isInside compares nodes of one Document.
+        Document doc = parse(PREFS);
+        Element cat = sendLaterCategory(doc);
+        Map<String, List<Element>> k = keyed(doc);
         for (Map.Entry<String, String> e : keys.entrySet()) {
             Element pref = only(k, e.getValue());
             assertTrue(e.getKey() + " (" + e.getValue() + ") must sit under 'Send Later'",
@@ -214,8 +224,10 @@ public class UpcomingSettingsSourceTest {
 
     @Test
     public void noSendLaterKeyOutsideTheCategory() throws Exception {
-        Element cat = sendLaterCategory();
-        for (Map.Entry<String, List<Element>> e : keyed(parse(PREFS)).entrySet()) {
+        // Orchestrator ruling 2026-11-04: parse once so isInside compares nodes of one Document.
+        Document doc = parse(PREFS);
+        Element cat = sendLaterCategory(doc);
+        for (Map.Entry<String, List<Element>> e : keyed(doc).entrySet()) {
             if (!e.getKey().startsWith("sendlater_")) continue;
             for (Element el : e.getValue()) {
                 assertTrue(e.getKey() + " is outside the 'Send Later' category", isInside(el, cat));
