@@ -109,11 +109,12 @@ adbq() {
 state="$(adbq get-state 2>/dev/null || true)"
 [ "$state" = "device" ] || die_setup "no device (set SERIAL when several are attached)"
 
-# Output is captured before grepping: `grep -q` closing a pipe early trips pipefail.
+# Output is captured, then grepped from a here-string: piping a large capture into `grep -q`
+# lets grep exit early, printf dies of SIGPIPE, and pipefail turns a match into a failure.
 installed() {
   local pkgs
   pkgs="$(adbq shell pm list packages --user 0 "$PKG" 2>/dev/null || true)"
-  printf '%s\n' "$pkgs" | grep -qx "package:${PKG}"
+  grep -qx "package:${PKG}" <<<"$pkgs"
 }
 
 host_path_for_adb() {
@@ -221,7 +222,7 @@ case "$r" in *rung=R2*) ;; *) fail "default seed must be rung R2 (never auto-sen
 expect_status "$id" SCHEDULED "$(status_of "$id" "$(dump_json)")" "after seed"
 
 alarms="$(adbq shell dumpsys alarm 2>/dev/null || true)"
-if printf '%s\n' "$alarms" | grep -q "$PKG"; then ok "alarms registered"
+if grep -q "$PKG" <<<"$alarms"; then ok "alarms registered"
 else echo "WARN: no ${PKG} alarm in dumpsys alarm (exact-alarm permission?)"; fi
 
 # T-5: `cmd alarm` cannot fire one specific alarm, so the debug broadcast calls onLastCall.
@@ -230,7 +231,7 @@ echo "      LAST_CALL: $r"
 found=0
 for _ in 1 2 3 4 5; do
   notes="$(adbq shell dumpsys notification --noredact 2>/dev/null || true)"
-  if printf '%s\n' "$notes" | grep -q 'channel=sendlater_last_call'; then
+  if grep -q 'channel=sendlater_last_call' <<<"$notes"; then
     found=1; break
   fi
   sleep 1
