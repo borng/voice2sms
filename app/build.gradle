@@ -80,6 +80,9 @@ dependencies {
     implementation 'androidx.webkit:webkit:1.15.0'
     // Wearable Data Layer for receiving SMS send requests from the Voice2SMS watch companion.
     implementation 'com.google.android.gms:play-services-wearable:18.2.0'
+    // Send Later store (sendlater.db). Java annotation processing only; no Kotlin.
+    implementation 'androidx.room:room-runtime:2.6.1'
+    annotationProcessor 'androidx.room:room-compiler:2.6.1'
 
     testImplementation 'junit:junit:4.13.2'
     // org.json for unit-testing WearPayloadValidator off-device. Android ships the same
