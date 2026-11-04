@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings for SendLaterSheetActivity (R4, R9, R12-R16, R21). Never in strings.xml. -->
+<resources>
+    <string name="sendlater_sheet_title">Send later</string>
+    <string name="sendlater_sheet_card_name_number">%1$s · %2$s</string>
+    <string name="sendlater_sheet_card_unknown">Number not chosen yet</string>
+    <string name="sendlater_sheet_draft_quoted">“%1$s”</string>
+    <string name="sendlater_sheet_which_number">Which number?</string>
+    <string name="sendlater_sheet_number_hint">Phone number</string>
+    <string name="sendlater_sheet_number_invalid">Enter a full phone number</string>
+    <string name="sendlater_sheet_pick_datetime">Pick date &amp; time ›</string>
+    <string name="sendlater_sheet_picked">Picked: %1$s</string>
+    <string name="sendlater_sheet_hold">Hold if they text first</string>
+    <string name="sendlater_sheet_if_late">If late</string>
+    <string name="sendlater_sheet_if_late_default">Automatic (default)</string>
+    <string name="sendlater_sheet_if_late_30">Send if within 30 min</string>
+    <string name="sendlater_sheet_if_late_never">Never send late</string>
+    <string name="sendlater_sheet_if_late_anyway">Send anyway (up to 24 h)</string>
+    <string name="sendlater_sheet_schedule_for">Schedule for %1$s</string>
+    <string name="sendlater_sheet_update">Update</string>
+    <string name="sendlater_sheet_cancel">Cancel</string>
+    <string name="sendlater_sheet_cancel_message">Cancel message</string>
+    <string name="sendlater_sheet_session_hint">Sign in to Google Voice in voice2sms so this can send itself</string>
+    <string name="sendlater_sheet_notifications_hint">Allow notifications so voice2sms can warn you before it sends. Tap to allow.</string>
+    <string name="sendlater_sheet_not_editable">This message can no longer be changed</string>
+    <string name="sendlater_sheet_persist_failed">Could not save the scheduled message. Nothing was changed. Try again.</string>
+    <string name="sendlater_sheet_time_past">That time has passed. Pick a time in the future.</string>
+    <string name="sendlater_sheet_empty_draft">There is no message text to schedule.</string>
+    <string name="sendlater_sheet_loading">Loading…</string>
+    <string name="sendlater_sheet_clock_desc">Clock</string>
+</resources>
