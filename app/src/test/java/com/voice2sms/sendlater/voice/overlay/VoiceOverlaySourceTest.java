@@ -67,10 +67,12 @@ public class VoiceOverlaySourceTest {
             "assistant_robin_floaty_title_text", "assistant_robin_action_card_text"));
 
     // Baseline hashes (main @ 7fa8184 == feature/send-later @ c6024c5), whitespace-collapsed SHA-256.
+    // Re-pinned by privacy-logging (I7, F1): the NOTIFICATION and Click Log.d calls are now
+    // under if (BuildConfig.DEBUG); no other change in either block.
     private static final String NOTIFICATION_BLOCK_SHA =
-            "6f82367a90053f83a03e0ae04f97cd82982b3efda04c19df7ae92f1562b9d34a";
+            "9ff11f8be278f41d89f057a0c3c5f79f650fdba2708b6f93cc3d2a5c56a2b221";
     private static final String GEMINI_PATH_SHA =
-            "eb0c071fce073335423c14ec1af09e75071316adde6aa7bef735d4b22a1f3234";
+            "fcc02479f14b2376a80225a7a810a7d51d0e188cfc354da7b0a177f8e5c40191";
     private static final String SERVICE_INFO_SHA =
             "6e08862e86ec26f86a34f3c7b65799bc8a64b68b36d3db87a46cf704bc1bd483";
     private static final String CONFIG_XML_SHA =
