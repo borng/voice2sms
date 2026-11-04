@@ -44,8 +44,8 @@ public final class SendLaterScheduler {
     }
 
     /**
-     * Registers T-5 and T for {@code m}. Less than 5 min ahead: the last call posts now and only T
-     * is registered (R24). Only rung R1 has a last call (R0 is silent; R2/R3 never auto-send).
+     * Registers T-5 and T for {@code m}. Less than 5 min ahead: the last call posts now (once per
+     * due time, see {@link EngineMarks#isLastCallPosted}) and only T is registered (R24). Only rung R1 has a last call (R0 is silent; R2/R3 never auto-send).
      * This is an explicit (re)schedule, so it clears the engine's "reminded" mark (I6).
      */
     public void registerAlarms(ScheduledMessage m) {
@@ -63,7 +63,12 @@ public final class SendLaterScheduler {
             set(AlarmKind.LAST_CALL, m.getId(), lastCallAt);
         } else {
             alarms.cancel(AlarmKind.LAST_CALL, m.getId());
-            if (wantsLastCall && due > now) notifier.lastCall(m);
+            // At most one immediate last call per message and due time: a re-arm (boot, TIME_SET)
+            // inside the last five minutes must not post (and buzz) it again.
+            if (wantsLastCall && due > now && !marks.isLastCallPosted(m.getId(), due)) {
+                notifier.lastCall(m);
+                marks.setLastCallPosted(m.getId(), due);
+            }
         }
         set(AlarmKind.DUE, m.getId(), due);
     }
