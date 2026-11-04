@@ -3,6 +3,7 @@ package com.voice2sms.sendlater.store;
 import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LatenessPolicy;
+import com.voice2sms.sendlater.domain.RemindReason;
 import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ThreadEvent;
@@ -35,7 +36,50 @@ public final class StoreMapping {
         e.attemptCount = m.getAttemptCount();
         e.conversationKey = ConversationRef.of(m).key();
         e.updatedAt = updatedAt;
+        e.rungReason = m.getRungReason() == null ? null : m.getRungReason().name();
         return e;
+    }
+
+    /**
+     * Entity holding {@code w} and, in the {@code orig*} columns, {@code original} (may be null).
+     * Null {@code w} gives null.
+     */
+    public static WatermarkEntity toEntity(long messageId, Watermark w, Watermark original) {
+        WatermarkEntity e = toEntity(messageId, w);
+        if (e == null || original == null) return e;
+        e.origQuality = original.getQuality().name();
+        e.origNewestServerId = original.getNewestServerId();
+        e.origNewestTs = original.getNewestTs();
+        e.origBubbleHash = original.getBubbleHash();
+        e.origCapturedAtDevice = original.getCapturedAtDevice();
+        e.origSkewEstimateMs = original.getSkewEstimateMs();
+        return e;
+    }
+
+    /** The original watermark kept in {@code e}'s {@code orig*} columns, or null. */
+    public static Watermark originalOf(WatermarkEntity e) {
+        if (e == null || e.origQuality == null) return null;
+        return new Watermark(Watermark.Quality.valueOf(e.origQuality), e.origNewestServerId,
+                e.origNewestTs, e.origBubbleHash,
+                e.origCapturedAtDevice != null ? e.origCapturedAtDevice : 0L, e.origSkewEstimateMs);
+    }
+
+    /**
+     * OD22(1), pure: the row to write when {@code existing} is replaced by {@code newWm}. The
+     * self-preemption baseline is the message's FIRST watermark for its whole life: an existing
+     * original is kept, else the replaced main watermark becomes the original. Without an existing
+     * row the original is a DEVICE_ONLY watermark at {@code createdAt} (what the classifier uses
+     * for a message with no watermark). Null {@code newWm} gives null (nothing to write).
+     */
+    public static WatermarkEntity replacing(long messageId, WatermarkEntity existing, Watermark newWm,
+                                            long createdAt) {
+        if (newWm == null) return null;
+        Watermark original = originalOf(existing);
+        if (original == null) original = toDomain(existing);
+        if (original == null) {
+            original = new Watermark(Watermark.Quality.DEVICE_ONLY, null, null, null, createdAt, null);
+        }
+        return toEntity(messageId, newWm, original);
     }
 
     /** Null in, null out. */
@@ -78,6 +122,8 @@ public final class StoreMapping {
                 .lastError(e.lastError)
                 .attemptCount(e.attemptCount)
                 .watermark(toDomain(wm))
+                .originalWatermark(originalOf(wm))
+                .rungReason(e.rungReason == null ? null : RemindReason.valueOf(e.rungReason))
                 .build();
     }
 

@@ -17,6 +17,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.voice2sms.sendlater.listener.SendLaterListenerStatus;
+import com.voice2sms.sendlater.battery.BatteryHealth;
 
 import java.util.List;
 
@@ -80,6 +81,7 @@ public class SetupActivity extends Activity {
         });
 
         addSendLaterCard(btnDone);
+        addBatteryNote(btnDone);
 
         updateStatusIndicators();
     }
@@ -149,6 +151,32 @@ public class SetupActivity extends Activity {
         card.addView(settings);
 
         parent.addView(card, parent.indexOfChild(btnDone));
+    }
+
+    /**
+     * Send Later battery note (R38, D25), inserted above Done: background use, the force-stop
+     * caveat, and Samsung's Never sleeping apps list on Samsung phones. Changes nothing itself.
+     */
+    private void addBatteryNote(Button btnDone) {
+        if (!(btnDone.getParent() instanceof LinearLayout)) return;
+        LinearLayout parent = (LinearLayout) btnDone.getParent();
+        float dp = getResources().getDisplayMetrics().density;
+        StringBuilder text = new StringBuilder()
+                .append(getString(R.string.sendlater_battery_setup_title)).append("\n\n")
+                .append(getString(R.string.sendlater_battery_setup_body)).append(' ')
+                .append(getString(R.string.sendlater_battery_setup_force_stop));
+        if (BatteryHealth.isSamsung()) {
+            text.append(' ').append(getString(R.string.sendlater_battery_setup_samsung));
+        }
+        TextView note = new TextView(this);
+        note.setText(text);
+        note.setTextColor(0xFF444444);
+        note.setTextSize(14);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = (int) (24 * dp);
+        note.setLayoutParams(lp);
+        parent.addView(note, parent.indexOfChild(btnDone));
     }
 
     @Override

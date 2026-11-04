@@ -117,6 +117,11 @@
             android:summary="@string/sendlater_settings_help_summary"
             android:selectable="false"
             android:persistent="false" />
+        <!-- sendlater:battery-guard row (R38), merged into the Send Later category -->
+        <Preference
+            android:key="sendlater_battery"
+            android:title="@string/sendlater_battery_title"
+            android:persistent="false" />
     </PreferenceCategory>
     <!-- sendlater:upcoming-settings end -->
 

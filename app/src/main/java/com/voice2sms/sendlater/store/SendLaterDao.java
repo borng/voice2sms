@@ -56,6 +56,10 @@ public interface SendLaterDao {
     int reschedule(long id, long scheduledFor, boolean holdIfReplied, String latenessPolicy,
                    List<String> from, long now);
 
+    @Query("UPDATE scheduled_message SET rung = :to, rungReason = NULL, updatedAt = :now "
+            + "WHERE id = :id AND rung = :from AND status IN (:statuses)")
+    int upgradeRung(long id, String from, String to, List<String> statuses, long now);
+
     // ---- thread_event ----
 
     @Insert

@@ -5,6 +5,7 @@ import android.content.Context;
 import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LatenessPolicy;
+import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ScheduledMessage.Status;
 import com.voice2sms.sendlater.domain.ThreadEvent;
@@ -81,7 +82,7 @@ public final class SendLaterRepository {
                 e.id = 0;
                 long id = dao.insertMessage(e);
                 if (id <= 0) throw new VerifyFailed("insert returned " + id);
-                WatermarkEntity we = StoreMapping.toEntity(id, wm);
+                WatermarkEntity we = StoreMapping.toEntity(id, wm, toInsert.getOriginalWatermark());
                 if (we != null) dao.upsertWatermark(we);
                 ScheduledMessageEntity back = dao.message(id);
                 if (back == null) throw new VerifyFailed("row not found after insert");
@@ -112,7 +113,9 @@ public final class SendLaterRepository {
                 && a.getHoldReason() == b.getHoldReason()
                 && eq(a.getLastError(), b.getLastError())
                 && a.getAttemptCount() == b.getAttemptCount()
-                && eq(a.getWatermark(), b.getWatermark());
+                && eq(a.getWatermark(), b.getWatermark())
+                && eq(a.getOriginalWatermark(), b.getOriginalWatermark())
+                && a.getRungReason() == b.getRungReason();
     }
 
     private static final class VerifyFailed extends RuntimeException {
@@ -122,18 +125,34 @@ public final class SendLaterRepository {
     // ------------------------------------------------------------------ edit mode (R16)
 
     /**
-     * Edit mode: SCHEDULED or HELD -> SCHEDULED with the new time, flags and watermark (null keeps
-     * the stored one); clears the hold reason. Transactional. The caller re-registers alarms.
+     * Edit mode and snooze: SCHEDULED or HELD -> SCHEDULED with the new time, flags and watermark
+     * (null keeps the stored one); clears the hold reason. A new watermark becomes the reply
+     * baseline only: the message's first watermark is kept as its self-preemption baseline
+     * (OD22(1), {@link StoreMapping#replacing}). Transactional. The caller re-registers alarms.
      */
     public boolean reschedule(long id, long scheduledFor, boolean holdIfReplied,
                               LatenessPolicy latenessPolicy, Watermark newWm) {
         if (latenessPolicy == null) throw new IllegalArgumentException("latenessPolicy");
         return db.runInTransaction(() -> {
+            ScheduledMessageEntity before = newWm != null ? dao.message(id) : null;
             int n = dao.reschedule(id, scheduledFor, holdIfReplied, latenessPolicy.name(),
                     WAITING, clock.nowMs());
-            if (n == 1 && newWm != null) dao.upsertWatermark(StoreMapping.toEntity(id, newWm));
+            if (n == 1 && newWm != null) {
+                dao.upsertWatermark(StoreMapping.replacing(id, dao.watermark(id), newWm,
+                        before != null ? before.createdAt : 0L));
+            }
             return n == 1;
         });
+    }
+
+    /**
+     * OD22(4): a SCHEDULED/HELD message at rung {@code from} moves to {@code to} and its rung
+     * reason is cleared (e.g. a D23 R3 save once a GV web session exists). False when the row is
+     * not at {@code from} or not waiting.
+     */
+    public boolean upgradeRung(long id, Rung from, Rung to) {
+        if (from == null || to == null) throw new IllegalArgumentException("rung");
+        return dao.upgradeRung(id, from.name(), to.name(), WAITING, clock.nowMs()) == 1;
     }
 
     // ------------------------------------------------------------------ transitions (R20, R31)
