@@ -25,16 +25,26 @@ import java.util.Map;
  *   <li>UNKNOWN kinds (T4) are dropped. A repost of an event already stored is not stored again.</li>
  *   <li>A match by number is noted ({@link ListenerEventStore#noteNumberMatch}) so the thread
  *       source can vouch for a message that has no display name (OD22(5)).</li>
+ *   <li>With a {@link LiveConversationKeys} gate, an event no live key matches returns before any
+ *       store call (R40). Without one (null: not built yet) the store decides, as before.</li>
  * </ul>
  */
 public final class ListenerEventRecorder {
 
     private final ListenerEventStore store;
     private final InboundSink sink;
+    private final LiveConversationKeys gate;
 
+    /** Ungated: every parsed event asks the store for live messages. */
     public ListenerEventRecorder(ListenerEventStore store, InboundSink sink) {
+        this(store, sink, null);
+    }
+
+    /** {@code gate} null = ungated; otherwise a miss makes no store call (R40). */
+    public ListenerEventRecorder(ListenerEventStore store, InboundSink sink, LiveConversationKeys gate) {
         this.store = store;
         this.sink = sink;
+        this.gate = gate;
     }
 
     /** Parses and, when the policy allows, stores the event and fires the early hold. True = stored. */
@@ -43,6 +53,7 @@ public final class ListenerEventRecorder {
         if (p == null) return false;
         ThreadEvent.Kind kind = toKind(p.getKind());
         if (kind == null) return false;
+        if (gate != null && !gate.mayMatch(p)) return false;
 
         Map<String, ConversationRef> matched = matchLive(p);
         if (matched.isEmpty()) return false;
@@ -108,8 +119,7 @@ public final class ListenerEventRecorder {
 
     /** ConversationRef's normalized name key, or null for a blank name. */
     private static String nameKey(String name) {
-        if (name == null || name.trim().isEmpty()) return null;
-        return new ConversationRef(null, name).key();
+        return LiveConversationKeys.nameKey(name);
     }
 
     static ThreadEvent.Kind toKind(ParsedEvent.Kind k) {
