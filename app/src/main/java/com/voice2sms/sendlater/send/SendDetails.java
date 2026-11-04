@@ -7,18 +7,22 @@ import com.voice2sms.sendlater.engine.RemindCause;
  * The detail string the send path hands {@code SendLaterEngine.onSendOutcome} (engine-followups-3
  * contract, OD23(3)). Pure JVM.
  *
- * <p>With CANNOT_SHOW the engine words the reminder by {@link RemindCause#fromDetail}, which knows
- * exactly {@code no_session}, {@code daily_cap} and {@code user_busy} (anything else, null
- * included, is the LOCKED default). The send path's own pre-typing causes map to the closest one:
+ * <p>With CANNOT_SHOW the engine words the reminder by {@link RemindCause#fromDetail}. The send
+ * path's own pre-typing causes map to:
  * <ul>
  *   <li>{@code no_session}, {@code auth}: {@code no_session} (no web session, or a sign-in
  *       page; the reminder offers Sign in);</li>
  *   <li>{@code daily_cap}, {@code user_busy}: unchanged;</li>
- *   <li>everything else ({@code compose_timeout}: GV was only slow to open the thread, so the
- *       generic wording, not Sign in (OD27); {@code timeout}, {@code inject_failed}, {@code paused},
- *       {@code launch_timeout}, {@code cannot_show}, {@code activity_gone},
- *       {@code other_intent}, {@code no_recipient} (a corrupt row, OD28), ...): null, the
- *       LOCKED default.</li>
+ *   <li>{@code locked} (the planner's CANNOT_SHOW while the keyguard is locked): {@code locked},
+ *       "Unlock to send";</li>
+ *   <li>{@code late} (the launch came after the lateness deadline, F4/I2): {@code late}, the
+ *       LATE wording;</li>
+ *   <li>null: null, the LOCKED default;</li>
+ *   <li>everything else ({@code compose_timeout}: GV was only slow to open the thread, not a
+ *       sign-in problem (OD27); {@code timeout}, {@code inject_failed}, {@code paused},
+ *       {@code launch_timeout}, {@code cannot_show} (a lit, unlocked screen), {@code activity_gone},
+ *       {@code other_intent}, {@code no_recipient} (a corrupt row, OD28), ...):
+ *       {@code could_not_send}, "Couldn't send automatically" (F6).</li>
  * </ul>
  * The other outcomes keep the cause: a verified send passes
  * {@link ScheduledSendController#DETAIL_LATE_REPLY} or null; SENT_UNVERIFIED carries its cause
@@ -35,7 +39,7 @@ public final class SendDetails {
         return cause;
     }
 
-    /** CANNOT_SHOW cause -> one of the engine's three detail strings, or null. */
+    /** CANNOT_SHOW cause -> one of the engine's detail strings ({@link RemindCause}), or null. */
     static String cannotShowDetail(String cause) {
         if (cause == null) return null;
         switch (cause) {
@@ -46,8 +50,21 @@ public final class SendDetails {
                 return RemindCause.DETAIL_DAILY_CAP;
             case RemindCause.DETAIL_USER_BUSY:
                 return RemindCause.DETAIL_USER_BUSY;
+            case RemindCause.DETAIL_LOCKED:
+                return RemindCause.DETAIL_LOCKED;
+            case RemindCause.DETAIL_LATE:
+                return RemindCause.DETAIL_LATE;
             default:
-                return null;
+                return RemindCause.DETAIL_COULD_NOT_SEND;
         }
+    }
+
+    /**
+     * The planner's CANNOT_SHOW cause: {@code locked} while the keyguard is locked ("Unlock to
+     * send"), else {@code cannot_show} (a lit, unlocked screen with no accessibility service:
+     * "Couldn't send automatically", F6).
+     */
+    static String plannerCause(boolean keyguardLocked) {
+        return keyguardLocked ? RemindCause.DETAIL_LOCKED : "cannot_show";
     }
 }
