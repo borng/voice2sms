@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug build only: merged into the debug APK, never into release. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- sendlater:debug-smoke start -->
+        <!-- adb-only Send Later hooks for tests/smoke/sendlater-smoke.sh. android.permission.DUMP is
+             signature|privileged|development: the adb shell holds it, other apps cannot. -->
+        <receiver
+            android:name="com.voice2sms.sendlater.debug.SendLaterDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.DEBUG_SEED" />
+                <action android:name="com.voice2sms.sendlater.DEBUG_DUMP" />
+                <action android:name="com.voice2sms.sendlater.DEBUG_EVALUATE" />
+                <action android:name="com.voice2sms.sendlater.DEBUG_FIRE" />
+                <action android:name="com.voice2sms.sendlater.DEBUG_INBOUND" />
+                <action android:name="com.voice2sms.sendlater.DEBUG_LAST_CALL" />
+                <action android:name="com.voice2sms.sendlater.DEBUG_CANCEL" />
+            </intent-filter>
+        </receiver>
+        <!-- sendlater:debug-smoke end -->
+    </application>
+
+</manifest>
