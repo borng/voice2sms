@@ -234,7 +234,7 @@ public final class VoiceOverlayController {
         VoiceOverlayState st = VoiceOverlayState.compute(r.level,
                 r.draft != null && !r.draft.isEmpty(), group, true, entry != null ? entry.total() : 0);
         openEntry = st.isChipVisible() ? entry : null;
-        String chipLabel = st.isChipVisible() ? entry.chipLabel(TimeZone.getDefault()) : null;
+        String chipLabel = st.isChipVisible() ? entry.chipLabel(TimeZone.getDefault(), System.currentTimeMillis()) : null;
         windows.update(st.isTabVisible(), chipLabel, r.anchor);
         OnScreenThreadSource.INSTANCE.setOpen(high && !group
                 ? new OnScreenThreadSource.OpenThread(r.title, r.atNewest) : null);
@@ -255,7 +255,9 @@ public final class VoiceOverlayController {
             } else {
                 try {
                     SendLaterRepository repo = SendLaterRepository.get(c);
-                    built = PendingIndex.build(repo.allPending(), repo.allHeld());
+                    List<ScheduledMessage> pending = repo.allPending();
+                    built = PendingIndex.build(pending, repo.allHeld(),
+                            SendLaterEngine.remindedIds(c, pending));
                 } catch (RuntimeException e) {
                     Log.w(TAG, "pending index unavailable: " + e.getClass());
                     built = PendingIndex.empty();
@@ -346,10 +348,12 @@ public final class VoiceOverlayController {
         PendingIndex.Entry e = openEntry;
         if (service == null || e == null) return;
         Intent i;
-        long only = e.singleMessageId();
+        // OD31 PQ4: only a single SCHEDULED message opens the edit sheet; a single HELD one opens
+        // Upcoming filtered to the thread (hold reason, Send now).
+        long only = e.editMessageId();
         if (only > 0) {
             i = new Intent(SendLaterIntents.ACTION_EDIT).putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, only);
-        } else if (e.total() > 1) {
+        } else if (e.total() >= 1) {
             i = new Intent(SendLaterIntents.ACTION_UPCOMING);
             if (e.e164() != null) i.putExtra(SendLaterIntents.EXTRA_E164, e.e164());
         } else {
