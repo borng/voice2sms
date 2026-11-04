@@ -27,7 +27,10 @@ import java.util.List;
 public final class LadderEvaluator {
 
     public static final long EXPIRY_MS = 24 * LatenessBudget.HOUR_MS;
-    /** R28: "Send anyway" re-checks only for a similar outbound message this recent. */
+    /**
+     * R28's original 60 s re-check window. Since OD20(2) "Send anyway" re-checks every outbound
+     * event since the watermark, so this constant no longer bounds the check; kept for callers.
+     */
     public static final long SEND_ANYWAY_RECHECK_MS = 60_000L;
 
     private LadderEvaluator() {}
@@ -125,8 +128,8 @@ public final class LadderEvaluator {
 
     /**
      * R28 "Send anyway" (the user's tap): skips the thread check and the lateness budget, except
-     * that a similar outbound text sent in the last 60 s cancels (the user already sent it
-     * elsewhere).
+     * that a similar outbound text since the watermark cancels (the user already sent it
+     * elsewhere; OD20(2): every outbound event since the watermark, not only the last 60 s).
      *
      * <p>Only a SCHEDULED or HELD message can be sent anyway. Like {@link #evaluate}, which refuses
      * terminal statuses, this refuses CANCELED, SENT_VERIFIED, SELF_PREEMPTED, EXPIRED, FAILED and
@@ -146,8 +149,7 @@ public final class LadderEvaluator {
         if (events != null) {
             for (ThreadEvent e : events) {
                 if (e == null || e.isInbound() || e.isCallLike()) continue;
-                if (e.getTimeMs() >= nowMs - SEND_ANYWAY_RECHECK_MS
-                        && ThreadEventClassifier.similar(message, e)) {
+                if (ThreadEventClassifier.counts(message, e) && ThreadEventClassifier.similar(message, e)) {
                     return Decision.cancel(Classification.SELF_PREEMPTED);
                 }
             }

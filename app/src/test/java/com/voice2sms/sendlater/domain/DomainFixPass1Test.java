@@ -20,7 +20,7 @@ import java.util.List;
 
 import org.junit.Test;
 
-/** Domain review fix pass 1: F1, F2, F3/OD20(5), OD20(1), F4, F5/OD20(6). */
+/** Domain review fix pass 1: F1, F2, F3/OD20(5), OD20(1), OD20(2), F4, F5/OD20(6). */
 public class DomainFixPass1Test {
 
     private static final long AHEAD = 3 * HOUR;
@@ -200,6 +200,33 @@ public class DomainFixPass1Test {
         Classification c = ThreadEventClassifier.classify(message(AHEAD).text("ok, I'll call you when I land").build(),
                 events(outboundSms(T0 + HOUR, "ok")), true);
         assertEquals(Classification.OUTBOUND_ONLY, c);
+    }
+
+    // ---- OD20(2): send anyway checks all outbound since the watermark ------------------
+
+    @Test
+    public void sendAnyway_similarOutboundHoursAgoButSinceWatermark_cancels() {
+        long now = DUE + 2 * HOUR;
+        Decision d = LadderEvaluator.evaluateSendAnyway(message(AHEAD).status(ScheduledMessage.Status.HELD).build(),
+                events(outboundSms(T0 + HOUR, TEXT)), now);
+        assertEquals(Decision.Kind.CANCEL, d.getKind());
+    }
+
+    @Test
+    public void sendAnyway_similarOutboundBeforeWatermark_isIgnored() {
+        // Fixture TIMESTAMP watermark: newestTs = T0 - 10 min.
+        long now = DUE + 2 * HOUR;
+        Decision d = LadderEvaluator.evaluateSendAnyway(message(AHEAD).status(ScheduledMessage.Status.HELD).build(),
+                events(outboundSms(T0 - 20 * MIN, TEXT)), now);
+        assertEquals(Decision.Kind.SEND, d.getKind());
+    }
+
+    @Test
+    public void sendAnyway_dissimilarOutboundOrInbound_stillSends() {
+        long now = DUE + 2 * HOUR;
+        Decision d = LadderEvaluator.evaluateSendAnyway(message(AHEAD).status(ScheduledMessage.Status.HELD).build(),
+                events(outboundSms(T0 + HOUR, "What time is dinner"), inboundSms(T0 + HOUR, TEXT)), now);
+        assertEquals(Decision.Kind.SEND, d.getKind());
     }
 
     // ---- F4: IN_FLIGHT own bubble -> CANCEL(SELF_PREEMPTED) (engine maps to SENT_VERIFIED) ----
