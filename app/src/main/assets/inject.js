@@ -862,6 +862,117 @@ function sendImageToGV(base64Data, mimeType, fileName) {
     tryDirectInject();
 }
 
+// ── Enter inserts a newline in the composer (R44, D29) ────────────────────
+//
+// GV web sends the message when Enter is pressed in the message box. In the
+// voice2sms WebView, Enter (hardware key, soft-keyboard Enter, Shift+Enter)
+// inserts a newline instead; only the Send button sends. Installed once per page
+// load by GVoiceWebViewActivity (onPageFinished), independent of Send Later and of
+// voice2sms(). Clicks are never intercepted, so the Send button and voice2sms's
+// own clickSend() auto-send are unchanged. IME composition (isComposing, keyCode
+// 229) is left alone. Never logs the composer text.
+
+var V2S_COMPOSER_SELECTOR =
+    'textarea[placeholder="Type a message"], ' +
+    'textarea[placeholder*="message"], ' +
+    'textarea[placeholder*="text"], ' +
+    'textarea[aria-label*="message"], ' +
+    '[contenteditable="true"][aria-label*="message"]';
+
+/** True when el is the GV message composer (the selectors fillBody uses). */
+function _v2sIsComposer(el) {
+    if (!el || el.nodeType !== 1 || typeof el.matches !== 'function') return false;
+    try {
+        return el.matches(V2S_COMPOSER_SELECTOR);
+    } catch (e) {
+        return false;
+    }
+}
+
+/** True for an Enter key event that is not part of an IME composition. */
+function _v2sIsPlainEnter(e) {
+    if (e.isComposing || e.keyCode === 229) return false;
+    return e.key === 'Enter' || e.keyCode === 13;
+}
+
+/**
+ * Insert a newline at the caret of the composer through the Angular-safe setter:
+ * native value setter with "\n" replacing selectionStart..selectionEnd, caret after
+ * it, then an input event dispatched in the Angular zone.
+ */
+function _v2sInsertNewline(el) {
+    if (el.tagName !== 'TEXTAREA') {
+        // contenteditable fallback: insertText fires beforeinput 'insertText', which
+        // the beforeinput handler leaves alone.
+        try { document.execCommand('insertText', false, '\n'); } catch (e) { /* ignore */ }
+        return;
+    }
+    var value = typeof el.value === 'string' ? el.value : '';
+    var start = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+    var end = typeof el.selectionEnd === 'number' ? el.selectionEnd : start;
+    if (end < start) { var t = start; start = end; end = t; }
+    var next = value.slice(0, start) + '\n' + value.slice(end);
+    var caret = start + 1;
+
+    var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+    if (nativeSetter && nativeSetter.set) {
+        nativeSetter.set.call(el, next);
+    } else {
+        el.value = next;
+    }
+    try { el.setSelectionRange(caret, caret); } catch (e) { /* ignore */ }
+
+    var inputEvent = new InputEvent('input', {
+        bubbles: true, inputType: 'insertLineBreak', data: null
+    });
+    var angularZone = _v2sGetAngularZone(el);
+    if (angularZone) {
+        angularZone.run(function() { el.dispatchEvent(inputEvent); });
+    } else {
+        el.dispatchEvent(inputEvent);
+    }
+    // Angular may write the model back into the box; keep the caret after the newline.
+    try {
+        if (el.value === next) el.setSelectionRange(caret, caret);
+    } catch (e) { /* ignore */ }
+}
+
+/**
+ * Install the Enter-inserts-newline listeners once per document (R44). Capture phase on
+ * document, so GV's own Enter handlers on the textarea never see the key.
+ */
+function v2sInstallEnterNewline() {
+    if (window._v2sEnterNewline) return;
+    window._v2sEnterNewline = true;
+
+    document.addEventListener('keydown', function(e) {
+        if (!_v2sIsComposer(e.target) || !_v2sIsPlainEnter(e)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _v2sInsertNewline(e.target);
+    }, true);
+
+    // keypress / keyup Enter on the composer: swallow only (the newline was inserted on
+    // keydown) so a GV handler bound to either cannot send.
+    var swallow = function(e) {
+        if (!_v2sIsComposer(e.target) || !_v2sIsPlainEnter(e)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+    };
+    document.addEventListener('keypress', swallow, true);
+    document.addEventListener('keyup', swallow, true);
+
+    // Soft keyboard Enter that arrives as an input edit rather than a key event.
+    document.addEventListener('beforeinput', function(e) {
+        if (!_v2sIsComposer(e.target)) return;
+        if (e.isComposing) return;
+        if (e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph') return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _v2sInsertNewline(e.target);
+    }, true);
+}
+
 // ── Send Later module (R10, R11, R17, R18, R19) ───────────────────────────
 //
 // Independent of voice2sms(): installed once per page load by v2sSendLaterInit(),
