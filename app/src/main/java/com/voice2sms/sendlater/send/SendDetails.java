@@ -17,6 +17,8 @@ import com.voice2sms.sendlater.engine.RemindCause;
  *       "Unlock to send";</li>
  *   <li>{@code late} (the launch came after the lateness deadline, F4/I2): {@code late}, the
  *       LATE wording;</li>
+ *   <li>{@code stopped} (the user tapped Stop on the cover before typing, OD31 PQ3):
+ *       {@code stopped}, "You stopped the send";</li>
  *   <li>null: null, the LOCKED default;</li>
  *   <li>everything else ({@code compose_timeout}: GV was only slow to open the thread, not a
  *       sign-in problem (OD27); {@code timeout}, {@code inject_failed}, {@code paused},
@@ -54,6 +56,8 @@ public final class SendDetails {
                 return RemindCause.DETAIL_LOCKED;
             case RemindCause.DETAIL_LATE:
                 return RemindCause.DETAIL_LATE;
+            case RemindCause.DETAIL_STOPPED:
+                return RemindCause.DETAIL_STOPPED;
             default:
                 return RemindCause.DETAIL_COULD_NOT_SEND;
         }

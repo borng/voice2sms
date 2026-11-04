@@ -47,6 +47,7 @@ import com.voice2sms.sendlater.engine.GvSession;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.engine.SendLaterNotifications;
 import com.voice2sms.sendlater.engine.SendLaterScheduler;
+import com.voice2sms.sendlater.engine.TapResult;
 import com.voice2sms.sendlater.store.PersistException;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 
@@ -533,9 +534,40 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     private void onSecondary(boolean fromScrim) {
         if (busy) return;
         if (!fromScrim && logic != null && logic.isEditMode() && editId > 0) {
-            SendLaterEngine.onCancel(app, editId); // alarms, notification, state broadcast
+            cancelMessage(editId);
+            return;
         }
         finish(); // capture Cancel leaves everything untouched (R15)
+    }
+
+    /**
+     * Edit mode "Cancel message" (UI M4): the engine cancel (alarms, notification, state
+     * broadcast) runs off the main thread and the sheet closes only when it took. A row that
+     * changed meanwhile (already sending, sent, cancelled) says so inline and stays open.
+     */
+    private void cancelMessage(final long id) {
+        setBusy(true);
+        io.execute(() -> {
+            TapResult r;
+            try {
+                r = SendLaterEngine.cancel(app, id);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "cancel failed: " + e.getClass().getSimpleName());
+                r = TapResult.NOT_PENDING;
+            }
+            final TapResult result = r;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (result == TapResult.DONE) {
+                    finish();
+                    return;
+                }
+                showNotEditable();
+                error.setText(TapResult.feedback(result, true));
+                error.setVisibility(View.VISIBLE);
+                setBusy(false);
+            });
+        });
     }
 
     /** Capture: persist -> verify -> alarms -> ACTION_SCHEDULED -> close (R21, I1, I3). */

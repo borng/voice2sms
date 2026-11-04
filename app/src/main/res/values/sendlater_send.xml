@@ -4,4 +4,7 @@
     <string name="sendlater_send_cover_title">Sending scheduled message…</string>
     <!-- %1$s: masked number (last four digits only). -->
     <string name="sendlater_send_cover_recipient">To %1$s</string>
+    <!-- OD31 PQ3: on an unlocked phone, ends the send before typing starts (a reminder follows). -->
+    <string name="sendlater_send_cover_stop">Stop</string>
+    <string name="sendlater_send_cover_stop_description">Stop sending this scheduled message. You will get a reminder to send it yourself.</string>
 </resources>

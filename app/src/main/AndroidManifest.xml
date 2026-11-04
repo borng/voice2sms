@@ -196,6 +196,17 @@
             android:name=".sendlater.engine.SendLaterActionReceiver"
             android:exported="false" />
         <!-- sendlater:engine end -->
+        <!-- sendlater:dl-actions start -->
+        <!-- L1 (OD31), API < 31: Send now / Send anyway open this invisible activity, which acts
+             only once the phone is unlocked (it is never shown over the keyguard). -->
+        <activity
+            android:name=".sendlater.engine.SendLaterUnlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- sendlater:dl-actions end -->
 
         <!-- First-install setup wizard -->
         <activity

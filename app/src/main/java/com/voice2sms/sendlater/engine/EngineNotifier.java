@@ -9,7 +9,10 @@ import com.voice2sms.sendlater.domain.ScheduledMessage;
  * message shares one notification slot, so a newer state replaces the older one.
  */
 public interface EngineNotifier {
-    /** R24: "Sending to X in 5 min" with a chronometer countdown; Cancel / Edit / Send now. */
+    /**
+     * R24: "Sending to X in 5 min" (the real minutes left, UI M8) with a chronometer countdown;
+     * Cancel / Edit / Send now.
+     */
     void lastCall(ScheduledMessage m);
 
     /** R28: held; Send anyway (with "(3 h late)" past budget) / Edit / Snooze / Cancel. */
@@ -48,4 +51,17 @@ public interface EngineNotifier {
 
     /** Removes the message's notification (cancel, send under way). */
     default void dismiss(long id) {}
+
+    /**
+     * UI M8: the send has started (IN_FLIGHT). A last-call notification still showing is
+     * replaced by "Sending to X now" with no Cancel or Send now; nothing is posted otherwise.
+     */
+    default void sending(ScheduledMessage m) {}
+
+    /**
+     * UI M4: a notification tap (Cancel, Send now / Send anyway, Snooze) found the row changed;
+     * tells the user what happened ({@link TapResult#feedback}). {@code m} is the row as it is
+     * now, or null when it is gone.
+     */
+    default void staleTap(long id, ScheduledMessage m, TapResult result, boolean cancelTap) {}
 }
