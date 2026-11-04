@@ -61,8 +61,9 @@ import java.util.concurrent.Executors;
  *       ends the job" apply to every job. The keyguard state is re-read on resume, pause, focus
  *       change and screen / unlock broadcasts, and only decides what a job end does (finish while
  *       locked, else uncover and stay).</li>
- *   <li>R1: the engine's read after any outcome but a settled SENT_VERIFIED is armed so every
- *       bubble present is old ({@link WebViewThreadEventSource#armPostSendRead}).</li>
+ *   <li>OD27: this controller is the only producer of SENT_VERIFIED, from its own settle or
+ *       server-time rule during the job. The engine never reads this thread to verify or retry
+ *       an outcome, so nothing is armed for it and no thread source is registered.</li>
  *   <li>R3: an unclaimed launch (a stale intent, or the relaunch after a renderer crash) clears
  *       the lock flags and, while locked, finishes at once without loading the page.</li>
  * </ul>
@@ -97,11 +98,11 @@ public final class ScheduledSendController {
      */
     static final long MIN_SEND_DELAY_MS = 3_000L;
     /**
-     * Upper bound on staying over the keyguard after the last outcome. The engine answers it with
-     * its own read of this thread (up to {@link WebViewThreadEventSource#WAIT_MS}); the activity
-     * normally finishes on the engine's state broadcast, well before this.
+     * Upper bound on staying covered after the last outcome (12 s, kept from send-hardening; OD27
+     * accepts it). The activity normally finishes on the engine's state broadcast, well before
+     * this.
      */
-    static final long FINISH_GRACE_MS = WebViewThreadEventSource.WAIT_MS + 5_000L;
+    static final long FINISH_GRACE_MS = 12_000L;
     /** After a job that reported nothing (its row was resolved or canceled meanwhile). */
     static final long IDLE_FINISH_MS = 2_000L;
     /** After the engine's state broadcast for the last outcome. */
@@ -176,6 +177,12 @@ public final class ScheduledSendController {
      * never whether the cover shows (OD26).
      */
     private boolean lockedNow;
+    /**
+     * OD27: the running job was claimed while the screen was dark (a DIRECT/FSI launch that
+     * turn-screen-on woke, possibly inside the lock grace period). Such a job finishes at its end
+     * instead of uncovering.
+     */
+    private boolean launchedDark;
     /** An unclaimed launch finished at once over the keyguard: the activity must not load GV (R3). */
     private boolean skipPageLoad;
     /** Id of the last outcome reported; its engine broadcast ends the job. */
@@ -204,13 +211,6 @@ public final class ScheduledSendController {
     }
 
     // ================================================================== process-wide view
-
-    /** Main-frame URL of the live GVoiceWebViewActivity, or null when none is alive. */
-    static String liveMainFrameUrl() {
-        ScheduledSendController c = live.get();
-        if (c == null || !c.host.isAlive()) return null;
-        return c.host.mainFrameUrl();
-    }
 
     /** A live GVoiceWebViewActivity is running or queuing scheduled sends. Any thread. */
     static boolean isBusy() {
@@ -262,6 +262,7 @@ public final class ScheduledSendController {
             return true;
         }
         // Claimed: only now may the cover go up and the activity show over the keyguard.
+        noteLaunchScreen();
         claimed = true;
         jobState = LockCoverPolicy.JobState.RUNNING;
         updateCover();
@@ -287,6 +288,7 @@ public final class ScheduledSendController {
 
     /** A hand-off claim joined this activity: the job runs under the same lock rules. */
     private void onClaimed() {
+        noteLaunchScreen();
         claimed = true;
         jobState = LockCoverPolicy.JobState.RUNNING;
         refreshLockState();
@@ -352,7 +354,7 @@ public final class ScheduledSendController {
             toEngine(job, failureOutcome(job.injected), "timeout");
         }
         abandonAll("timeout");   // queued jobs: nothing typed -> CANNOT_SHOW
-        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.TIMEOUT, refreshLockState()));
+        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.TIMEOUT, refreshLockState(), launchedDark));
     }
 
     /** A scheduled send is queued or running (the activity must not inject its own composer). */
@@ -412,8 +414,6 @@ public final class ScheduledSendController {
         if (live.get() == this) live = new WeakReference<>(null);
         main.removeCallbacksAndMessages(null);
         abandonAll("activity_gone");
-        // Without this activity the engine cannot read the page: an armed read would only linger.
-        WebViewThreadEventSource.disarmPostSendRead();
         stopListeningForEngine();
         stopListeningForScreen();
         // R3: a recreate() keeps show-when-locked on the activity record; clear it first.
@@ -544,18 +544,13 @@ public final class ScheduledSendController {
     }
 
     /**
-     * The one way an outcome leaves the controller. The engine answers every outcome but
-     * CANNOT_SHOW with one read of this thread; that read is armed first (R1): a SENT_VERIFIED
-     * here has passed the settle gate (its only call sites follow {@link SendWatch#settle}), and
-     * dates bubbles against the baseline; anything else dates every bubble old, so it cannot
-     * verify. CANNOT_SHOW is answered without a read, so nothing is armed for it. The detail is
-     * mapped to the engine's contract ({@link SendDetails#forEngine}).
+     * The one way an outcome leaves the controller. A SENT_VERIFIED here has passed the settle
+     * gate (its only call sites follow {@link SendWatch#settle}); it is the only SENT_VERIFIED the
+     * engine ever records (OD27). Every other outcome is final as reported: the engine does not
+     * read this thread to upgrade it. The detail is mapped to the engine's contract
+     * ({@link SendDetails#forEngine}).
      */
     private void toEngine(Job job, SendOutcome outcome, String cause) {
-        if (job.e164 != null && outcome != SendOutcome.CANNOT_SHOW) {
-            WebViewThreadEventSource.armPostSendRead(job.e164, job.watch != null ? job.watch.baseline() : null,
-                    outcome == SendOutcome.SENT_VERIFIED, System.currentTimeMillis());
-        }
         SendLaterEngine.onSendOutcome(app, job.id, outcome, SendDetails.forEngine(outcome, cause));
     }
 
@@ -569,8 +564,8 @@ public final class ScheduledSendController {
     }
 
     /**
-     * Nothing left to send. The job ends on the engine's state broadcast for the last outcome (it
-     * reads this thread first, so the covered page stays up), at most {@link #FINISH_GRACE_MS}
+     * Nothing left to send. The job ends on the engine's state broadcast for the last outcome
+     * (the covered page stays up until then), at most {@link #FINISH_GRACE_MS}
      * and never past the hard deadline; a job that reported nothing ends after
      * {@link #IDLE_FINISH_MS}. Same for every job, locked or not (OD26).
      */
@@ -590,7 +585,7 @@ public final class ScheduledSendController {
     /** All work is reported and handed off: finish while locked, else uncover and stay. */
     private void onJobEnded() {
         if (isActive()) return;
-        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.JOB_ENDED, refreshLockState()));
+        endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.JOB_ENDED, refreshLockState(), launchedDark));
     }
 
     /**
@@ -697,11 +692,24 @@ public final class ScheduledSendController {
         return km != null && km.isKeyguardLocked();
     }
 
-    /** A dark screen counts as locked: the keyguard follows within its grace period. */
-    private boolean isLockedOrDark() {
-        if (isKeyguardLocked()) return true;
+    /** The screen is off (not interactive). */
+    private boolean isScreenDark() {
         PowerManager pm = (PowerManager) app.getSystemService(Context.POWER_SERVICE);
         return pm != null && !pm.isInteractive();
+    }
+
+    /**
+     * At a claim, before the lock flags wake the screen: a new job starts with the screen as it
+     * is now; a hand-off into a running job keeps a dark launch dark (OD27).
+     */
+    private void noteLaunchScreen() {
+        boolean dark = isScreenDark();
+        launchedDark = jobState == LockCoverPolicy.JobState.RUNNING ? (launchedDark || dark) : dark;
+    }
+
+    /** A dark screen counts as locked: the keyguard follows within its grace period. */
+    private boolean isLockedOrDark() {
+        return isKeyguardLocked() || isScreenDark();
     }
 
     /**

@@ -128,7 +128,8 @@ public class SendLaterEngineFollowups3Test {
         cond.enabled = false;
         w.cond.now = T + MIN;
         SendLaterEngine.onProcessStart(null);
-        assertEquals("IN_FLIGHT still resolved", Status.SENT_VERIFIED, w.store.status(33));
+        // OD27: resolved to HELD(UNVERIFIED), never verified from the thread.
+        assertEquals("IN_FLIGHT still resolved", Status.HELD, w.store.status(33));
         assertTrue("no alarm registered: " + w.alarms.calls, registrations().isEmpty());
         assertEquals(Status.SCHEDULED, w.store.status(ID));
         assertTrue(w.sender.started.isEmpty());
@@ -138,7 +139,8 @@ public class SendLaterEngineFollowups3Test {
         w.store.put(message(33).status(Status.IN_FLIGHT).build()); // no own bubble: retry case
         cond.enabled = false;
         SendLaterEngine.onProcessStart(null);
-        assertEquals("released, waits for Send Later to come back", Status.SCHEDULED, w.store.status(33));
+        // OD27: held as "may have already sent", never released for a retry.
+        assertEquals("held, never retried", Status.HELD, w.store.status(33));
         assertTrue(w.sender.started.isEmpty());
         assertTrue(registrations().isEmpty());
     }

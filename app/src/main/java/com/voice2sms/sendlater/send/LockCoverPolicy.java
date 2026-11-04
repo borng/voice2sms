@@ -20,8 +20,9 @@ import com.voice2sms.sendlater.web.ThreadUrl;
  *       running scheduled job, wherever it was launched.</li>
  *   <li>{@link #allowNavigation}: while covered, only the target 1:1 thread may load.</li>
  *   <li>{@link #finishNow}: a pause or stop finishes the activity (the user left or locked the
- *       phone); a job end or timeout finishes it only while the phone is locked (or dark). When
- *       unlocked the cover comes off and the user sees the thread.</li>
+ *       phone); a job end or timeout finishes it only while the phone is locked (or dark), or
+ *       when the job was launched on a dark screen (OD27). Otherwise the cover comes off and the
+ *       user sees the thread.</li>
  * </ul>
  */
 public final class LockCoverPolicy {
@@ -80,6 +81,17 @@ public final class LockCoverPolicy {
         if (event == null) return false;
         if (event == Event.PAUSED || event == Event.STOPPED) return true;
         return lockedNow;
+    }
+
+    /**
+     * {@link #finishNow(Event, boolean)}, plus OD27: a job launched on a dark screen (inside the
+     * lock grace period the keyguard is not locked yet, so {@code lockedNow} can be false once
+     * turn-screen-on woke it) also finishes at job end or timeout instead of uncovering the
+     * thread on a screen the app turned on. A pause or stop finishes as before.
+     */
+    public static boolean finishNow(Event event, boolean lockedNow, boolean launchedDark) {
+        if (event == null) return false;
+        return finishNow(event, lockedNow || launchedDark);
     }
 
     /** Masked recipient for the cover: last four digits only, never a name or message text. */

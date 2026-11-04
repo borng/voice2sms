@@ -29,10 +29,6 @@ public class SendBaselineTest {
     private static final String HASH = ThreadEvent.hashOf(BODY);
     private static final String E164 = "+15550100000";
 
-    @After public void disarm() {
-        WebViewThreadEventSource.disarmPostSendRead();
-    }
-
     private static ThreadBubble out(Long t, String text) { return new ThreadBubble(Direction.OUT, t, text, null); }
     private static ThreadBubble in(Long t, String text) { return new ThreadBubble(Direction.IN, t, text, null); }
 
@@ -144,22 +140,11 @@ public class SendBaselineTest {
         assertEquals(0L, ThreadBaseline.stamp(list(in(null, "x")), -1, NOW).get(0).getTimeMs());
     }
 
-    @Test public void thePostSendBaselineIsOneShotPerThreadAndExpires() {
-        ThreadBaseline b = new ThreadBaseline(list(in(null, "old")));
-        WebViewThreadEventSource.armPostSendRead(E164, b, true, NOW);
-        assertNull("another thread does not consume it", WebViewThreadEventSource.takePostSendRead("+15550100001", NOW));
-        assertSame(b, WebViewThreadEventSource.takePostSendRead(E164, NOW + 1_000L).baseline);
-        assertNull("one-shot", WebViewThreadEventSource.takePostSendRead(E164, NOW + 1_000L));
-
-        WebViewThreadEventSource.armPostSendRead(E164, b, true, NOW);
-        assertNull("expired", WebViewThreadEventSource.takePostSendRead(E164,
-                NOW + WebViewThreadEventSource.POST_SEND_ARM_MS + 1L));
-    }
-
     // ------------------------------------------------------------------ timing constants (MEDIUM)
 
     @Test public void theActivityOutlivesTheEnginesPostSendRead() {
-        assertTrue(ScheduledSendController.FINISH_GRACE_MS > WebViewThreadEventSource.WAIT_MS);
+        // OD27: the engine no longer reads the thread; the post-outcome grace keeps its 12 s.
+        assertEquals(12_000L, ScheduledSendController.FINISH_GRACE_MS);
         assertTrue(ScheduledSendController.sendDelayMs(0L) >= ScheduledSendController.MIN_SEND_DELAY_MS);
         assertEquals(10_000L, ScheduledSendController.sendDelayMs(10_000L));
     }

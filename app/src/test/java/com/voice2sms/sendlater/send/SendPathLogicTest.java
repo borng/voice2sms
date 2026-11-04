@@ -45,31 +45,6 @@ public class SendPathLogicTest {
 
     // ------------------------------------------------------------------ bubble timing
 
-    @Test public void untimedBubblesTakeTheNextTimedBubblesTimeOrNow() {
-        List<ThreadBubble> b = new ArrayList<>(Arrays.asList(
-                new ThreadBubble(Direction.IN, null, "first", null),
-                new ThreadBubble(Direction.IN, NOW - 60_000L, "second", null),
-                new ThreadBubble(Direction.OUT, null, BODY, null)));
-        List<ThreadEvent> e = WebViewThreadEventSource.toEvents(b, NOW);
-        assertEquals(3, e.size());
-        assertEquals(NOW - 60_000L, e.get(0).getTimeMs());
-        assertEquals(NOW - 60_000L, e.get(1).getTimeMs());
-        assertEquals("a just-sent bubble with no time yet counts as now", NOW, e.get(2).getTimeMs());
-        assertEquals(ThreadEvent.hashOf(BODY), e.get(2).getTextHash());
-        assertEquals(Direction.OUT, e.get(2).getDirection());
-    }
-
-    @Test public void untimedJustSentBubbleVerifies() {
-        List<ThreadBubble> b = new ArrayList<>(Arrays.asList(new ThreadBubble(Direction.OUT, null, BODY, null)));
-        List<ThreadEvent> e = WebViewThreadEventSource.toEvents(b, NOW);
-        assertEquals(SendVerifier.Result.VERIFIED,
-                SendVerifier.verify(ThreadEvent.hashOf(BODY), e, NOW - 10_000L, NOW));
-    }
-
-    @Test public void nullBubbleListGivesNoEvents() {
-        assertTrue(WebViewThreadEventSource.toEvents(null, NOW).isEmpty());
-    }
-
     // ------------------------------------------------------------------ verifier window
 
     @Test public void anOldOutboundWithTheSameTextDoesNotVerify() {

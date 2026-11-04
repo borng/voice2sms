@@ -11,11 +11,11 @@ import com.voice2sms.sendlater.engine.RemindCause;
  * exactly {@code no_session}, {@code daily_cap} and {@code user_busy} (anything else, null
  * included, is the LOCKED default). The send path's own pre-typing causes map to the closest one:
  * <ul>
- *   <li>{@code no_session}, {@code auth}, {@code compose_timeout}: {@code no_session} (the page
- *       never reached a usable composer: no web session, a sign-in page, or GV did not open the
- *       thread; the reminder offers Sign in);</li>
+ *   <li>{@code no_session}, {@code auth}: {@code no_session} (no web session, or a sign-in
+ *       page; the reminder offers Sign in);</li>
  *   <li>{@code daily_cap}, {@code user_busy}: unchanged;</li>
- *   <li>everything else ({@code timeout}, {@code inject_failed}, {@code paused},
+ *   <li>everything else ({@code compose_timeout}: GV was only slow to open the thread, so the
+ *       generic wording, not Sign in (OD27); {@code timeout}, {@code inject_failed}, {@code paused},
  *       {@code launch_timeout}, {@code cannot_show}, {@code activity_gone},
  *       {@code other_intent}, ...): null, the LOCKED default.</li>
  * </ul>
@@ -39,7 +39,6 @@ public final class SendDetails {
         switch (cause) {
             case RemindCause.DETAIL_NO_SESSION:
             case "auth":
-            case "compose_timeout":
                 return RemindCause.DETAIL_NO_SESSION;
             case RemindCause.DETAIL_DAILY_CAP:
                 return RemindCause.DETAIL_DAILY_CAP;

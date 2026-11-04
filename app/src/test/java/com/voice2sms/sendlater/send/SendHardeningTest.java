@@ -45,7 +45,6 @@ public class SendHardeningTest {
     private static final Path ACTIVITY = Paths.get("src/main/java/com/voice2sms/GVoiceWebViewActivity.java");
 
     @After public void reset() {
-        WebViewThreadEventSource.disarmPostSendRead();
         ForegroundUse.reset();
     }
 
@@ -64,92 +63,23 @@ public class SendHardeningTest {
         return b;
     }
 
-    /** What the engine's ownBubbleSeen could use: an own outbound at or after the watermark. */
-    private static boolean ownOutboundAfterWatermark(List<ThreadEvent> events) {
-        for (ThreadEvent e : events) {
-            if (e.getDirection() == Direction.OUT && HASH.equals(e.getTextHash()) && e.getTimeMs() >= WATERMARK) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** The engine's read through the source, after the controller armed it at NOW. */
-    private static List<ThreadEvent> engineRead(List<ThreadBubble> page) {
-        WebViewThreadEventSource.PostSendRead armed = WebViewThreadEventSource.takePostSendRead(E164, NOW + 500L);
-        assertNotNull("the controller armed the engine's read", armed);
-        return WebViewThreadEventSource.engineEvents(page, armed, 0L, NOW + 500L);
-    }
-
     // ================================================================== (2) R1 armed follow-up read
 
-    @Test public void r1NoBaselineAnOldIdenticalUntimedBubbleCannotVerifyThroughTheEngine() {
-        List<ThreadBubble> page = list(out(NOW - 86_400_000L, "earlier"), in(null, "ok"), out(null, BODY));
-        // Before: toEvents dated the old untimed copy "now", past the watermark.
-        assertTrue(ownOutboundAfterWatermark(WebViewThreadEventSource.engineEvents(page, null, 0L, NOW)));
-        // SENT_UNVERIFIED with no baseline is still armed, and armed means all old.
-        WebViewThreadEventSource.armPostSendRead(E164, null, false, NOW);
-        assertFalse(ownOutboundAfterWatermark(engineRead(page)));
-    }
-
-    @Test public void r1AnUnsettledNewBubbleBeyondTheBaselineCannotVerifyThroughTheEngine() {
-        List<ThreadBubble> before = list(in(NOW - 3_600_000L, "see you"));
-        ThreadBaseline baseline = new ThreadBaseline(before);
-        List<ThreadBubble> page = list(in(NOW - 3_600_000L, "see you"), out(null, BODY));
-        WebViewThreadEventSource.armPostSendRead(E164, baseline, false, NOW);
-        assertFalse("never settled: the optimistic bubble is dated old", ownOutboundAfterWatermark(engineRead(page)));
-    }
-
-    @Test public void r1AnyNonVerifiedArmDatesEveryBubbleOld() {
-        List<ThreadBubble> page = list(in(NOW - 3_600_000L, "see you"), in(null, "wait"), out(null, BODY));
-        WebViewThreadEventSource.armPostSendRead(E164, new ThreadBaseline(list(in(NOW - 3_600_000L, "see you"))),
-                false, NOW);
-        List<ThreadEvent> got = engineRead(page);
-        List<ThreadEvent> allOld = ThreadBaseline.stamp(page, -1, NOW + 500L);
-        assertEquals(allOld.size(), got.size());
-        for (int i = 0; i < got.size(); i++) assertEquals(allOld.get(i).getTimeMs(), got.get(i).getTimeMs());
-    }
-
-    @Test public void r1OnlyASettledVerifiedSendDatesNewBubblesAgainstTheBaseline() {
-        List<ThreadBubble> before = list(in(NOW - 3_600_000L, "see you"));
-        List<ThreadBubble> page = list(in(NOW - 3_600_000L, "see you"), in(null, "wait"), out(null, BODY));
-        WebViewThreadEventSource.armPostSendRead(E164, new ThreadBaseline(before), true, NOW);
-        List<ThreadEvent> got = engineRead(page);
-        assertEquals("a reply that landed during the send stays new (late reply)", NOW + 500L, got.get(1).getTimeMs());
-        assertEquals("the old reply stays old", NOW - 3_600_000L, got.get(0).getTimeMs());
-
-        WebViewThreadEventSource.armPostSendRead(E164, null, true, NOW);
-        assertTrue("verified but no baseline: still all old, never toEvents",
-                WebViewThreadEventSource.takePostSendRead(E164, NOW).allOld());
-    }
-
-    @Test public void r1ATimedOwnBubbleKeepsItsServerTime() {
-        // A server time is real proof; dating "old" never rewrites it.
-        List<ThreadBubble> page = list(out(NOW - 2_000L, BODY));
-        WebViewThreadEventSource.armPostSendRead(E164, null, false, NOW);
-        assertEquals(NOW - 2_000L, engineRead(page).get(0).getTimeMs());
-    }
-
-    @Test public void r1TheControllerArmsEveryOutcomeTheEngineAnswersWithARead() throws IOException {
+    @Test public void r1EveryOutcomeGoesThroughToEngineAndNothingIsArmed() throws IOException {
         String ctrl = code(CONTROLLER);
         Matcher m = Pattern.compile("SendLaterEngine\\.onSendOutcome\\(").matcher(ctrl);
         int n = 0;
         while (m.find()) n++;
         assertEquals("every controller outcome goes through toEngine", 1, n);
         String to = body(ctrl, "toEngine");
-        int arm = to.indexOf("armPostSendRead(");
-        assertTrue(arm >= 0 && arm < to.indexOf("SendLaterEngine.onSendOutcome("));
-        assertTrue("armed whatever the baseline", to.contains("job.watch.baseline() : null"));
-        assertTrue("only SENT_VERIFIED dates against the baseline", to.contains("outcome == SendOutcome.SENT_VERIFIED"));
-        assertTrue("CANNOT_SHOW has no engine read", to.contains("outcome != SendOutcome.CANNOT_SHOW"));
+        assertTrue(to.contains("SendLaterEngine.onSendOutcome("));
+        // OD27: the arm mechanism is gone; the engine answers no outcome with a thread read.
+        assertFalse(to.contains("armPostSendRead("));
+        assertFalse(ctrl.contains("disarmPostSendRead("));
         assertTrue(body(ctrl, "onHardTimeout").contains("toEngine("));
         assertTrue(body(ctrl, "abandonAll").contains("toEngine("));
         assertTrue(body(ctrl, "report").contains("toEngine("));
-        String src = code(SEND.resolve("WebViewThreadEventSource.java"));
-        String read = body(src, "readSince");
-        assertFalse("readSince never stamps an armed read with toEvents itself", read.contains("toEvents("));
-        assertTrue(read.contains("engineEvents("));
-        assertTrue(body(src, "engineEvents").contains("armed != null ? armed.stamp("));
+        assertFalse(Files.exists(SEND.resolve("WebViewThreadEventSource.java")));
     }
 
     // ================================================================== (3) R4 no id shortcut
@@ -246,7 +176,8 @@ public class SendHardeningTest {
     @Test public void cannotShowCausesMapToTheEnginesThreeDetails() {
         assertEquals("no_session", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "no_session"));
         assertEquals("no_session", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "auth"));
-        assertEquals("no_session", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "compose_timeout"));
+        // OD27: a slow GV is not a sign-in problem: generic (LOCKED) wording.
+        assertNull(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "compose_timeout"));
         assertEquals("daily_cap", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, WebViewScheduledSender.DETAIL_DAILY_CAP));
         assertEquals("user_busy", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY));
         for (String other : new String[] {"timeout", "inject_failed", "paused", "launch_timeout", "cannot_show",

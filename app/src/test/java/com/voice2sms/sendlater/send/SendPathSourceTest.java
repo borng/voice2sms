@@ -295,26 +295,6 @@ public class SendPathSourceTest {
         assertFalse(Modifier.isAbstract(c.getModifiers()));
     }
 
-    @Test public void webViewThreadEventSourceIsAnOutboundCapableThreadSource() throws Exception {
-        Class<?> c = load("com.voice2sms.sendlater.send.WebViewThreadEventSource");
-        assertTrue("OD21: must implement OutboundCapableSource or in-flight rows never retry",
-                OutboundCapableSource.class.isAssignableFrom(c));
-        assertTrue(ThreadEventSource.class.isAssignableFrom(c));
-        assertFalse(Modifier.isAbstract(c.getModifiers()));
-    }
-
-    @Test public void webViewThreadEventSourceIsAvailableOnlyForTheOpenThread() throws Exception {
-        Class<?> c = load("com.voice2sms.sendlater.send.WebViewThreadEventSource");
-        Method m = c.getDeclaredMethod("isAvailableFor", ConversationRef.class);
-        assertNotNull("isAvailableFor(ref) must be overridden: available only while the activity shows that thread", m);
-        String src = code(THREAD_SOURCE);
-        assertTrue("availability is tied to the live GVoiceWebViewActivity",
-                src.contains("SendLaterWebHooks.active()") || src.contains("GVoiceWebViewActivity"));
-        assertTrue("isAvailable/readSince read the WebView thread", src.contains("readThread("));
-        assertTrue("events must carry textHash from ThreadEvent.hashOf (landed rule)",
-                src.contains("toThreadEvent(") || src.contains("hashOf("));
-    }
-
     @Test public void scheduledSendControllerExists() throws Exception {
         load("com.voice2sms.sendlater.send.ScheduledSendController");
         String src = code(CONTROLLER);
@@ -505,7 +485,7 @@ public class SendPathSourceTest {
 
     // ================================================================== registration
 
-    @Test public void applicationSetsSenderBeforeOnProcessStartAndRegistersSource() throws IOException {
+    @Test public void applicationSetsSenderBeforeOnProcessStartAndRegistersNoWebSource() throws IOException {
         String app = code(APPLICATION);
         String onCreate = methodBody(app, "onCreate");
         assertNotNull(onCreate);
@@ -520,15 +500,13 @@ public class SendPathSourceTest {
         assertTrue("setSender line installs WebViewScheduledSender", line.contains("WebViewScheduledSender"));
         assertEquals("exactly one setSender call", 1, onCreate.split("setSender\\(", -1).length - 1);
 
-        boolean registered = false;
+        // OD27: the WebView thread is never a thread source of the engine.
         for (Path p : javaUnder(MAIN_JAVA)) {
             String s = code(p);
-            if (s.contains("registerSource(") && s.contains("WebViewThreadEventSource")
-                    && !p.getFileName().toString().equals("WebViewThreadEventSource.java")) registered = true;
-            if (p.getFileName().toString().equals("WebViewThreadEventSource.java")
-                    && s.contains("registerSource(")) registered = true;
+            assertFalse(p.getFileName() + ": WebViewThreadEventSource must not be registered with the engine",
+                    s.contains("WebViewThreadEventSource"));
         }
-        assertTrue("WebViewThreadEventSource must be registered with SendLaterEngine.registerSource", registered);
+        assertFalse(Files.exists(THREAD_SOURCE));
     }
 
     // ================================================================== manifest
