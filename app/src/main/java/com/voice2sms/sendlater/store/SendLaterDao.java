@@ -60,6 +60,15 @@ public interface SendLaterDao {
             + "WHERE id = :id AND rung = :from AND status IN (:statuses)")
     int upgradeRung(long id, String from, String to, List<String> statuses, long now);
 
+    // ---- retention (OD31, review M1): terminal rows and their watermarks ----
+
+    @Query("DELETE FROM watermark WHERE messageId IN (SELECT id FROM scheduled_message "
+            + "WHERE status IN (:terminal) AND updatedAt < :beforeMs)")
+    int deleteWatermarksOfTerminalBefore(List<String> terminal, long beforeMs);
+
+    @Query("DELETE FROM scheduled_message WHERE status IN (:terminal) AND updatedAt < :beforeMs")
+    int deleteTerminalBefore(List<String> terminal, long beforeMs);
+
     // ---- thread_event ----
 
     @Insert
@@ -85,4 +94,7 @@ public interface SendLaterDao {
 
     @Query("SELECT DISTINCT e164 FROM thread_directory WHERE nameKey = :nameKey ORDER BY lastSeenMs DESC")
     List<String> directoryNumbers(String nameKey);
+
+    @Query("DELETE FROM thread_directory WHERE lastSeenMs < :beforeMs")
+    int deleteDirectoryBefore(long beforeMs);
 }

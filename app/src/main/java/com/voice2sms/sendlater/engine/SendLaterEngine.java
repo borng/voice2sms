@@ -21,6 +21,7 @@ import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.domain.ThreadEventClassifier;
 import com.voice2sms.sendlater.domain.ThreadEventSource;
 import com.voice2sms.sendlater.domain.Watermark;
+import com.voice2sms.sendlater.store.DataRetention;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -168,7 +169,8 @@ public final class SendLaterEngine {
     /**
      * Called once from {@code Voice2SmsApplication.onCreate}: on the background executor, resolves
      * IN_FLIGHT rows first (HELD(UNVERIFIED) + "may have already sent", OD27), then sweeps expired HELD/reminded rows,
-     * then re-arms every remaining alarm ({@link SendLaterScheduler#reregisterAll}).
+     * then purges stale data at rest at most daily (OD31, {@link DataRetention}), then re-arms
+     * every remaining alarm ({@link SendLaterScheduler#reregisterAll}).
      *
      * <p>The re-arm covers what no broadcast reports: a force-stop (user, or Samsung "deep
      * sleeping" apps) and a SCHEDULE_EXACT_ALARM revoke (Android kills the app and drops its exact
@@ -193,9 +195,11 @@ public final class SendLaterEngine {
                     // expiry sweep (no notification, N9b); no re-arm.
                     if (!enabled(d)) {
                         doSweepExpired(d, false);
+                        purgeStaleData(context, d);
                         return;
                     }
                     doSweepExpired(d);
+                    purgeStaleData(context, d);
                     schedulerOf(d).reregisterAll(context);
                 }
             } catch (RuntimeException e) {
@@ -899,6 +903,23 @@ public final class SendLaterEngine {
         if (pending != null) rows.addAll(pending);
         for (ScheduledMessage m : rows) {
             if (now - m.getScheduledFor() >= LadderEvaluator.EXPIRY_MS) expire(d, m, notify);
+        }
+    }
+
+    // ================================================================== retention (OD31)
+
+    /**
+     * Data at rest (OD31): at most daily, deletes terminal rows 30 days after they reached their
+     * terminal state and thread-directory pairs not seen for 90 days ({@link DataRetention}).
+     * Runs whether or not Send Later is on; touches no live row, alarm or notification. A failure
+     * is logged and does not stop the process-start work.
+     */
+    private static void purgeStaleData(Context context, EngineDeps d) {
+        if (context == null) return;
+        try {
+            DataRetention.runIfDue(context, d.conditions.nowMs());
+        } catch (RuntimeException e) {
+            Log.w(TAG, "retention purge failed: " + e.getClass().getSimpleName());
         }
     }
 

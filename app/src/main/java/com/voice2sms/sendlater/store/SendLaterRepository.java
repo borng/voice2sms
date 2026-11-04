@@ -287,6 +287,26 @@ public final class SendLaterRepository {
         });
     }
 
+    // ------------------------------------------------------------------ retention (OD31)
+
+    /**
+     * Deletes terminal messages (SENT_VERIFIED, CANCELED, SELF_PREEMPTED, EXPIRED, FAILED) whose
+     * status changed before {@code beforeMs}, with their watermarks, in one transaction. Live rows
+     * are never touched. Returns the number of messages deleted. See {@link DataRetention}.
+     */
+    public int purgeTerminalBefore(long beforeMs) {
+        return db.runInTransaction(() -> {
+            // Explicit, so the watermark goes even if the FK cascade is not in force.
+            dao.deleteWatermarksOfTerminalBefore(TERMINAL, beforeMs);
+            return dao.deleteTerminalBefore(TERMINAL, beforeMs);
+        });
+    }
+
+    /** Deletes thread-directory pairs last seen before {@code beforeMs} (OD31 P3). */
+    public int purgeDirectoryBefore(long beforeMs) {
+        return dao.deleteDirectoryBefore(beforeMs);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static List<String> names(Status... s) {
