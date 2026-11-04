@@ -30,6 +30,8 @@ import com.voice2sms.sendlater.store.ScheduledSendQueue;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * MVP due-time send path (R30, D21, OD10, OD11): no foreground service and no dedicated send
@@ -38,9 +40,10 @@ import java.util.List;
  * then opens GVoiceWebViewActivity with {@link ScheduledSendController#EXTRA_SCHEDULED_MESSAGE_ID}
  * as {@link LaunchPlanner} decides: DIRECT startActivity when voice2sms's accessibility service is
  * enabled, a full-screen-intent notification on a locked or dark screen, otherwise nothing
- * (returns false with a null detail: the engine records the LOCKED reminder, D15). Every
- * CANNOT_SHOW detail goes through {@link SendDetails#forEngine} (no_session / daily_cap /
- * user_busy, else null).
+ * (CANNOT_SHOW, then false: "Unlock to send" while locked (D15), else "Couldn't send
+ * automatically"). At the slot's time the row is reloaded and a launch past its lateness deadline
+ * is CANNOT_SHOW {@code late} (F4, I2). Every CANNOT_SHOW detail goes through
+ * {@link SendDetails#forEngine}.
  *
  * <p>Runs on the engine's background thread. Never writes a status itself: outcomes go through
  * {@link SendLaterEngine#onSendOutcome}. A launch nobody picks up within
@@ -59,6 +62,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
     public static final String DETAIL_DAILY_CAP = "daily_cap";
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    /** Row reloads before a launch (Room is never read on the main thread). */
+    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
 
     @Override
     public boolean start(Context context, ScheduledMessage message) {
@@ -74,8 +79,9 @@ public final class WebViewScheduledSender implements ScheduledSender {
         }
         LaunchPlanner.Result plan = currentPlan(app);
         if (plan == LaunchPlanner.Result.CANNOT_SHOW && !ScheduledSendController.isBusy()) {
-            // CANNOT_SHOW: nothing attempted; the engine records the LOCKED reminder.
-            return false;
+            // CANNOT_SHOW: nothing attempted. Locked: "Unlock to send"; a lit, unlocked screen
+            // with no accessibility service: "Couldn't send automatically" (F6).
+            return notStarted(app, id, SendDetails.plannerCause(isKeyguardLocked(app)));
         }
 
         long delayMs = ScheduledSendQueue.get(app).acquireSlot(System.currentTimeMillis());
@@ -88,7 +94,7 @@ public final class WebViewScheduledSender implements ScheduledSender {
 
         final long checkTime = System.currentTimeMillis();
         final String token = LaunchClaims.INSTANCE.issue(id);
-        MAIN.postDelayed(() -> launch(app, id, token, checkTime), delayMs);
+        MAIN.postDelayed(() -> recheckThen(app, id, token, () -> launch(app, id, token, checkTime)), delayMs);
         watchClaim(app, id, token, delayMs);
         return true;
     }
@@ -133,12 +139,48 @@ public final class WebViewScheduledSender implements ScheduledSender {
                 return;
             case CANNOT_SHOW:
             default:
-                // Nothing was typed: the engine releases it with the LOCKED reminder.
+                // Nothing was typed: the engine releases it with a reminder (locked: "Unlock to
+                // send"; unlocked: "Couldn't send automatically", F6).
                 if (LaunchClaims.INSTANCE.take(id, token)) {
                     SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
-                            SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "cannot_show"));
+                            SendDetails.forEngine(SendOutcome.CANNOT_SHOW,
+                                    SendDetails.plannerCause(isKeyguardLocked(app))));
                 }
         }
+    }
+
+    /**
+     * F4 (I2 "ever"): the queue delay is a main-Handler delay, which counts uptime and stops in
+     * deep sleep, so the slot can come long after the thread check. Before launching, reload the
+     * row off the main thread: past {@code LatenessBudget.deadlineMs} it is CANNOT_SHOW with
+     * {@link LaunchRecheck#DETAIL_LATE} (the LATE reminder), never a late send; a row that is no
+     * longer IN_FLIGHT is dropped silently (the engine already resolved it). An unreadable row
+     * launches: the controller reloads and re-checks it before anything is typed.
+     */
+    private static void recheckThen(final Context app, final long id, final String token, final Runnable launch) {
+        if (!LaunchClaims.INSTANCE.isPending(id)) return;
+        IO.execute(() -> {
+            LaunchRecheck.Verdict verdict = LaunchRecheck.Verdict.PROCEED;
+            try {
+                verdict = LaunchRecheck.check(SendLaterRepository.get(app).get(id), System.currentTimeMillis());
+            } catch (RuntimeException e) {
+                Log.w(TAG, "recheck failed for id " + id + ": " + e.getClass().getSimpleName());
+            }
+            switch (verdict) {
+                case LATE:
+                    if (LaunchClaims.INSTANCE.take(id, token)) {
+                        SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                                SendDetails.forEngine(SendOutcome.CANNOT_SHOW, LaunchRecheck.DETAIL_LATE));
+                    }
+                    return;
+                case GONE:
+                    LaunchClaims.INSTANCE.take(id, token);
+                    return;
+                case PROCEED:
+                default:
+                    MAIN.post(launch);
+            }
+        });
     }
 
     private static LaunchPlanner.Result currentPlan(Context app) {

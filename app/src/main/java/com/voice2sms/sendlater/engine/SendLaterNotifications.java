@@ -66,10 +66,13 @@ public final class SendLaterNotifications {
      * exists, else the tap opens review mode.
      */
     public static void hold(Context c, ScheduledMessage m, HoldReason reason, long nowMs) {
+        // OD29: the listener keeps no reply text (R34), so no reply preview is known here; the
+        // body shows the user's own text labelled as theirs, never as if it were the reply.
+        String body = holdBody(m, null, nowMs);
         NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
                 .setContentTitle(holdTitle(m, reason))
-                .setContentText(preview(m) + lateSuffix(m, nowMs))
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(preview(m) + lateSuffix(m, nowMs)))
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setOnlyAlertOnce(true)
                 .addAction(0, sendAnywayLabel(m, nowMs), broadcast(c, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
@@ -205,6 +208,18 @@ public final class SendLaterNotifications {
         return late >= LatenessBudget.MINUTE_MS ? " (" + lateness(late) + " late)" : "";
     }
 
+    /**
+     * OD29 / R28: the hold body. The reply's own preview when it is known ({@code replyPreview}),
+     * else the user's scheduled text labelled "Your message:", so it never reads as the reply.
+     * Lateness is appended either way.
+     */
+    static String holdBody(ScheduledMessage m, String replyPreview, long nowMs) {
+        String lead = replyPreview != null && !replyPreview.trim().isEmpty()
+                ? clip(replyPreview.trim())
+                : "Your message: " + preview(m);
+        return lead + lateSuffix(m, nowMs);
+    }
+
     static String holdTitle(ScheduledMessage m, HoldReason reason) {
         if (reason == null) return "Held: message to " + who(m);
         switch (reason) {
@@ -234,8 +249,10 @@ public final class SendLaterNotifications {
         if (cause == null) return remindTitle(m, RemindReason.LOCKED);
         switch (cause) {
             case NO_SESSION: return remindTitle(m, RemindReason.NO_SESSION);
-            case DAILY_CAP: return "Daily scheduled-send limit reached";
-            case BUSY: return "You were using voice2sms; tap to send now";
+            case DAILY_CAP: return "Daily scheduled-send limit reached: tap to send to " + who(m);
+            case BUSY: return "You were using voice2sms; tap to send to " + who(m) + " now";
+            case COULD_NOT_SEND: return "Couldn't send automatically to " + who(m);
+            case LATE: return remindTitle(m, RemindReason.LATE);
             case LOCKED:
             default: return remindTitle(m, RemindReason.LOCKED);
         }
@@ -262,7 +279,10 @@ public final class SendLaterNotifications {
     }
 
     private static String preview(ScheduledMessage m) {
-        String t = m.getText();
+        return clip(m.getText());
+    }
+
+    private static String clip(String t) {
         if (t == null) return "";
         return t.length() <= 120 ? t : t.substring(0, 119) + "…";
     }

@@ -79,8 +79,9 @@ public class VerifyStructuralSendTest {
     // ================================================================== (c) compose_timeout
 
     @Test public void composeTimeoutGetsTheGenericWording() {
-        assertNull(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "compose_timeout"));
-        assertEquals(RemindCause.LOCKED,
+        // reminder-wording-late-launch (F6): the generic wording is now COULD_NOT_SEND, not LOCKED.
+        assertEquals("could_not_send", SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "compose_timeout"));
+        assertEquals(RemindCause.COULD_NOT_SEND,
                 RemindCause.fromDetail(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "compose_timeout")));
         assertEquals("auth still offers Sign in", RemindCause.NO_SESSION,
                 RemindCause.fromDetail(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "auth")));

@@ -48,9 +48,10 @@ public class SendPolishTest {
         assertTrue(branch, branch.contains("report(job, SendOutcome.CANNOT_SHOW, DETAIL_NO_RECIPIENT)"));
         assertFalse("never FAILED", branch.contains("FAILED"));
         assertEquals("no_recipient", ScheduledSendController.DETAIL_NO_RECIPIENT);
-        // The engine gets no detail: the LOCKED default, never Sign in, never "may have sent".
-        assertNull(SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ScheduledSendController.DETAIL_NO_RECIPIENT));
-        assertEquals(RemindCause.LOCKED, RemindCause.fromDetail(
+        // The generic reminder (F6: COULD_NOT_SEND), never Sign in, never "may have sent".
+        assertEquals("could_not_send",
+                SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ScheduledSendController.DETAIL_NO_RECIPIENT));
+        assertEquals(RemindCause.COULD_NOT_SEND, RemindCause.fromDetail(
                 SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ScheduledSendController.DETAIL_NO_RECIPIENT)));
     }
 

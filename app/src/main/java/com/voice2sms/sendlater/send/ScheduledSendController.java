@@ -501,6 +501,12 @@ public final class ScheduledSendController {
             afterOutcome();
             return;
         }
+        if (LaunchRecheck.isLate(m, System.currentTimeMillis())) {
+            // F4 (I2 "ever"): this job waited (the launch, a hand-off queued behind another send)
+            // past the lateness deadline. Nothing typed: CANNOT_SHOW with the LATE reminder.
+            report(job, SendOutcome.CANNOT_SHOW, LaunchRecheck.DETAIL_LATE);
+            return;
+        }
         if (m.getRecipientE164() == null || m.getText() == null) {
             // A corrupt row (start() never launches one): nothing can be typed, so CANNOT_SHOW
             // and the generic reminder, never "may have already sent" (OD28).
