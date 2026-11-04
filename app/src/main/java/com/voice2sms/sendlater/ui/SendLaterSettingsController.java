@@ -46,9 +46,10 @@ import java.util.List;
  * status rows. Every status summary is recomputed in {@link #refresh()}, which the fragment
  * calls from onResume, so a row never shows a stale "allowed".
  *
- * <p>Turning Send Later off cancels every alarm and network waiter of pending and held messages
- * and dismisses their notifications (records are kept) and broadcasts {@link SendLaterIntents#ACTION_STATE_CHANGED} to this package so the
- * chip and edge tab hide. Turning it on re-registers the alarms.
+ * <p>Turning Send Later off or on goes through {@link SendLaterEngine#applySwitch}: off cancels
+ * every alarm and network waiter of pending and held messages and dismisses their notifications
+ * (records are kept); on runs the expiry sweep and re-registers the alarms. Then it broadcasts
+ * {@link SendLaterIntents#ACTION_STATE_CHANGED} to this package so the chip and edge tab follow.
  */
 public final class SendLaterSettingsController {
 
@@ -183,29 +184,31 @@ public final class SendLaterSettingsController {
     // ------------------------------------------------------------------ enable / disable (AC11)
 
     /**
-     * Off: {@link SendLaterEngine#onDisabled} cancels every alarm and network waiter under the
-     * engine lock and dismisses the notifications; records are kept (OD24). On: re-register.
-     * Then tell the chip and tab.
+     * The only switch path (F2, OD24): {@link SendLaterEngine#applySwitch} on the engine executor,
+     * under the engine lock, re-reads the stored switch (off: cancel alarms and waiters, dismiss
+     * notifications, records kept; on: expiry sweep, then re-arm). Quick toggles queue on that one
+     * executor, so the last one decides. Then tell the chip and tab.
      */
     static void applyEnabled(final Context app, final boolean on) {
-        new Thread(() -> {
-            try {
-                if (on) {
-                    SendLaterScheduler.get(app).reregisterAll(app);
-                } else {
-                    SendLaterEngine.onDisabled(app);
-                }
-            } catch (RuntimeException e) {
-                Log.w(TAG, "alarm update failed: " + e.getClass().getSimpleName());
-                if (!on) cancelAlarmsFallback(app);
-            }
+        final Runnable broadcast = () -> {
             Intent changed = new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
                     .setPackage(app.getPackageName());
             app.sendBroadcast(changed);
-        }, "sendlater-settings").start();
+        };
+        try {
+            SendLaterEngine.applySwitch(app, broadcast);
+        } catch (RuntimeException e) {
+            // The engine could not start (no executor to run on). Last resort off a worker thread
+            // (Room is synchronous): when off, cancel the alarms directly; then refresh chip and tab.
+            Log.w(TAG, "switch update failed: " + e.getClass().getSimpleName());
+            new Thread(() -> {
+                if (!on) cancelAlarmsFallback(app);
+                broadcast.run();
+            }, "sendlater-settings").start();
+        }
     }
 
-    /** Last resort when the engine call failed: cancel the alarms directly (records kept). */
+    /** Last resort when the engine could not start: cancel the alarms directly (records kept). */
     private static void cancelAlarmsFallback(Context app) {
         try {
             SendLaterScheduler scheduler = SendLaterScheduler.get(app);
