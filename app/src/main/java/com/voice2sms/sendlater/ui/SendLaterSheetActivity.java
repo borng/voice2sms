@@ -1,0 +1,649 @@
+package com.voice2sms.sendlater.ui;
+
+import android.Manifest;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.text.format.DateFormat;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.Spinner;
+import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+import com.google.android.material.datepicker.CalendarConstraints;
+import com.google.android.material.datepicker.DateValidatorPointForward;
+import com.google.android.material.datepicker.MaterialDatePicker;
+import com.google.android.material.timepicker.MaterialTimePicker;
+import com.google.android.material.timepicker.TimeFormat;
+import com.voice2sms.R;
+import com.voice2sms.sendlater.SendLaterIntents;
+import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.domain.LatenessPolicy;
+import com.voice2sms.sendlater.domain.PresetSlots;
+import com.voice2sms.sendlater.domain.Rung;
+import com.voice2sms.sendlater.domain.ScheduledMessage;
+import com.voice2sms.sendlater.domain.Watermark;
+import com.voice2sms.sendlater.engine.GvSession;
+import com.voice2sms.sendlater.engine.SendLaterEngine;
+import com.voice2sms.sendlater.engine.SendLaterNotifications;
+import com.voice2sms.sendlater.engine.SendLaterScheduler;
+import com.voice2sms.sendlater.store.PersistException;
+import com.voice2sms.sendlater.store.SendLaterRepository;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.List;
+import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * The Send Later scheduling sheet (R4, R9, R12-R16, R21, I1, I3). A translucent activity styled
+ * as a bottom sheet with its own Material 3 theme ({@code Theme.SendLater.Sheet}, F2).
+ *
+ * <ul>
+ *   <li>{@link SendLaterIntents#ACTION_CAPTURE}: a new message from a capture surface. Schedule
+ *       persists it (transactional, verified), registers its alarms, broadcasts
+ *       {@link SendLaterIntents#ACTION_SCHEDULED} (the caller clears its draft and shows Undo) and
+ *       closes. A failed persist shows an inline error and changes nothing else (R21).</li>
+ *   <li>{@link SendLaterIntents#ACTION_EDIT}: an existing message; Update reschedules it, Cancel
+ *       message cancels it through the engine (R16).</li>
+ * </ul>
+ * The sheet never sends and never performs the R7 live-screen check (the capturing surface does
+ * that on ACTION_SCHEDULED). Message text, names and numbers are never logged.
+ */
+public class SendLaterSheetActivity extends AppCompatActivity {
+
+    private static final String TAG = "SendLaterSheet";
+    private static final int REQ_NOTIFICATIONS = 4101;
+
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+
+    private Context app;
+
+    // R12 views, top to bottom.
+    private TextView title;
+    private View card;
+    private TextView cardRecipient;
+    private TextView cardDraft;
+    private View recipientSection;
+    private RadioGroup recipientChoices;
+    private View numberEntryLayout;
+    private EditText numberEntry;
+    private TextView sessionHint;
+    private RadioGroup presets;
+    private Button pickDateTime;
+    private CheckBox holdCheckbox;
+    private Spinner ifLate;
+    private TextView notifHint;
+    private TextView error;
+    private Button scheduleButton;
+    private Button cancelButton;
+
+    private SheetViewModelLogic logic;
+    private boolean binding;
+    private boolean busy;
+    private boolean draftExpanded;
+    private boolean editable = true;
+
+    // Capture payload (never logged).
+    private ScheduledMessage.Source source = ScheduledMessage.Source.NATIVE_GV;
+    private String displayName;
+    private String draft;
+    private String threadItemId;
+    private Watermark watermark;
+    private boolean hasWebSession;
+    private long editId = -1L;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        app = getApplicationContext();
+        setContentView(R.layout.sendlater_sheet);
+        bindViews();
+
+        hasWebSession = GvSession.hasWebSession(this);
+        sessionHint.setVisibility(hasWebSession ? View.GONE : View.VISIBLE);
+        refreshNotificationHint();
+
+        Intent intent = getIntent();
+        String action = intent != null ? intent.getAction() : null;
+        if (SendLaterIntents.ACTION_CAPTURE.equals(action)) {
+            setupCapture(intent);
+        } else if (SendLaterIntents.ACTION_EDIT.equals(action)) {
+            setupEdit(intent.getLongExtra(SendLaterIntents.EXTRA_MESSAGE_ID, -1L));
+        } else {
+            finish();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        io.shutdown(); // a persist already running still completes (and broadcasts) on its own.
+        super.onDestroy();
+    }
+
+    private void bindViews() {
+        title = findViewById(R.id.title);
+        card = findViewById(R.id.card);
+        cardRecipient = findViewById(R.id.card_recipient);
+        cardDraft = findViewById(R.id.card_draft);
+        recipientSection = findViewById(R.id.recipient_section);
+        recipientChoices = findViewById(R.id.recipient_choices);
+        numberEntryLayout = findViewById(R.id.number_entry_layout);
+        numberEntry = findViewById(R.id.number_entry);
+        sessionHint = findViewById(R.id.session_hint);
+        presets = findViewById(R.id.presets);
+        pickDateTime = findViewById(R.id.pick_datetime);
+        holdCheckbox = findViewById(R.id.hold_checkbox);
+        ifLate = findViewById(R.id.if_late);
+        notifHint = findViewById(R.id.notif_hint);
+        error = findViewById(R.id.error);
+        scheduleButton = findViewById(R.id.schedule_button);
+        cancelButton = findViewById(R.id.cancel_button);
+
+        title.setContentDescription(getString(R.string.sendlater_sheet_title));
+        findViewById(R.id.scrim).setOnClickListener(v -> onSecondary(true));
+        card.setOnClickListener(v -> toggleDraft());
+        pickDateTime.setOnClickListener(v -> openDatePicker());
+        holdCheckbox.setOnCheckedChangeListener((b, checked) -> {
+            if (!binding && logic != null) logic.setHoldIfReplied(checked);
+        });
+        presets.setOnCheckedChangeListener((group, checkedId) -> {
+            if (binding || logic == null || checkedId == View.NO_ID) return;
+            View row = group.findViewById(checkedId);
+            if (row != null && row.getTag() instanceof Integer) {
+                logic.selectPreset((Integer) row.getTag());
+                clearError();
+                render();
+            }
+        });
+        recipientChoices.setOnCheckedChangeListener((group, checkedId) -> {
+            if (binding || logic == null || checkedId == View.NO_ID) return;
+            View row = group.findViewById(checkedId);
+            if (row != null && row.getTag() instanceof String) {
+                logic.chooseCandidate((String) row.getTag());
+                render();
+            }
+        });
+        numberEntry.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                if (binding || logic == null) return;
+                logic.enterNumber(s.toString());
+                render();
+            }
+        });
+        notifHint.setOnClickListener(v -> requestNotificationPermission());
+        scheduleButton.setOnClickListener(v -> onPrimary());
+        cancelButton.setOnClickListener(v -> onSecondary(false));
+    }
+
+    // ================================================================== capture (R4, R9, R15)
+
+    private void setupCapture(Intent in) {
+        source = parseSource(in.getStringExtra(SendLaterIntents.EXTRA_SOURCE));
+        displayName = in.getStringExtra(SendLaterIntents.EXTRA_DISPLAY_NAME);
+        draft = in.getStringExtra(SendLaterIntents.EXTRA_DRAFT);
+        threadItemId = in.getStringExtra(SendLaterIntents.EXTRA_THREAD_ITEM_ID);
+        watermark = readWatermark(in);
+        String givenNumber = in.getStringExtra(SendLaterIntents.EXTRA_E164);
+        String[] candidates = in.getStringArrayExtra(SendLaterIntents.EXTRA_CANDIDATES);
+
+        logic = SheetViewModelLogic.forCapture(givenNumber, candidates,
+                SendLaterSettings.holdDefault(this), System.currentTimeMillis(),
+                TimeZone.getDefault(), SendLaterSettings.slotMinutes(this));
+        bindLogic();
+        if (isDraftEmpty()) showError(R.string.sendlater_sheet_empty_draft);
+    }
+
+    private static ScheduledMessage.Source parseSource(String s) {
+        if (s != null) {
+            for (ScheduledMessage.Source v : ScheduledMessage.Source.values()) {
+                if (v.name().equals(s)) return v;
+            }
+        }
+        return ScheduledMessage.Source.NATIVE_GV;
+    }
+
+    private static Watermark readWatermark(Intent in) {
+        Watermark.Quality q = Watermark.Quality.DEVICE_ONLY;
+        String qs = in.getStringExtra(SendLaterIntents.EXTRA_WATERMARK_QUALITY);
+        if (qs != null) {
+            for (Watermark.Quality v : Watermark.Quality.values()) if (v.name().equals(qs)) q = v;
+        }
+        String newestId = in.getStringExtra(SendLaterIntents.EXTRA_WATERMARK_NEWEST_ID);
+        Long newestTs = in.hasExtra(SendLaterIntents.EXTRA_WATERMARK_NEWEST_TS)
+                ? in.getLongExtra(SendLaterIntents.EXTRA_WATERMARK_NEWEST_TS, 0L) : null;
+        String bubbleHash = in.getStringExtra(SendLaterIntents.EXTRA_WATERMARK_BUBBLE_HASH);
+        long capturedAt = in.getLongExtra(SendLaterIntents.EXTRA_WATERMARK_CAPTURED_AT, 0L);
+        if (capturedAt <= 0) capturedAt = System.currentTimeMillis();
+        // A claimed quality the payload cannot back is downgraded (CapturePayload.qualityOf rule).
+        if (q == Watermark.Quality.EXACT && (newestId == null || newestTs == null)) {
+            q = newestTs != null ? Watermark.Quality.TIMESTAMP : Watermark.Quality.DEVICE_ONLY;
+        } else if (q == Watermark.Quality.TIMESTAMP && newestTs == null) {
+            q = Watermark.Quality.DEVICE_ONLY;
+        }
+        return new Watermark(q, newestId, newestTs, bubbleHash, capturedAt, null);
+    }
+
+    private boolean isDraftEmpty() {
+        return draft == null || draft.trim().isEmpty();
+    }
+
+    // ================================================================== edit mode (R16)
+
+    private void setupEdit(final long id) {
+        editId = id;
+        setBusy(true);
+        cancelButton.setText(R.string.sendlater_sheet_cancel_message);
+        io.execute(() -> {
+            ScheduledMessage m = null;
+            boolean canEdit = false;
+            try {
+                // Re-checked here: notification-launched edits skip the action receiver's check.
+                canEdit = id > 0 && SendLaterEngine.isEditable(app, id);
+                if (canEdit) m = SendLaterRepository.get(app).get(id);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "edit load failed: " + e.getClass().getSimpleName());
+            }
+            final ScheduledMessage loaded = m;
+            final boolean ok = canEdit && loaded != null;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
+                if (!ok) {
+                    showNotEditable();
+                    return;
+                }
+                source = loaded.getSource();
+                displayName = loaded.getRecipientDisplayName();
+                draft = loaded.getText();
+                logic = SheetViewModelLogic.forEdit(loaded, System.currentTimeMillis(),
+                        TimeZone.getDefault(), SendLaterSettings.slotMinutes(this));
+                bindLogic();
+            });
+        });
+    }
+
+    private void showNotEditable() {
+        editable = false;
+        logic = null;
+        presets.setVisibility(View.GONE);
+        pickDateTime.setVisibility(View.GONE);
+        holdCheckbox.setVisibility(View.GONE);
+        ((View) ifLate.getParent()).setVisibility(View.GONE);
+        scheduleButton.setVisibility(View.GONE);
+        cancelButton.setText(R.string.sendlater_sheet_cancel);
+        showError(R.string.sendlater_sheet_not_editable);
+    }
+
+    // ================================================================== binding + render
+
+    /** One-time population of the rows from the logic; then {@link #render()}. */
+    private void bindLogic() {
+        binding = true;
+        try {
+            LayoutInflater inf = getLayoutInflater();
+
+            presets.removeAllViews();
+            List<PresetSlots.Preset> rows = logic.getPresets();
+            for (int i = 0; i < rows.size(); i++) {
+                RadioButton rb = (RadioButton) inf.inflate(R.layout.sendlater_preset_row, presets, false);
+                rb.setId(View.generateViewId());
+                rb.setTag(i);
+                rb.setText(rows.get(i).getLabel());
+                presets.addView(rb);
+            }
+
+            recipientChoices.removeAllViews();
+            boolean choice = logic.showsCandidateChoice();
+            boolean entry = logic.showsNumberEntry();
+            recipientSection.setVisibility(choice || entry ? View.VISIBLE : View.GONE);
+            recipientChoices.setVisibility(choice ? View.VISIBLE : View.GONE);
+            numberEntryLayout.setVisibility(entry ? View.VISIBLE : View.GONE);
+            if (choice) {
+                for (String number : logic.getCandidates()) {
+                    RadioButton rb = (RadioButton) inf.inflate(R.layout.sendlater_choice_row, recipientChoices, false);
+                    rb.setId(View.generateViewId());
+                    rb.setTag(number);
+                    rb.setText(number);
+                    recipientChoices.addView(rb);
+                }
+            }
+
+            holdCheckbox.setChecked(logic.isHoldIfReplied());
+
+            final List<LatenessPolicy> options = logic.getIfLateOptions();
+            List<String> labels = new ArrayList<>();
+            for (LatenessPolicy p : options) labels.add(getString(ifLateLabel(p)));
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                    android.R.layout.simple_spinner_item, labels);
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            ifLate.setAdapter(adapter);
+            ifLate.setSelection(Math.max(0, options.indexOf(logic.getLatenessPolicy())), false);
+            ifLate.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
+                    if (!binding && logic != null && pos >= 0 && pos < options.size()) {
+                        logic.setLatenessPolicy(options.get(pos));
+                    }
+                }
+                @Override public void onNothingSelected(AdapterView<?> parent) {}
+            });
+
+            String quoted = draft == null ? "" : getString(R.string.sendlater_sheet_draft_quoted, draft);
+            cardDraft.setText(quoted);
+
+            cancelButton.setText(logic.isEditMode()
+                    ? R.string.sendlater_sheet_cancel_message : R.string.sendlater_sheet_cancel);
+        } finally {
+            binding = false;
+        }
+        render();
+    }
+
+    private static int ifLateLabel(LatenessPolicy p) {
+        switch (p) {
+            case WITHIN_30_MIN: return R.string.sendlater_sheet_if_late_30;
+            case NEVER_LATE: return R.string.sendlater_sheet_if_late_never;
+            case UP_TO_24H: return R.string.sendlater_sheet_if_late_anyway;
+            case DEFAULT:
+            default: return R.string.sendlater_sheet_if_late_default;
+        }
+    }
+
+    /** Reflects the logic's state: card, selected row, button text and enabled state. */
+    private void render() {
+        if (logic == null) return;
+        binding = true;
+        try {
+            String number = logic.getE164();
+            boolean hasName = displayName != null && !displayName.trim().isEmpty();
+            if (hasName && number != null) {
+                cardRecipient.setText(getString(R.string.sendlater_sheet_card_name_number, displayName, number));
+            } else if (number != null) {
+                cardRecipient.setText(number);
+            } else if (hasName) {
+                cardRecipient.setText(getString(R.string.sendlater_sheet_card_name_number, displayName,
+                        getString(R.string.sendlater_sheet_card_unknown)));
+            } else {
+                cardRecipient.setText(R.string.sendlater_sheet_card_unknown);
+            }
+
+            int sel = logic.getSelectedPresetIndex();
+            if (sel >= 0 && sel < presets.getChildCount()) {
+                presets.check(presets.getChildAt(sel).getId());
+                pickDateTime.setText(R.string.sendlater_sheet_pick_datetime);
+            } else {
+                presets.clearCheck();
+                pickDateTime.setText(getString(R.string.sendlater_sheet_picked, logic.getSelectedTimeLabel()));
+            }
+
+            if (logic.isEditMode()) {
+                scheduleButton.setText(R.string.sendlater_sheet_update);
+            } else {
+                scheduleButton.setText(getString(R.string.sendlater_sheet_schedule_for,
+                        logic.getSelectedTimeLabel()));
+            }
+            scheduleButton.setEnabled(!busy && editable && logic.isScheduleEnabled() && !isDraftEmpty());
+            cancelButton.setEnabled(!busy);
+        } finally {
+            binding = false;
+        }
+    }
+
+    private void toggleDraft() {
+        draftExpanded = !draftExpanded;
+        cardDraft.setMaxLines(draftExpanded ? Integer.MAX_VALUE : 3);
+    }
+
+    private void setBusy(boolean b) {
+        busy = b;
+        scheduleButton.setEnabled(!b && editable && logic != null && logic.isScheduleEnabled() && !isDraftEmpty());
+        cancelButton.setEnabled(!b);
+    }
+
+    private void showError(int res) {
+        error.setText(res);
+        error.setVisibility(View.VISIBLE);
+    }
+
+    private void clearError() {
+        error.setVisibility(View.GONE);
+    }
+
+    // ================================================================== pickers (R14)
+
+    private void openDatePicker() {
+        if (logic == null || busy) return;
+        final TimeZone utc = TimeZone.getTimeZone("UTC");
+        Calendar local = Calendar.getInstance();
+        local.setTimeInMillis(logic.getSelectedTimeMs());
+        Calendar sel = Calendar.getInstance(utc);
+        sel.clear();
+        sel.set(local.get(Calendar.YEAR), local.get(Calendar.MONTH), local.get(Calendar.DAY_OF_MONTH));
+
+        MaterialDatePicker<Long> dp = MaterialDatePicker.Builder.datePicker()
+                .setSelection(sel.getTimeInMillis())
+                .setCalendarConstraints(new CalendarConstraints.Builder()
+                        .setValidator(DateValidatorPointForward.now()).build())
+                .build();
+        dp.addOnPositiveButtonClickListener(dayUtc -> {
+            if (dayUtc == null || isFinishing()) return;
+            Calendar d = Calendar.getInstance(utc);
+            d.setTimeInMillis(dayUtc);
+            openTimePicker(d.get(Calendar.YEAR), d.get(Calendar.MONTH), d.get(Calendar.DAY_OF_MONTH));
+        });
+        dp.show(getSupportFragmentManager(), "sendlater_date");
+    }
+
+    private void openTimePicker(final int year, final int month, final int day) {
+        Calendar cur = Calendar.getInstance();
+        cur.setTimeInMillis(logic.getSelectedTimeMs());
+        final MaterialTimePicker tp = new MaterialTimePicker.Builder()
+                .setTimeFormat(DateFormat.is24HourFormat(this) ? TimeFormat.CLOCK_24H : TimeFormat.CLOCK_12H)
+                .setHour(cur.get(Calendar.HOUR_OF_DAY))
+                .setMinute(cur.get(Calendar.MINUTE))
+                .build();
+        tp.addOnPositiveButtonClickListener(v -> {
+            if (logic == null || isFinishing()) return;
+            Calendar c = Calendar.getInstance();
+            c.clear();
+            c.set(year, month, day, tp.getHour(), tp.getMinute(), 0);
+            if (logic.pickDateTime(c.getTimeInMillis(), System.currentTimeMillis())) {
+                clearError();
+            } else {
+                showError(R.string.sendlater_sheet_time_past);
+            }
+            render();
+        });
+        tp.show(getSupportFragmentManager(), "sendlater_time");
+    }
+
+    // ================================================================== notifications hint
+
+    private boolean notificationsDenied() {
+        return Build.VERSION.SDK_INT >= 33
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void refreshNotificationHint() {
+        notifHint.setVisibility(notificationsDenied() ? View.VISIBLE : View.GONE);
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            ActivityCompat.requestPermissions(this,
+                    new String[] {Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_NOTIFICATIONS) refreshNotificationHint();
+    }
+
+    // ================================================================== buttons
+
+    private void onPrimary() {
+        if (busy || logic == null || !editable) return;
+        if (logic.isEditMode()) onUpdate();
+        else onSchedule();
+    }
+
+    private void onSecondary(boolean fromScrim) {
+        if (busy) return;
+        if (!fromScrim && logic != null && logic.isEditMode() && editId > 0) {
+            SendLaterEngine.onCancel(app, editId); // alarms, notification, state broadcast
+        }
+        finish(); // capture Cancel leaves everything untouched (R15)
+    }
+
+    /** Capture: persist -> verify -> alarms -> ACTION_SCHEDULED -> close (R21, I1, I3). */
+    private void onSchedule() {
+        if (!logic.isScheduleEnabled() || isDraftEmpty()) return;
+        if (!logic.isSelectedTimeInFuture(System.currentTimeMillis())) {
+            showError(R.string.sendlater_sheet_time_past);
+            return;
+        }
+        final String number = logic.getE164();
+        if (number == null) return;
+        final ScheduledMessage msg = new ScheduledMessage.Builder()
+                .createdAt(System.currentTimeMillis())
+                .scheduledFor(logic.getSelectedTimeMs())
+                .text(draft)
+                .recipientE164(number)
+                .recipientDisplayName(displayName)
+                .threadItemId(threadItemId)
+                .source(source)
+                // R9 / D23: without a web session it is saved at R3 (the engine reminds).
+                .rung(hasWebSession ? Rung.R1 : Rung.R3)
+                .holdIfReplied(logic.isHoldIfReplied())
+                .latenessPolicy(logic.getLatenessPolicy())
+                .status(ScheduledMessage.Status.SCHEDULED)
+                .watermark(watermark)
+                .build();
+        final String label = logic.getSelectedTimeLabel();
+        clearError();
+        setBusy(true);
+        io.execute(() -> persistArmAndAnnounce(msg, label));
+    }
+
+    /** Worker thread. Nothing outside the store is touched unless the persist is verified. */
+    private void persistArmAndAnnounce(ScheduledMessage msg, String label) {
+        final long id;
+        try {
+            id = SendLaterRepository.get(app).schedule(msg, msg.getWatermark());
+        } catch (PersistException e) {
+            Log.w(TAG, "schedule not persisted: " + e.getClass().getSimpleName());
+            runOnUiThread(this::onPersistFailed);
+            return;
+        }
+        if (id <= 0) {
+            runOnUiThread(this::onPersistFailed);
+            return;
+        }
+        ScheduledMessage stored = msg.toBuilder().id(id).build();
+        try {
+            SendLaterScheduler.get(app).registerAlarms(stored);
+        } catch (RuntimeException e) {
+            // Persisted: boot / permission-change re-registration picks it up.
+            Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
+        }
+        Intent done = new Intent(SendLaterIntents.ACTION_SCHEDULED)
+                .setPackage(app.getPackageName())
+                .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id)
+                .putExtra(SendLaterIntents.EXTRA_SOURCE, stored.getSource().name())
+                .putExtra(SendLaterIntents.EXTRA_E164, stored.getRecipientE164())
+                .putExtra(SendLaterIntents.EXTRA_DRAFT, stored.getText())
+                .putExtra(SendLaterIntents.EXTRA_SCHEDULED_FOR, stored.getScheduledFor())
+                .putExtra(SendLaterIntents.EXTRA_LABEL, label);
+        app.sendBroadcast(done);
+        runOnUiThread(() -> {
+            if (!isFinishing()) finish();
+        });
+    }
+
+    /** UI thread. Inline error; the sheet stays open and nothing else is touched (R21). */
+    private void onPersistFailed() {
+        if (isFinishing() || isDestroyed()) return;
+        setBusy(false);
+        showError(R.string.sendlater_sheet_persist_failed);
+        render();
+    }
+
+    /** Edit: reschedule -> dismiss stale notification -> re-arm alarms -> state broadcast (R16). */
+    private void onUpdate() {
+        final long id = editId;
+        if (id <= 0 || !logic.isScheduleEnabled()) return;
+        final long now = System.currentTimeMillis();
+        if (!logic.isSelectedTimeInFuture(now)) {
+            showError(R.string.sendlater_sheet_time_past);
+            return;
+        }
+        final long when = logic.getSelectedTimeMs();
+        final boolean hold = logic.isHoldIfReplied();
+        final LatenessPolicy policy = logic.getLatenessPolicy();
+        clearError();
+        setBusy(true);
+        io.execute(() -> {
+            SendLaterRepository repo = SendLaterRepository.get(app);
+            boolean ok;
+            try {
+                ok = repo.reschedule(id, when, hold, policy, null);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "reschedule failed: " + e.getClass().getSimpleName());
+                runOnUiThread(this::onPersistFailed);
+                return;
+            }
+            if (!ok) {
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    setBusy(false);
+                    showNotEditable();
+                });
+                return;
+            }
+            SendLaterNotifications.dismiss(app, id);
+            ScheduledMessage fresh = repo.get(id);
+            if (fresh != null) {
+                try {
+                    SendLaterScheduler s = SendLaterScheduler.get(app);
+                    s.cancelAll(id); // drops a HELD row's stale expiry alarm
+                    s.registerAlarms(fresh);
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
+                }
+            }
+            Intent changed = new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
+                    .setPackage(app.getPackageName())
+                    .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id);
+            if (fresh != null) changed.putExtra(SendLaterIntents.EXTRA_E164, fresh.getRecipientE164());
+            app.sendBroadcast(changed);
+            runOnUiThread(() -> {
+                if (!isFinishing()) finish();
+            });
+        });
+    }
+}

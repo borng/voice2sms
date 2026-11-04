@@ -93,6 +93,25 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
 
+        <!-- sendlater:sheet-ui start -->
+        <!-- Scheduling sheet (R12). Not exported: capture surfaces, the chip and notifications in
+             this app start it through ACTION_CAPTURE / ACTION_EDIT with setPackage. -->
+        <activity
+            android:name=".sendlater.ui.SendLaterSheetActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:theme="@style/Theme.SendLater.Sheet"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.CAPTURE" />
+                <action android:name="com.voice2sms.sendlater.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- sendlater:sheet-ui end -->
+
         <!-- === Default SMS app stubs (required to appear in SMS app picker) === -->
 
         <!-- Stub: incoming SMS receiver -->
