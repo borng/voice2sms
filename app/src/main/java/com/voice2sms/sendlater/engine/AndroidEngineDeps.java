@@ -114,6 +114,8 @@ final class AndroidEngineDeps {
 
         private static String freeKey(long id) { return "free_releases_" + id; }
 
+        private static String lastCallKey(long id) { return "last_call_" + id; }
+
         @Override public boolean isReminded(long id) {
             SharedPreferences p = prefs();
             if (p == null) return memory.isReminded(id);
@@ -144,10 +146,28 @@ final class AndroidEngineDeps {
             if (p != null) p.edit().putInt(freeKey(id), next).commit();
         }
 
+        @Override public boolean isLastCallPosted(long id, long scheduledFor) {
+            if (memory.isLastCallPosted(id, scheduledFor)) return true;
+            SharedPreferences p = prefs();
+            return p != null && p.contains(lastCallKey(id)) && p.getLong(lastCallKey(id), -1L) == scheduledFor;
+        }
+
+        @Override public void setLastCallPosted(long id, long scheduledFor) {
+            memory.setLastCallPosted(id, scheduledFor);
+            SharedPreferences p = prefs();
+            if (p != null) p.edit().putLong(lastCallKey(id), scheduledFor).commit();
+        }
+
+        @Override public void clearLastCall(long id) {
+            memory.clearLastCall(id);
+            SharedPreferences p = prefs();
+            if (p != null && p.contains(lastCallKey(id))) p.edit().remove(lastCallKey(id)).commit();
+        }
+
         @Override public void clear(long id) {
             memory.clear(id);
             SharedPreferences p = prefs();
-            if (p != null) p.edit().remove(remindedKey(id)).remove(freeKey(id)).commit();
+            if (p != null) p.edit().remove(remindedKey(id)).remove(freeKey(id)).remove(lastCallKey(id)).commit();
         }
     }
 

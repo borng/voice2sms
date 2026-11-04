@@ -224,7 +224,11 @@ final class EngineFakes {
 
     // ------------------------------------------------------------------ sources
 
-    static final class FakeSource implements ThreadEventSource {
+    /**
+     * A source that sees the whole thread, own outbound bubbles included (the WebView read or the
+     * on-screen bubbles), so an empty read of it allows the R31 retry (OD21).
+     */
+    static final class FakeSource implements OutboundCapableSource {
         boolean available = true;
         final List<ThreadEvent> events = new ArrayList<>();
         final Journal j;

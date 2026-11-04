@@ -12,6 +12,7 @@ import static org.junit.Assert.assertTrue;
 import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
+import com.voice2sms.sendlater.domain.Watermark;
 import com.voice2sms.sendlater.domain.ScheduledMessage.Status;
 import com.voice2sms.sendlater.domain.SendOutcome;
 
@@ -33,7 +34,7 @@ public class SendLaterEngineExtrasTest {
 
     @After public void tearDown() { SendLaterEngine.resetForTest(); }
 
-    @Test public void snoozeReschedulesOneHourFromNowKeepingTheWatermarkAndRegistersAlarms() {
+    @Test public void snoozeReschedulesOneHourFromNowWithAFreshWatermarkAndRegistersAlarms() {
         ScheduledMessage held = message(ID).status(Status.HELD).holdReason(HoldReason.REPLIED).build();
         w.store.put(held);
         w.cond.now = T + HOUR;
@@ -41,7 +42,9 @@ public class SendLaterEngineExtrasTest {
         ScheduledMessage m = w.store.rows.get(ID);
         assertEquals(Status.SCHEDULED, m.getStatus());
         assertEquals(T + 2 * HOUR, m.getScheduledFor());
-        assertEquals(held.getWatermark(), m.getWatermark());
+        // OD21 (2) superseded "keeps the watermark": snooze takes a fresh DEVICE_ONLY one at now.
+        assertEquals(Watermark.Quality.DEVICE_ONLY, m.getWatermark().getQuality());
+        assertEquals(T + HOUR, m.getWatermark().getCapturedAtDevice());
         assertEquals(T + 2 * HOUR, w.alarms.timeOf("exact " + AlarmKind.DUE + " " + ID + " "));
         assertEquals(T + 2 * HOUR - 5 * MIN, w.alarms.timeOf("exact " + AlarmKind.LAST_CALL + " " + ID + " "));
         assertFalse(w.alarms.matching("cancel " + AlarmKind.EXPIRE + " " + ID).isEmpty());
