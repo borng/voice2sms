@@ -263,4 +263,16 @@ public class PrivacyLoggingSourceTest {
     private static String read(Path p) throws IOException {
         return new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
     }
+
+    /** I7 (orchestrator, 2026-11-04): the WebView console relay runs only in debug builds. */
+    @org.junit.Test
+    public void consoleRelayIsDebugOnly() throws Exception {
+        String src = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(
+                "src/main/java/com/voice2sms/GVoiceWebViewActivity.java")), "UTF-8");
+        int i = src.indexOf("onConsoleMessage(");
+        org.junit.Assert.assertTrue("onConsoleMessage not found", i > 0);
+        String body = src.substring(i, src.indexOf("return super.onConsoleMessage", i));
+        org.junit.Assert.assertTrue("console relay must be guarded by BuildConfig.DEBUG",
+                body.contains("BuildConfig.DEBUG"));
+    }
 }
