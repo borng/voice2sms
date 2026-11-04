@@ -41,9 +41,14 @@ public final class SendLaterScheduler {
         this.conditions = clock instanceof EngineConditions ? (EngineConditions) clock : null;
     }
 
-    /** OD24: false when Send Later is switched off (no conditions: on). */
+    /** OD24: false when Send Later is switched off (no conditions: on; a read that throws: off). */
     boolean enabled() {
-        return conditions == null || conditions.sendLaterEnabled();
+        if (conditions == null) return true;
+        try {
+            return conditions.sendLaterEnabled();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /** The scheduler wired to the engine's production (or installed test) dependencies. */
@@ -55,10 +60,15 @@ public final class SendLaterScheduler {
      * Registers T-5 and T for {@code m}. Less than 5 min ahead: the last call posts now (once per
      * due time, see {@link EngineMarks#isLastCallPosted}) and only T is registered (R24). Only rung R1 has a last call (R0 is silent; R2/R3 never auto-send).
      * This is an explicit (re)schedule, so it clears the engine's "reminded" mark (I6).
+     *
+     * <p>While Send Later is off (OD24, F2) nothing is armed and no last call posts: the record
+     * waits for {@link SendLaterEngine#applySwitch} to re-arm it when the switch goes on. The
+     * "reminded" mark is still cleared, since the user's own reschedule is a step up (I6).
      */
     public void registerAlarms(ScheduledMessage m) {
         if (m == null) return;
         marks.setReminded(m.getId(), false);
+        if (!enabled()) return;
         registerTimes(m);
     }
 

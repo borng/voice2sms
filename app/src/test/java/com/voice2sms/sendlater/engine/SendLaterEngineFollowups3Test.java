@@ -241,7 +241,9 @@ public class SendLaterEngineFollowups3Test {
         Path p = Paths.get("src/main/java/com/voice2sms/sendlater/ui/SendLaterSettingsController.java");
         if (!Files.exists(p)) p = Paths.get("app").resolve(p);
         String c = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
-        assertTrue(c.contains("SendLaterEngine.onDisabled(app)"));
+        // master-switch-serial (F2): the controller's one switch path is applySwitch, which runs
+        // onDisabled's cancel-and-dismiss under the engine lock when it reads the switch as off.
+        assertTrue(c.contains("SendLaterEngine.applySwitch(app"));
     }
 
     // ================================================================== (2) reminder wording by cause
