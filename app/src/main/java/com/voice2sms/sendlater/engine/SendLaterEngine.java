@@ -17,6 +17,7 @@ import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.domain.ThreadEventClassifier;
 import com.voice2sms.sendlater.domain.ThreadEventSource;
+import com.voice2sms.sendlater.domain.Watermark;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -205,7 +206,9 @@ public final class SendLaterEngine {
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
             if (d.marks.isReminded(id)) return;
             if (d.conditions.nowMs() >= m.getScheduledFor()) return;
+            if (d.marks.isLastCallPosted(id, m.getScheduledFor())) return;
             d.notifier.lastCall(m);
+            d.marks.setLastCallPosted(id, m.getScheduledFor());
         });
     }
 
@@ -284,6 +287,7 @@ public final class SendLaterEngine {
         }
         if (!d.store.markInFlight(id, ThreadEvent.hashOf(m.getText()))) return;
         d.marks.setReminded(id, false);
+        d.marks.clearLastCall(id);
         checkTimes.put(id, checkTime);
         schedulerOf(d).cancelAlarms(id);
         d.broadcaster.stateChanged(id, m.getRecipientE164());
@@ -308,6 +312,7 @@ public final class SendLaterEngine {
         long id = m.getId();
         if (!d.store.hold(id, reason)) return;
         d.marks.setReminded(id, false);
+        d.marks.clearLastCall(id);
         schedulerOf(d).cancelAlarms(id);
         ScheduledMessage held = reload(d, m);
         if (mayHaveSent) {
@@ -391,8 +396,32 @@ public final class SendLaterEngine {
      * available (classifies as UNVERIFIED). A source that throws counts as unavailable.
      */
     static List<ThreadEvent> readThread(EngineDeps d, ScheduledMessage m) {
+        return read(d, m).events;
+    }
+
+    /** One merged thread read and whether it can prove an interrupted send did not go out. */
+    static final class ThreadRead {
+        /** Merged events; null when no source was available. */
+        final List<ThreadEvent> events;
+        /** At least one {@link OutboundCapableSource} was available and read without failing. */
+        final boolean outboundCapable;
+
+        ThreadRead(List<ThreadEvent> events, boolean outboundCapable) {
+            this.events = events;
+            this.outboundCapable = outboundCapable;
+        }
+
+        /** OD21: an empty-of-own-bubble read is evidence of "not sent" only with outbound vision. */
+        boolean canRetryOn() {
+            return events != null && outboundCapable;
+        }
+    }
+
+    /** Like {@link #readThread} and records whether an outbound-capable source took part (OD21). */
+    static ThreadRead read(EngineDeps d, ScheduledMessage m) {
         ConversationRef ref = ConversationRef.of(m);
         List<ThreadEvent> out = null;
+        boolean outboundCapable = false;
         for (ThreadEventSource s : d.sources) {
             if (s == null) continue;
             boolean available;
@@ -406,11 +435,12 @@ public final class SendLaterEngine {
                 List<ThreadEvent> got = s.readSince(ref, m.getWatermark());
                 if (out == null) out = new ArrayList<>();
                 if (got != null) out.addAll(got);
+                if (s instanceof OutboundCapableSource) outboundCapable = true;
             } catch (RuntimeException e) {
                 Log.w(TAG, "thread source failed: " + e.getClass().getSimpleName());
             }
         }
-        return out;
+        return new ThreadRead(out, outboundCapable);
     }
 
     // ================================================================== early hold (R33)
@@ -486,15 +516,22 @@ public final class SendLaterEngine {
         });
     }
 
-    /** Snooze (OD12): +1 h from now at the same rung and watermark; budget follows the new time. */
+    /**
+     * Snooze (OD12, OD21): +1 h from now at the same rung; budget follows the new time. The
+     * watermark is replaced by a fresh DEVICE_ONLY one taken now, so the reply that caused the hold
+     * (already seen by the user) does not hold the snoozed message again.
+     */
     public static void onSnooze(final Context context, final long id) {
         run(context, () -> {
             EngineDeps d = deps(context);
             ScheduledMessage m = d.store.get(id);
             if (!tappable(m)) return;
-            long at = d.conditions.nowMs() + LatenessBudget.HOUR_MS;
-            if (!d.store.reschedule(id, at, m.isHoldIfReplied(), m.getLatenessPolicy(), null)) return;
+            long now = d.conditions.nowMs();
+            long at = now + LatenessBudget.HOUR_MS;
+            Watermark fresh = new Watermark(Watermark.Quality.DEVICE_ONLY, null, null, null, now, null);
+            if (!d.store.reschedule(id, at, m.isHoldIfReplied(), m.getLatenessPolicy(), fresh)) return;
             d.networkWaiter.cancel(id);
+            d.marks.clearLastCall(id);
             SendLaterScheduler s = schedulerOf(d);
             s.cancelAll(id);
             d.notifier.dismiss(id);
@@ -541,8 +578,10 @@ public final class SendLaterEngine {
      *       inbound was read timed after the thread check, "replied just as your message sent".</li>
      *   <li>SENT_UNVERIFIED: own bubble in the thread read -> SENT_VERIFIED; otherwise
      *       HELD(UNVERIFIED) + "may have already sent" (never retried).</li>
-     *   <li>FAILED: own bubble read -> SENT_VERIFIED; otherwise one retry within budget, decided
-     *       on the thread just read (I5), else FAILED + reminder.</li>
+     *   <li>FAILED: own bubble read -> SENT_VERIFIED; otherwise, when the read included an
+     *       {@link OutboundCapableSource}, one retry within budget decided on the thread just read
+     *       (I5), else FAILED + reminder. Without such a source: HELD(UNVERIFIED) + "may have
+     *       already sent" (OD21).</li>
      *   <li>CANNOT_SHOW: nothing was typed; back to SCHEDULED + REMIND(LOCKED).</li>
      * </ul>
      */
@@ -588,13 +627,18 @@ public final class SendLaterEngine {
             }
             case FAILED:
             default: {
-                List<ThreadEvent> events = readThread(d, m);
+                ThreadRead read = read(d, m);
+                List<ThreadEvent> events = read.events;
                 if (events != null && ownBubbleSeen(d, m, events, now)) {
                     sentVerified(d, m, events);
                     return;
                 }
                 checkTimes.remove(id);
-                if (events != null && canRetry(d, m, now)) {
+                if (!read.canRetryOn()) {
+                    // OD21: no source that sees outbound messages was read, so nothing proves the
+                    // failed attempt did not go out. Never retried; the user decides.
+                    hold(d, m, HoldReason.UNVERIFIED, now, true);
+                } else if (canRetry(d, m, now)) {
                     retryAfterRead(d, context, m, events, now, detail);
                 } else if (d.store.fail(id, detail != null ? detail : "failed")) {
                     d.marks.clear(id);
@@ -650,7 +694,8 @@ public final class SendLaterEngine {
     /**
      * Schrödinger rule for every IN_FLIGHT row: read the thread first. Own bubble -> SENT_VERIFIED.
      * No source -> HELD(UNVERIFIED) + "may have already sent", never retried (I5). No bubble ->
-     * one retry within budget, else HELD(UNVERIFIED) + "may have already sent".
+     * one retry within budget only when an {@link OutboundCapableSource} was read (OD21), else
+     * HELD(UNVERIFIED) + "may have already sent".
      */
     public static void resolveInFlight(final Context context) {
         run(context, () -> doResolveInFlight(deps(context), context));
@@ -670,7 +715,8 @@ public final class SendLaterEngine {
 
     private static void resolveOne(EngineDeps d, Context context, ScheduledMessage m) {
         long now = d.conditions.nowMs();
-        List<ThreadEvent> events = readThread(d, m);
+        ThreadRead read = read(d, m);
+        List<ThreadEvent> events = read.events;
         if (events == null) {
             checkTimes.remove(m.getId());
             hold(d, m, HoldReason.UNVERIFIED, now, true);
@@ -681,7 +727,7 @@ public final class SendLaterEngine {
             return;
         }
         checkTimes.remove(m.getId());
-        if (canRetry(d, m, now)) {
+        if (read.canRetryOn() && canRetry(d, m, now)) {
             retryAfterRead(d, context, m, events, now, "restart");
         } else {
             hold(d, m, HoldReason.UNVERIFIED, now, true);
