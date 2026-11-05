@@ -26,6 +26,25 @@
             android:textSize="14sp"
             android:visibility="gone" />
 
+        <!-- LIVE-F5: accessibility service off while a message is pending; tap opens Accessibility settings -->
+        <TextView
+            android:id="@+id/sendlater_upcoming_a11y_off"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:padding="12dp"
+            android:minHeight="48dp"
+            android:background="@color/sendlater_a11y_banner_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:drawableStart="@drawable/sendlater_ic_a11y_warn"
+            android:drawablePadding="12dp"
+            android:gravity="center_vertical"
+            android:text="@string/sendlater_a11y_upcoming_banner"
+            android:textColor="@color/sendlater_a11y_banner_text"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/sendlater_upcoming_filter_bar"
             android:layout_width="match_parent"

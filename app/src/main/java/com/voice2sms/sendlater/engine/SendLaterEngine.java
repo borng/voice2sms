@@ -5,6 +5,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import com.voice2sms.sendlater.SendLaterIntents;
+import com.voice2sms.sendlater.a11y.A11yWarning;
 import com.voice2sms.sendlater.battery.BatteryWarning;
 import com.voice2sms.sendlater.domain.Classification;
 import com.voice2sms.sendlater.domain.ConversationRef;
@@ -199,11 +200,13 @@ public final class SendLaterEngine {
                     if (!enabled(d)) {
                         doSweepExpired(d, false);
                         purgeStaleData(context, d);
+                        warnIfAccessibilityOff(context, d, false);
                         return;
                     }
                     doSweepExpired(d);
                     purgeStaleData(context, d);
                     schedulerOf(d).reregisterAll(context);
+                    warnIfAccessibilityOff(context, d, true);
                 }
             } catch (RuntimeException e) {
                 Log.e(TAG, "process start failed: " + e.getClass().getSimpleName());
@@ -234,6 +237,7 @@ public final class SendLaterEngine {
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
             if (d.marks.isReminded(id)) return;
             if (dueAlarm) BatteryWarning.onAlarmLate(context, d.conditions.nowMs() - m.getScheduledFor());
+            if (dueAlarm) warnIfAccessibilityOff(context, d, true);
             m = upgradeSessionRung(d, m);
             if (m == null || m.getStatus() != Status.SCHEDULED) return;
             evaluateAndApply(d, context, m);
@@ -270,6 +274,7 @@ public final class SendLaterEngine {
             if (d.marks.isLastCallPosted(id, m.getScheduledFor())) return;
             d.notifier.lastCall(m);
             d.marks.setLastCallPosted(id, m.getScheduledFor());
+            warnIfAccessibilityOff(context, d, true);
         });
     }
 
@@ -1081,6 +1086,28 @@ public final class SendLaterEngine {
             DataRetention.runIfDue(context, d.conditions.nowMs());
         } catch (RuntimeException e) {
             Log.w(TAG, "retention purge failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    // ================================================================== accessibility (LIVE-F5)
+
+    /**
+     * The engine woke (process start, T-5, due alarm): the once-a-day "accessibility service is
+     * off" warning when Send Later is on and a message is pending; clears it once the service is
+     * back on ({@link A11yWarning}). A null context (JVM tests) skips; a failure is logged and
+     * never stops the wake's own work.
+     */
+    private static void warnIfAccessibilityOff(Context context, EngineDeps d, boolean sendLaterOn) {
+        if (context == null) return;
+        try {
+            int pending = 0;
+            if (sendLaterOn) {
+                List<ScheduledMessage> rows = d.store.allPending();
+                pending = rows == null ? 0 : rows.size();
+            }
+            A11yWarning.onEngineWake(context, sendLaterOn, pending, d.conditions.nowMs());
+        } catch (RuntimeException e) {
+            Log.w(TAG, "accessibility warning skipped: " + e.getClass().getSimpleName());
         }
     }
 
