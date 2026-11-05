@@ -58,7 +58,8 @@ public final class ScheduledCompose {
     /** The script stops polling WAIT this long after the pre-send deadline (Java decides by then). */
     public static final long CLICK_WAIT_MARGIN_MS = 5_000L;
 
-    private static final String GV_PREFIX = "https://voice.google.com/";
+    // Split so no "//" sits inside a literal (the source-scanning tests strip // to end of line).
+    private static final String GV_PREFIX = "https:/" + "/voice.google.com/";
 
     /** Answer of {@link #clickState}; {@link #wire()} is what inject.js sees. */
     public enum ClickState {
@@ -111,6 +112,10 @@ public final class ScheduledCompose {
     private boolean preSendRequired;
     private boolean preSendCleared;
     private boolean clickRefusedForCheck;
+    /** LIVE-F10 F1: the check cleared the send on an empty-conversation (new-conversation) read. */
+    private boolean clearedOnEmpty;
+    /** LIVE-F10 F1: that clearance was revoked; the controller must read the thread again. */
+    private boolean recheckDue;
 
     public ScheduledCompose(long jobId) {
         this.jobId = jobId;
@@ -220,6 +225,49 @@ public final class ScheduledCompose {
         clickGranted = true;
         typed = true;
         return ClickState.YES;
+    }
+
+    /**
+     * LIVE-F10 F1: as {@link #clickState(String)}, from a page that is ({@code onJobThread}) or is
+     * not the job's own 1:1 thread. When the check cleared the send only because the
+     * new-conversation flow counted the conversation as empty, and the page is now the job's
+     * thread (GV opened the number's conversation), that clearance is dropped first: the answer
+     * is WAIT and the controller reads the thread again ({@link #takeRecheckDue}).
+     */
+    public synchronized ClickState clickState(String t, boolean onJobThread) {
+        if (onJobThread) revokeEmptyClearance();
+        return clickState(t);
+    }
+
+    /**
+     * LIVE-F10 F1: the pre-send check found nothing that stops the send, but only by counting the
+     * conversation as empty (new-conversation flow). As {@link #clearPreSend}; the clearance is
+     * dropped again if the job's thread shows up before a click is granted
+     * ({@link #revokeEmptyClearance}).
+     */
+    public synchronized boolean clearPreSendOnEmptyConversation() {
+        clearedOnEmpty = true;
+        return clearPreSend();
+    }
+
+    /**
+     * LIVE-F10 F1: drops a clearance given on an empty-conversation read (the job's thread is
+     * shown now). True when it was dropped: the check is pending again and a re-read is due. False
+     * when there was none, a click was already granted or the gate is closed.
+     */
+    public synchronized boolean revokeEmptyClearance() {
+        if (!clearedOnEmpty || closed || clickGranted) return false;
+        clearedOnEmpty = false;
+        preSendCleared = false;
+        recheckDue = true;
+        return true;
+    }
+
+    /** LIVE-F10 F1: true once after {@link #revokeEmptyClearance} dropped a clearance. */
+    public synchronized boolean takeRecheckDue() {
+        boolean due = recheckDue;
+        recheckDue = false;
+        return due;
     }
 
     /** {@code t} is the current injection's token and the gate is open. */

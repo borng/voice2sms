@@ -321,6 +321,8 @@ public class GVoiceWebViewActivity extends Activity {
                 super.doUpdateVisitedHistory(view, url, isReload);
                 String previous = mainFrameUrl;
                 mainFrameUrl = url;
+                // LIVE-F10 F1: the job's own thread showing up drops an empty-conversation clearance.
+                if (scheduledSend != null && url != null) scheduledSend.onMainFrameUrl(url);
                 // The page may have asked for the chip before this SPA navigation was reported.
                 if (sendLaterHooks != null && url != null && !url.equals(previous)) {
                     sendLaterHooks.onMainFrameUrlChanged();
@@ -964,6 +966,16 @@ public class GVoiceWebViewActivity extends Activity {
         public String scheduledClickState(String token) {
             if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
             return ScheduledSendController.clickState(token);
+        }
+
+        /**
+         * LIVE-F10 F1: as {@link #scheduledClickState}, with the page's own location: on the job's
+         * 1:1 thread an empty-conversation clearance is dropped (WAIT) and the thread read again.
+         */
+        @JavascriptInterface
+        public String scheduledClickStateAt(String token, String pageUrl) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
+            return ScheduledSendController.clickState(token, pageUrl);
         }
 
         /** LIVE-F10: the job's thread page settled without the conversation (new-conversation flow next). */

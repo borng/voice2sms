@@ -847,6 +847,9 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     /** The Java Send gate: 'yes' | 'wait' | 'no'. */
     function askClick() {
         if (typeof V2SBridge === 'undefined') return 'no';
+        // LIVE-F10 F1: with this page's location, so a clearance given on an empty (new)
+        // conversation is dropped once GV shows the number's thread here.
+        if (V2SBridge.scheduledClickStateAt) return String(V2SBridge.scheduledClickStateAt(token, String(location.href)));
         if (V2SBridge.scheduledClickState) return String(V2SBridge.scheduledClickState(token));
         // A bridge without the tri-state ask: its one-shot boolean answer.
         return (V2SBridge.scheduledMayClick && V2SBridge.scheduledMayClick(token)) ? 'yes' : 'no';
