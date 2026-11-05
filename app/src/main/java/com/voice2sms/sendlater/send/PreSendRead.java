@@ -127,6 +127,17 @@ public final class PreSendRead {
     }
 
     /**
+     * live-presend-failclosed: whether an agreed pre-send read counts as an empty conversation
+     * and so goes through {@link #noConversationVerdict}: the new-conversation Kind EMPTY
+     * ({@code emptyKind}), or any agreed read with no bubble at all. A thread page whose
+     * gv-message-list rendered no item reads [] the same way a slow render or a never-texted
+     * number does, so an empty bubble list is never by itself evidence that nothing changed.
+     */
+    public static boolean readsAsEmpty(boolean emptyKind, List<ThreadBubble> bubbles) {
+        return emptyKind || bubbles == null || bubbles.isEmpty();
+    }
+
+    /**
      * LIVE-F10: what one pre-send read means in the new-conversation flow. On the job's own
      * thread page ({@code onJobThread}) the read is the read (null stays null); on any other page
      * (the draft view has no gv-message-list) the conversation is empty.

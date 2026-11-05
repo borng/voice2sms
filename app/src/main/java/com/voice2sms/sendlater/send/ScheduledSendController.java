@@ -899,12 +899,15 @@ public final class ScheduledSendController {
             agreed = null;
         }
         if (agreed != null) {
-            Classification c = agreed.empty
+            // live-presend-failclosed: every agreed read that shows no bubble (the new-conversation
+            // Kind EMPTY, and a thread page whose gv-message-list rendered no item yet) clears
+            // only on fail-closed evidence (nothing seen at scheduling, listener on, listener
+            // never matched the number). Only Kind EMPTY uses the empty-conversation gate opener.
+            boolean emptyRead = PreSendRead.readsAsEmpty(agreed.empty, agreed.bubbles);
+            Classification c = emptyRead
                     ? PreSendRead.classifyNoConversation(job.message, READ_LIMIT, now)
                     : PreSendRead.classify(job.message, agreed.bubbles, READ_LIMIT, now);
-            // live-presend-failclosed: an empty conversation clears only on fail-closed evidence
-            // (nothing seen at scheduling, listener on, listener never matched the number).
-            PreSendCheck.Verdict v = agreed.empty
+            PreSendCheck.Verdict v = emptyRead
                     ? PreSendRead.noConversationVerdict(job.check, job.message, c)
                     : job.check.decide(job.message, c);
             onPreSendVerdict(job, v, now, agreed.empty);
