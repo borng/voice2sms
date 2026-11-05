@@ -2,6 +2,7 @@ package com.voice2sms.sendlater.send;
 
 import com.voice2sms.sendlater.domain.Classification;
 import com.voice2sms.sendlater.domain.EchoFilter;
+import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.domain.ThreadEventClassifier;
@@ -106,6 +107,34 @@ public final class PreSendRead {
             return Classification.UNVERIFIED;
         }
         return classify(m, new ArrayList<ThreadBubble>(), readLimit, nowMs);
+    }
+
+    /**
+     * live-presend-failclosed (D30, R31, OD22(5)): the verdict of an agreed EMPTY read in the
+     * new-conversation flow, {@code c} being {@link #classifyNoConversation}'s classification. An
+     * empty read proves nothing on its own (the draft view never shows a conversation, a
+     * never-texted thread looks like a slow render, the inbox list is lazy), so it may open the
+     * Send gate only when {@link PreSendCheck#mayClearEmptyConversation} holds (nothing seen at
+     * scheduling, listener enabled, listener never matched this conversation); otherwise
+     * {@link PreSendCheck.Verdict#HOLD_UNVERIFIED} in every mode (nothing sent; HELD(UNVERIFIED)).
+     */
+    public static PreSendCheck.Verdict noConversationVerdict(PreSendCheck check, ScheduledMessage m,
+                                                             Classification c) {
+        if (check == null || m == null) return PreSendCheck.Verdict.HOLD_UNVERIFIED;
+        if (check.isOff()) return PreSendCheck.Verdict.SEND;
+        if (!check.mayClearEmptyConversation(m)) return PreSendCheck.Verdict.HOLD_UNVERIFIED;
+        return check.decide(m, c);
+    }
+
+    /**
+     * live-presend-failclosed: whether an agreed pre-send read counts as an empty conversation
+     * and so goes through {@link #noConversationVerdict}: the new-conversation Kind EMPTY
+     * ({@code emptyKind}), or any agreed read with no bubble at all. A thread page whose
+     * gv-message-list rendered no item reads [] the same way a slow render or a never-texted
+     * number does, so an empty bubble list is never by itself evidence that nothing changed.
+     */
+    public static boolean readsAsEmpty(boolean emptyKind, List<ThreadBubble> bubbles) {
+        return emptyKind || bubbles == null || bubbles.isEmpty();
     }
 
     /**

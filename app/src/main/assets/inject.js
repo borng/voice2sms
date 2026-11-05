@@ -758,8 +758,11 @@ function v2sScheduledClear(text) {
  *
  * mode 'thread' (LIVE-F10): Java loaded the job's own thread URL by a full page load. Once GV
  * shows that conversation (gv-message-list, and the location is the job's 1:1 thread) the thread's
- * own box is filled; when GV goes elsewhere or shows no conversation within settleMs, Java is told
- * (V2SBridge.onScheduledNoThread) and loads the messages list for mode 'new'.
+ * own box is filled, unless it already holds text that is not our body (OD34: the user's draft is
+ * never overwritten; V2SBridge.onScheduledDraftPresent and the job stops unsent); when GV goes
+ * elsewhere or shows no conversation within settleMs, Java is told (V2SBridge.onScheduledNoThread),
+ * which reloads the thread page once (full load, one more settle) and only then loads the
+ * messages list for mode 'new'.
  * mode 'new': runs the unchanged voice2sms() flow WITHOUT its auto-send (new conversation).
  *
  * Either way it reports "typed" only once the box really holds our text
@@ -823,7 +826,19 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
             setTimeout(function() { fillThread(polls - 1); }, POLL_MS);
             return;
         }
-        if (!holdsBody(ta)) _v2sScheduledSet(ta, body, true);
+        if (!holdsBody(ta)) {
+            // OD34: never overwrite or delete a draft the user left in this thread's box: any
+            // text that is not our body stops the job unsent (Java: draft_present, a reminder).
+            var current = ta.isContentEditable ? ta.textContent : ta.value;
+            if (typeof current === 'string' && current.trim().length > 0) {
+                console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
+                if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
+                    V2SBridge.onScheduledDraftPresent(token);
+                }
+                return;
+            }
+            _v2sScheduledSet(ta, body, true);
+        }
         waitTyped(polls);
     }
 

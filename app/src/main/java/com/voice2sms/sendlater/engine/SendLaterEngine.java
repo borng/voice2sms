@@ -310,10 +310,22 @@ public final class SendLaterEngine {
             listener = true;
             check = PreSendCheck.required(policy);
         }
+        // live-presend-failclosed: the facts the sender's empty-conversation rule needs, read here
+        // (the engine owns the stores), never by the send controller.
+        check = check.withListenerFacts(d.conditions.listenerEnabled(), listenerSawConversation(d, m));
         // OD22(1): replies from the (possibly snoozed) watermark, self-preemption from the original.
         Decision decision = LadderEvaluator.evaluate(m, m.getRung(), events, now, d.conditions.session(),
                 d.conditions.network(), listener, policy, m.getWatermark(), m.getSelfPreemptionBaseline());
         apply(d, context, m, decision, now, check);
+    }
+
+    /** Fails closed: an unreadable store counts as "the listener saw this conversation". */
+    private static boolean listenerSawConversation(EngineDeps d, ScheduledMessage m) {
+        try {
+            return d.conditions.listenerSawConversation(ConversationRef.of(m));
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     private static boolean senderChecksThread(ScheduledSender s) {

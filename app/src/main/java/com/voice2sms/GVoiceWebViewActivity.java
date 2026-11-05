@@ -599,6 +599,8 @@ public class GVoiceWebViewActivity extends Activity {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
         long delayMs = ScheduledSendController.sendDelayMs(prefs.getInt("auto_send_delay", 2) * 1000L);
         // LIVE-F6/F8: a token per injection; inject.js reports "typed" and asks before tapping Send.
+        // live-presend-failclosed: the scheduled body and token go only into a GV page.
+        if (!OriginGuard.isTrustedGvUrl(webView.getUrl())) return;
         String token = scheduledSend.onComposeInjection(delayMs);
         if (token == null) return;
         // LIVE-F10: type into the job's own thread when this is its page, else the new-conversation
@@ -653,6 +655,7 @@ public class GVoiceWebViewActivity extends Activity {
         if (cb == null) return;
         runOnUiThread(() -> {
             if (!isActivityAlive() || sendLaterHooks == null
+                    || !OriginGuard.isTrustedGvUrl(webView.getUrl())
                     || !ThreadUrl.isThreadOf(webView.getUrl(), e164)) {
                 cb.onThreadRead(null);
                 return;
@@ -747,6 +750,8 @@ public class GVoiceWebViewActivity extends Activity {
             if (script == null) return;
             runOnUiThread(() -> {
                 if (!isActivityAlive()) return;
+                // live-presend-failclosed: inject.js and our body go only into a GV page.
+                if (!OriginGuard.isTrustedGvUrl(webView.getUrl())) return;
                 // Only our exact body is removed; never logged.
                 webView.evaluateJavascript(script + "\nv2sScheduledClear(" + jsonEncode(text) + ");", null);
             });
@@ -760,7 +765,7 @@ public class GVoiceWebViewActivity extends Activity {
         @Override
         public void probeComposer(ScheduledSendController.ComposerProbe cb) {
             runOnUiThread(() -> {
-                if (!isActivityAlive()) {
+                if (!isActivityAlive() || !OriginGuard.isTrustedGvUrl(webView.getUrl())) {
                     cb.onProbe(null);
                     return;
                 }
@@ -985,6 +990,19 @@ public class GVoiceWebViewActivity extends Activity {
             runOnUiThread(() -> {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onNoThread(token);
+            });
+        }
+
+        /**
+         * OD34: thread mode found text in the thread's box that is not our body before typing;
+         * the job stops unsent and the draft is left alone.
+         */
+        @JavascriptInterface
+        public void onScheduledDraftPresent(String token) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+            runOnUiThread(() -> {
+                if (!isActivityAlive() || scheduledSend == null) return;
+                scheduledSend.onDraftPresent(token);
             });
         }
 

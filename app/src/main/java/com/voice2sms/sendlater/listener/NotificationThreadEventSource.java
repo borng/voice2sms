@@ -66,6 +66,23 @@ public final class NotificationThreadEventSource implements ThreadEventSource {
         }
     }
 
+    /**
+     * live-presend-failclosed (D30, R31): whether this store ever matched a notification to
+     * {@code ref}'s conversation: a durable number match, or any stored event of its key (a reply
+     * after scheduling would have posted one). Independent of {@link #isAvailable()}. Fails closed:
+     * a null ref or an unreadable store counts as seen.
+     */
+    public boolean sawConversation(ConversationRef ref) {
+        if (ref == null) return true;
+        try {
+            if (store.hasNumberMatch(ref.key())) return true;
+            List<ThreadEvent> any = store.eventsSince(ref.key(), 0L);
+            return any == null || !any.isEmpty();
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
     @Override public List<ThreadEvent> readSince(ConversationRef ref, Watermark wm) {
         if (ref == null) return new ArrayList<>();
         List<ThreadEvent> got = store.eventsSince(ref.key(), sinceMs(wm));
