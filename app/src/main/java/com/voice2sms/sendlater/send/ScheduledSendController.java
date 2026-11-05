@@ -28,6 +28,7 @@ import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 import com.voice2sms.sendlater.web.ThreadBubble;
 import com.voice2sms.sendlater.web.ThreadReadCallback;
+import com.voice2sms.sendlater.web.ThreadUrl;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
@@ -88,6 +89,18 @@ import java.util.concurrent.Executors;
  *       outbound under HOLD_AND_ASK, or an unreadable thread end the job with CANNOT_SHOW and the
  *       verdict's detail; the engine holds, self-preempts or reminds. Nothing is sent then, and
  *       never "may have already sent".</li>
+ *   <li>live-thread-compose (LIVE-F10): the job's own thread URL is loaded by a full page load
+ *       ({@link ThreadUrl#threadUrlOf}) and the script types into that conversation's box, so the
+ *       pre-send check and the verification read the conversation itself; only when GV shows no
+ *       conversation for the number ({@link #onNoThread}) does the new-conversation flow run, and
+ *       the check then treats the conversation as empty
+ *       ({@link PreSendRead#classifyNoConversation}), but only on this job's draft once the box
+ *       holds our body, and never once GV showed the number's thread in that flow
+ *       ({@link NewConversationReads}); if the thread shows up before a click is granted, the
+ *       empty clearance is dropped and the thread is read again. The script asks the tri-state gate
+ *       ({@link #clickState}) and polls while it says WAIT, so a check still pending after typing
+ *       no longer costs the send. A job that ends with no click granted clears our text from the
+ *       box ({@link Host#clearComposer}), so no scheduled text is left behind.</li>
  * </ul>
  */
 public final class ScheduledSendController {
@@ -162,8 +175,23 @@ public final class ScheduledSendController {
         /** Main-frame URL (thread-safe snapshot). */
         String mainFrameUrl();
 
-        /** Loads GV so onPageFinished injects the scheduled composer. False when not alive. */
+        /**
+         * Loads the thread of {@code e164} (full page load; LIVE-F10) so onPageFinished injects the
+         * scheduled composer. False when not alive.
+         */
         boolean beginCompose(String e164, String text);
+
+        /**
+         * LIVE-F10 fallback: GV shows no conversation for the number; loads the messages list
+         * (full load) so onPageFinished injects the new-conversation flow. False when not alive.
+         */
+        boolean loadMessagesList();
+
+        /**
+         * LIVE-F10: empties the message box when it still holds exactly {@code text} (our
+         * scheduled body); anything else is left alone. No-op when not alive.
+         */
+        void clearComposer(String text);
 
         /** GVoiceWebViewActivity.readThread. */
         void readThread(String e164, int limit, ThreadReadCallback cb);
@@ -211,6 +239,14 @@ public final class ScheduledSendController {
         /** D30: the agreement state of the pre-send reads; null until they start. */
         PreSendRead presend;
         long presendDeadlineMs;
+        /** LIVE-F10: GV showed no conversation on the thread page; the new-conversation flow runs. */
+        boolean gvShowedNoThread;
+        /** LIVE-F10: compose flow of the last injection. */
+        ScheduledCompose.Mode mode = ScheduledCompose.Mode.THREAD;
+        /** LIVE-F10 F1: the pre-send reads of the new-conversation flow; null in thread mode. */
+        NewConversationReads fallbackReads;
+        /** LIVE-F10: the end-of-job clear of our text was sent once. */
+        boolean composerCleared;
 
         Job(long id, long checkTimeMs, long claimedAtMs) {
             this.id = id;
@@ -264,7 +300,7 @@ public final class ScheduledSendController {
     private LockCoverPolicy.JobState jobState = LockCoverPolicy.JobState.IDLE;
     private final LockCover cover;
     /** Recipient of the running (or last) job: the only thread that may load while covered. */
-    private String targetE164;
+    private volatile String targetE164;
     /** Hard deadline of the last job (bounds the post-outcome wait). */
     private long lastHardDeadlineMs;
     private boolean resumed;
@@ -476,7 +512,8 @@ public final class ScheduledSendController {
     public boolean wantsReinject(String url) {
         Job job = current;
         if (job == null || job.e164 == null || job.compose == null) return false;
-        return ScheduledCompose.shouldReinject(url, job.compose.injections(),
+        // LIVE-F10: a reload of the job's own thread page re-injects too.
+        return ScheduledCompose.shouldReinject(url, job.e164, job.compose.injections(),
                 job.compose.isClickGranted(), job.compose.isClosed());
     }
 
@@ -496,6 +533,93 @@ public final class ScheduledSendController {
         updateStop();
         startPreSendCheck(job);
         return token;
+    }
+
+    /**
+     * LIVE-F10: the compose flow of the injection about to run on {@code url} (call right after
+     * {@link #onComposeInjection} returned a token): "thread" on the job's own thread page,
+     * "new" (voice2sms()'s new-conversation flow) once GV showed no conversation there or on any
+     * other page.
+     */
+    public String composeModeFor(String url) {
+        Job job = current;
+        if (job == null || job.e164 == null) return ScheduledCompose.Mode.NEW_CONVERSATION.wire();
+        job.mode = ScheduledCompose.composeMode(url, job.e164, job.gvShowedNoThread);
+        if (job.mode == ScheduledCompose.Mode.NEW_CONVERSATION && job.fallbackReads == null) {
+            job.fallbackReads = new NewConversationReads(job.e164);
+        }
+        return job.mode.wire();
+    }
+
+    /** LIVE-F10: how long inject.js polls a WAIT answer before it stops asking (Java decides first). */
+    public static long clickWaitMs() {
+        // LIVE-F10 F1: a dropped empty clearance reads the thread again with a fresh deadline.
+        return 2 * PRESEND_TIMEOUT_MS + ScheduledCompose.CLICK_WAIT_MARGIN_MS;
+    }
+
+    /**
+     * LIVE-F10, JavaBridge thread: the tri-state Send ask for {@code token} ("yes" | "wait" |
+     * "no", {@link ScheduledCompose#clickState}). "yes" at most once per job for the current
+     * injection while the gate is open; "wait" only while the pre-send check is pending.
+     */
+    public static String clickState(String token) {
+        return clickState(token, null);
+    }
+
+    /**
+     * LIVE-F10 F1, JavaBridge thread: as {@link #clickState(String)}, with the page's own location
+     * ({@code pageUrl}, may be null). When that page or the last main-frame URL is the job's 1:1
+     * thread, an empty-conversation clearance is dropped first (WAIT) and the thread is read again.
+     */
+    public static String clickState(String token, String pageUrl) {
+        final ScheduledSendController c = live.get();
+        ScheduledCompose sc = c == null ? null : c.liveCompose;
+        if (sc == null) return ScheduledCompose.ClickState.NO.wire();
+        String e164 = c.targetE164;
+        boolean onJobThread = ThreadUrl.isThreadOf(pageUrl, e164) || ThreadUrl.isThreadOf(c.host.mainFrameUrl(), e164);
+        ScheduledCompose.ClickState state = sc.clickState(token, onJobThread);
+        if (onJobThread && state == ScheduledCompose.ClickState.WAIT) c.main.post(c::recheckIfDue);
+        return state.wire();
+    }
+
+    /**
+     * LIVE-F10 F1, main thread: a main-frame URL of the running job (the activity's
+     * doUpdateVisitedHistory). In the new-conversation flow the job's own thread showing up drops
+     * an empty-conversation clearance (no click granted yet) and the thread is read again.
+     */
+    public void onMainFrameUrl(String url) {
+        Job job = current;
+        if (job == null || job.compose == null || job.fallbackReads == null) return;
+        if (job.fallbackReads.onUrl(url)) job.compose.revokeEmptyClearance();
+        recheckIfDue();
+    }
+
+    /** LIVE-F10 F1, main thread: restarts the pre-send reads once a dropped clearance asks for it. */
+    private void recheckIfDue() {
+        final Job job = current;
+        if (job == null || job.compose == null || !job.compose.takeRecheckDue()) return;
+        if (job.fallbackReads != null) job.fallbackReads.restart();
+        job.presend = new PreSendRead();
+        job.presendDeadlineMs = System.currentTimeMillis() + PRESEND_TIMEOUT_MS;
+        main.postDelayed(() -> preSendReadOnce(job), BASELINE_POLL_MS);
+    }
+
+    /**
+     * LIVE-F10, main thread: the thread page of the job's number settled without showing the
+     * conversation (inject.js, for {@code token}). From now on the job composes with the
+     * new-conversation flow: the messages list is loaded and onPageFinished injects it.
+     */
+    public void onNoThread(String token) {
+        Job job = current;
+        if (job == null || job.e164 == null || job.compose == null || job.gvShowedNoThread) return;
+        if (!job.compose.isCurrent(token) || job.compose.isClickGranted()) return;
+        job.gvShowedNoThread = true;
+        job.presend = job.presend == null ? null : new PreSendRead();
+        // The check reads the new page from scratch: it gets its full time again (hard timeout bounds it).
+        if (job.presend != null && job.compose.isPreSendPending()) {
+            job.presendDeadlineMs = System.currentTimeMillis() + PRESEND_TIMEOUT_MS;
+        }
+        if (!host.isAlive() || !host.loadMessagesList()) report(job, failureOutcome(job), "activity_gone");
     }
 
     /**
@@ -686,21 +810,41 @@ public final class ScheduledSendController {
             report(job, failureOutcome(job), "activity_gone");
             return;
         }
-        host.readThread(job.e164, READ_LIMIT, bubbles -> onPreSendRead(job, bubbles));
+        host.readThread(job.e164, READ_LIMIT, bubbles -> onPreSendRead(job, preSendView(job, bubbles)));
+    }
+
+    /**
+     * Feeds one pre-send read; returns the agreed read or null. Thread mode: the read as read.
+     * LIVE-F10 F1, new-conversation flow ({@link NewConversationReads}): a page other than the
+     * job's thread counts as an empty conversation only on this job's draft once the box holds
+     * our body, and never once the thread was shown; the job's thread page reads as read.
+     */
+    private NewConversationReads.Agreed preSendView(Job job, List<ThreadBubble> bubbles) {
+        long now = System.currentTimeMillis();
+        if (job.mode != ScheduledCompose.Mode.NEW_CONVERSATION || job.fallbackReads == null) {
+            List<ThreadBubble> agreed = job.presend.onRead(bubbles, now);
+            return agreed == null ? null : new NewConversationReads.Agreed(false, agreed);
+        }
+        return job.fallbackReads.onRead(host.mainFrameUrl(), job.compose.isTyped(), bubbles, now);
     }
 
     /** One pre-send read: two agreeing reads decide; none by the deadline is "unreadable". */
-    private void onPreSendRead(final Job job, List<ThreadBubble> bubbles) {
+    private void onPreSendRead(final Job job, NewConversationReads.Agreed agreed) {
         if (current != job || job.compose == null || !job.compose.isPreSendPending()) return;
         long now = System.currentTimeMillis();
-        List<ThreadBubble> agreed = job.presend.onRead(bubbles, now);
+        // F1: an empty agreement no longer stands once the job's thread is (or was) the page.
+        if (agreed != null && agreed.empty && !job.fallbackReads.emptyStillHolds(host.mainFrameUrl())) {
+            agreed = null;
+        }
         if (agreed != null) {
-            Classification c = PreSendRead.classify(job.message, agreed, READ_LIMIT, now);
-            onPreSendVerdict(job, job.check.decide(job.message, c), now);
+            Classification c = agreed.empty
+                    ? PreSendRead.classifyNoConversation(job.message, READ_LIMIT, now)
+                    : PreSendRead.classify(job.message, agreed.bubbles, READ_LIMIT, now);
+            onPreSendVerdict(job, job.check.decide(job.message, c), now, agreed.empty);
             return;
         }
         if (now >= job.presendDeadlineMs) {
-            onPreSendVerdict(job, job.check.decide(job.message, Classification.UNVERIFIED), now);
+            onPreSendVerdict(job, job.check.decide(job.message, Classification.UNVERIFIED), now, false);
             return;
         }
         main.postDelayed(() -> preSendReadOnce(job), BASELINE_POLL_MS);
@@ -710,14 +854,19 @@ public final class ScheduledSendController {
      * SEND opens the Send gate (after a last lateness check, I2); every other verdict ends the
      * job unsent with the verdict's detail, so the engine holds, self-preempts or reminds.
      */
-    private void onPreSendVerdict(Job job, PreSendCheck.Verdict verdict, long now) {
+    private void onPreSendVerdict(Job job, PreSendCheck.Verdict verdict, long now, boolean emptyConversation) {
         if (verdict == PreSendCheck.Verdict.SEND) {
             if (LaunchRecheck.isLate(job.message, now, LaunchRecheck.QUEUE_SLACK_MS)) {
                 stopUnsent(job, LaunchRecheck.DETAIL_LATE);
                 return;
             }
-            // The script asked before the check cleared and will not ask again: nothing was sent.
-            if (!job.compose.clearPreSend()) stopUnsent(job, DETAIL_PRESEND_SLOW);
+            // The script polls the tri-state gate and taps once it says yes. Only an old boolean
+            // ask refused while pending (or a closed gate) leaves the job unable to send.
+            // F1: a clearance on an empty conversation is dropped if the thread shows up before a click.
+            boolean open = emptyConversation
+                    ? job.compose.clearPreSendOnEmptyConversation()
+                    : job.compose.clearPreSend();
+            if (!open) stopUnsent(job, DETAIL_PRESEND_SLOW);
             return;
         }
         stopUnsent(job, verdict.detail());
@@ -802,11 +951,20 @@ public final class ScheduledSendController {
         SendLaterEngine.onSendOutcome(app, job.id, outcome, SendDetails.forEngine(outcome, cause));
     }
 
-    /** The job is over: its Send gate shuts for good (no click after the outcome). */
+    /**
+     * The job is over: its Send gate shuts for good (no click after the outcome). LIVE-F10: when no
+     * click was ever granted (pre-send hold, timeout, Stop, any failure) our text must not stay in
+     * GV's box, where it could be sent by hand by mistake: the box is cleared if it still holds
+     * exactly our body.
+     */
     private void closeCompose(Job job) {
         if (job.compose == null) return;
-        job.compose.close();
+        boolean unsent = job.compose.close();
         if (liveCompose == job.compose) liveCompose = null;
+        if (unsent && !job.composerCleared && job.message != null && job.message.getText() != null) {
+            job.composerCleared = true;
+            if (host.isAlive()) host.clearComposer(job.message.getText());
+        }
     }
 
     private void afterOutcome() {

@@ -94,6 +94,34 @@ public final class PreSendRead {
     }
 
     /**
+     * LIVE-F10: the check's classification when GV showed no conversation for the number and the
+     * new-conversation flow composes (the conversation counts as empty). UNCHANGED-like (the
+     * classifier on no events) only when neither the reply watermark nor the self-preemption
+     * baseline has a newest message; otherwise the thread had messages GV did not show, so
+     * {@link Classification#UNVERIFIED}.
+     */
+    public static Classification classifyNoConversation(ScheduledMessage m, int readLimit, long nowMs) {
+        if (m == null) return Classification.UNVERIFIED;
+        if (hasNewest(m.getWatermark()) || hasNewest(m.getSelfPreemptionBaseline())) {
+            return Classification.UNVERIFIED;
+        }
+        return classify(m, new ArrayList<ThreadBubble>(), readLimit, nowMs);
+    }
+
+    /**
+     * LIVE-F10: what one pre-send read means in the new-conversation flow. On the job's own
+     * thread page ({@code onJobThread}) the read is the read (null stays null); on any other page
+     * (the draft view has no gv-message-list) the conversation is empty.
+     */
+    public static List<ThreadBubble> newConversationRead(List<ThreadBubble> read, boolean onJobThread) {
+        return onJobThread ? read : new ArrayList<ThreadBubble>();
+    }
+
+    private static boolean hasNewest(Watermark w) {
+        return w != null && w.getNewestTs() != null;
+    }
+
+    /**
      * The events of {@code read} that may be new since the baselines, echoes and failed bubbles
      * left out, for the classifier; null when the read is null or cannot be aligned.
      */
