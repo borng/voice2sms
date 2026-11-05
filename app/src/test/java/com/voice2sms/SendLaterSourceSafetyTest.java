@@ -294,9 +294,13 @@ public class SendLaterSourceSafetyTest {
 
     // ------------------------------------------------------------------ G4 (I7, R8)
 
-    /** The R8 recon ids the native Voice overlay may look up (spec R1, R2, R3, R33). */
+    /**
+     * The R8 recon ids the native Voice overlay may look up (spec R1, R2, R3, R33). {@code chip}
+     * added by LIVE-F1: the new-conversation screen's recipient chip stands in for toolbar_title.
+     */
     private static final Set<String> R8_IDS = new TreeSet<>(Arrays.asList(
-            "toolbar_title", "send_message_text", "send_message_button", "input_message_container", "list"));
+            "toolbar_title", "send_message_text", "send_message_button", "input_message_container", "list",
+            "chip"));
     private static final String VOICE_PKG = "com.google.android.apps.googlevoice";
 
     /** G4 (I7, R8): VoiceOverlayIds.R8_IDS is exactly the R8 id set, as full Voice resource ids. */

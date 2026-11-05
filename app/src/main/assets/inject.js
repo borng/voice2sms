@@ -1136,8 +1136,9 @@ window.v2sSendLaterClear = function(messageId, expectedDraft, scheduledLabel) {
 
 /**
  * Java -> page (send path, watermarks): reports the open thread's newest bubbles as
- * {e164, bubbles: [{direction, timeMs|null, text, id|null}] | null}. bubbles is null
- * when the page is not showing that 1:1 thread or the bubbles cannot be read reliably.
+ * {e164, bubbles: [{direction, timeMs|null, text, label|null, id|null, failed}] | null}.
+ * bubbles is null when the page is not showing that 1:1 thread or the bubbles cannot be read
+ * reliably; [] when the thread is shown and empty.
  */
 window.v2sReadThread = function(e164, limit) {
     var bubbles = null;
@@ -1429,6 +1430,8 @@ function _v2sSlCapture() {
     var newest = bubbles && bubbles.length ? bubbles[bubbles.length - 1] : null;
     var newestId = newest && newest.id ? newest.id : null;
     var newestTime = newest && typeof newest.timeMs === 'number' ? newest.timeMs : null;
+    // LIVE-F9: GV web has no bubble time; Java parses the newest bubble's label instead.
+    var newestLabel = newest && !newestTime && newest.label ? newest.label : null;
     var quality = (newestId && newestTime) ? 'EXACT' : (newestTime ? 'TIMESTAMP' : 'DEVICE_ONLY');
     st.capture = { e164: e164, href: location.href };
     V2SBridge.requestSendLater(JSON.stringify({
@@ -1437,6 +1440,7 @@ function _v2sSlCapture() {
         draftText: ta.value,
         newestMessageId: newestId,
         newestMessageTimeMs: newestTime,
+        newestMessageLabel: newestLabel,
         watermarkQuality: quality
     }));
 }
@@ -1615,34 +1619,72 @@ function _v2sSlItemE164(item) {
 }
 
 /**
- * Newest bubbles of the open thread, oldest first: [{direction, timeMs|null, text, id|null}].
- * Returns null when no bubble is found or any bubble's direction is unclear: a partial or
- * guessed read must never look like "no reply" (selectors unverified on device).
+ * Newest bubbles of the open thread, oldest first:
+ * [{direction, timeMs|null, text, label|null, id|null, failed}] (LIVE-F9).
+ *
+ * Real GV web DOM (S22, 2026-11-05): gv-message-list > ... > li > gv-message-item >
+ * div.container > div.full-container.incoming|.outgoing > [div.cdk-visually-hidden (the
+ * screen-reader label, which carries the time: Java parses it) and div.message-row >
+ * div.subject-content-container.bubble > div > gv-annotation.content (the text)]. There is no
+ * time element, timestamp or id, and the direction sits on a DESCENDANT of gv-message-item.
+ * An item whose direction is unclear is skipped, never guessed. Returns [] when the thread view
+ * is rendered with no items, null when it is not rendered or no item could be read. Never logs
+ * the text or the label (both hold message content).
  */
 function _v2sSlReadBubbles(limit) {
     var sel = 'gv-message-item, gv-text-message-item, [gv-test-id="message-item"], [data-message-id]';
-    var nodes = document.querySelectorAll(sel);
+    var list = document.querySelector('gv-message-list');
+    var nodes = (list || document).querySelectorAll(sel);
     var out = [];
     for (var i = 0; i < nodes.length; i++) {
         var n = nodes[i];
         if (n.parentElement && n.parentElement.closest(sel)) continue;   // nested match
-        var direction = _v2sSlBubbleDirection(n);
-        if (!direction) return null;
-        var textEl = n.querySelector('[gv-test-id="message-text"], .message-text, .content');
+        var full = n.querySelector('.full-container');
+        var direction = _v2sSlBubbleDirection(n, full);
+        if (!direction) continue;   // never guess a direction
+        var textEl = n.querySelector('gv-annotation.content')
+            || n.querySelector('.bubble')
+            || n.querySelector('[gv-test-id="message-text"], .message-text, .content');
         var text = ((textEl || n).textContent || '').trim();
+        var labelEl = n.querySelector('.cdk-visually-hidden');
+        var label = labelEl ? (labelEl.textContent || '').trim() : '';
         out.push({
             direction: direction,
             timeMs: _v2sSlBubbleTime(n),
             text: text,
-            id: n.getAttribute('data-message-id') || n.getAttribute('data-id') || null
+            label: label || null,
+            id: n.getAttribute('data-message-id') || n.getAttribute('data-id') || null,
+            failed: _v2sSlBubbleFailed(n, full)
         });
     }
-    if (!out.length) return null;
+    if (!out.length) return (list && !nodes.length) ? [] : null;
     var max = (typeof limit === 'number' && limit > 0) ? Math.floor(limit) : 20;
     return out.slice(Math.max(0, out.length - max));
 }
 
-function _v2sSlBubbleDirection(n) {
+/** The class/test-id words of one element, for direction and status matching. */
+function _v2sSlClassWords(el) {
+    if (!el || !el.getAttribute) return '';
+    return (el.getAttribute('class') || '') + ' ' + (el.getAttribute('gv-test-id') || '');
+}
+
+/** 'OUT' / 'IN' from the item's .full-container (real DOM), else the old item/ancestor classes. */
+function _v2sSlBubbleDirection(n, full) {
+    if (full) {
+        var fc = _v2sSlClassWords(full);
+        var o = /(^|\s)outgoing(\s|$)/.test(fc), inc = /(^|\s)incoming(\s|$)/.test(fc);
+        if (o !== inc) return o ? 'OUT' : 'IN';
+        return null;
+    }
+    return _v2sSlLegacyDirection(n);
+}
+
+/** OD28 L1: GV marks a bubble that did not go out; such a bubble never verifies a send. */
+function _v2sSlBubbleFailed(n, full) {
+    return /fail|error|not-sent/i.test(_v2sSlClassWords(full) + ' ' + _v2sSlClassWords(n));
+}
+
+function _v2sSlLegacyDirection(n) {
     var el = n;
     for (var i = 0; el && i < 3; i++, el = el.parentElement) {
         var c = (el.getAttribute('class') || '') + ' ' + (el.getAttribute('gv-test-id') || '');

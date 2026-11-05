@@ -55,7 +55,9 @@ public class VoiceOverlaySourceTest {
     private static final Set<String> R8_NAMES = new HashSet<>(Arrays.asList(
             "send_message_text", "send_message_button", "toolbar_title", "input_message_container",
             "input_field_container", "attach_media_button", "camera_button", "list", "message_text",
-            "message_time", "messagelist_avatar"));
+            "message_time", "messagelist_avatar",
+            // LIVE-F1 (device recon 2026-11-05): recipient chip on the new-conversation screen.
+            "chip"));
 
     /** Ids this node needs (signature, tab/chip anchor, bubble list). */
     private static final List<String> REQUIRED_NAMES = Arrays.asList(

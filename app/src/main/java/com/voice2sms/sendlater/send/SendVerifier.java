@@ -1,5 +1,6 @@
 package com.voice2sms.sendlater.send;
 
+import com.voice2sms.sendlater.domain.EchoFilter;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 
 import java.util.List;
@@ -14,6 +15,8 @@ import java.util.List;
  * check and no later than the send (the earlier of {@code sendTimeMs} and our own bubble), the
  * result is {@link Result#VERIFIED_WITH_LATE_REPLY}: the message went out, but the other side
  * wrote just before it did.
+ *
+ * <p>LIVE-F9: an inbound echo of our own text ({@link EchoFilter}) is never a late reply.
  */
 public final class SendVerifier {
 
@@ -36,7 +39,7 @@ public final class SendVerifier {
         }
         if (ownTime == null) return Result.UNVERIFIED;
         long upper = Math.min(sendTimeMs, ownTime);
-        for (ThreadEvent e : threadEvents) {
+        for (ThreadEvent e : EchoFilter.withoutEchoes(threadEvents)) {
             if (e == null || e.getDirection() != ThreadEvent.Direction.IN) continue;
             if (e.getTimeMs() > checkTimeMs && e.getTimeMs() <= upper) return Result.VERIFIED_WITH_LATE_REPLY;
         }

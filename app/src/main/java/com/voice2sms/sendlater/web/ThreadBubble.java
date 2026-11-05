@@ -9,11 +9,19 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.TimeZone;
 
 /**
  * One message bubble read from the open GV web thread by {@code window.v2sReadThread}
- * ({@code {direction: "IN"|"OUT", timeMs: number|null, text: string, id: string|null}}).
+ * ({@code {direction: "IN"|"OUT", timeMs: number|null, text: string, id: string|null,
+ * label?: string|null, failed?: boolean}}).
  * Carries raw text: never log or persist it beyond what the store allows.
+ *
+ * <p>LIVE-F9: the real GV web page gives no time or id; when {@code timeMs} is absent the
+ * screen-reader {@code label} supplies a minute-precision time ({@link GvBubbleLabel}), marked
+ * {@link #isTimeFromLabel()}: the page draws that label on an optimistic bubble too, so it dates
+ * the bubble but does not prove the server took it. A {@code failed} bubble ("Not sent") never
+ * verifies a send (OD28 L1). The label is not kept.
  */
 public final class ThreadBubble {
 
@@ -24,18 +32,31 @@ public final class ThreadBubble {
     private final Long timeMs;
     private final String text;
     private final String id;
+    private final boolean timeFromLabel;
+    private final boolean failed;
 
     public ThreadBubble(ThreadEvent.Direction direction, Long timeMs, String text, String id) {
+        this(direction, timeMs, text, id, false, false);
+    }
+
+    public ThreadBubble(ThreadEvent.Direction direction, Long timeMs, String text, String id,
+                        boolean timeFromLabel, boolean failed) {
         this.direction = direction;
         this.timeMs = timeMs;
         this.text = text;
         this.id = id;
+        this.timeFromLabel = timeMs != null && timeFromLabel;
+        this.failed = failed;
     }
 
     public ThreadEvent.Direction getDirection() { return direction; }
     public Long getTimeMs() { return timeMs; }
     public String getText() { return text; }
     public String getId() { return id; }
+    /** The time came from the bubble's label (minute precision), not from a page time. */
+    public boolean isTimeFromLabel() { return timeFromLabel; }
+    /** The page marks this bubble as failed / not sent: it never verifies a send. */
+    public boolean isFailed() { return failed; }
 
     /** SMS ThreadEvent with textHash set via ThreadEvent.hashOf, or null when the time is unknown. */
     public ThreadEvent toThreadEvent() {
@@ -46,7 +67,8 @@ public final class ThreadBubble {
     @Override
     public String toString() {
         return "ThreadBubble{" + direction + ", timeKnown=" + (timeMs != null)
-                + ", idKnown=" + (id != null) + "}";
+                + ", idKnown=" + (id != null) + (timeFromLabel ? ", labelTime" : "")
+                + (failed ? ", failed" : "") + "}";
     }
 
     /** What the page answered for one v2sReadThread request. */
@@ -63,9 +85,15 @@ public final class ThreadBubble {
 
     /**
      * Parses {@code {"e164": "...", "bubbles": [...] | null}}. Returns null for malformed JSON or a
-     * missing e164. Entries without a valid direction or string text are dropped.
+     * missing e164. Entries without a valid direction or string text are dropped. Label times are
+     * read in the device time zone.
      */
     public static Report parseReport(String json) {
+        return parseReport(json, TimeZone.getDefault());
+    }
+
+    /** As {@link #parseReport(String)}, reading label times in {@code tz}. */
+    public static Report parseReport(String json, TimeZone tz) {
         if (json == null) return null;
         JSONObject o;
         try {
@@ -77,10 +105,14 @@ public final class ThreadBubble {
         if (!(e instanceof String) || ((String) e).isEmpty()) return null;
         Object b = o.opt("bubbles");
         if (!(b instanceof JSONArray)) return new Report((String) e, null);
-        return new Report((String) e, parseList((JSONArray) b));
+        return new Report((String) e, parseList((JSONArray) b, tz));
     }
 
     static List<ThreadBubble> parseList(JSONArray arr) {
+        return parseList(arr, TimeZone.getDefault());
+    }
+
+    static List<ThreadBubble> parseList(JSONArray arr, TimeZone tz) {
         List<ThreadBubble> out = new ArrayList<>();
         int start = Math.max(0, arr.length() - MAX_BUBBLES);
         for (int i = start; i < arr.length(); i++) {
@@ -99,7 +131,16 @@ public final class ThreadBubble {
             String id = null;
             Object idv = x.opt("id");
             if (idv instanceof String && !((String) idv).isEmpty()) id = (String) idv;
-            out.add(new ThreadBubble(dir, time, (String) t, id));
+            boolean fromLabel = false;
+            if (time == null) {
+                Object lv = x.opt("label");
+                if (lv instanceof String) {
+                    time = GvBubbleLabel.parseTimeMs((String) lv, tz);
+                    fromLabel = time != null;
+                }
+            }
+            boolean failed = Boolean.TRUE.equals(x.opt("failed"));
+            out.add(new ThreadBubble(dir, time, (String) t, id, fromLabel, failed));
         }
         return Collections.unmodifiableList(out);
     }
