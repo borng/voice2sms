@@ -8,7 +8,11 @@ import java.util.List;
  */
 public interface VoiceNodeAccessor {
 
-    /** {@code toolbar_title} text, or null when the node is missing (or Voice is not in front). */
+    /**
+     * The 1:1 title: {@code toolbar_title} text, else the text of the single recipient {@code chip}
+     * on the new-conversation screen (LIVE-F1); null when neither gives one (no title node and zero
+     * or several chips, or Voice is not in front).
+     */
     String readTitle();
 
     /**

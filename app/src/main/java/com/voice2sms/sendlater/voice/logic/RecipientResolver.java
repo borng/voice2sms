@@ -72,6 +72,19 @@ public final class RecipientResolver {
         return new Resolution(Kind.NEEDS_CHOICE, null, new ArrayList<>(candidates));
     }
 
+    /**
+     * LIVE-F1: resolve from what the screen shows. The title is {@link VoiceScreenSignature#title}
+     * (toolbar_title, else the single recipient chip) and is then resolved exactly like a toolbar
+     * title: a number becomes E.164, a name goes through contacts and the directory. Null when the
+     * screen has no 1:1 title (no title and zero or several chips: a group, OD13).
+     */
+    public static Resolution resolveScreen(String toolbarTitle, List<String> chipTexts,
+                                           List<String> contacts, List<String> directory) {
+        String title = VoiceScreenSignature.title(toolbarTitle, chipTexts);
+        if (title == null) return null;
+        return resolve(title, contacts, directory);
+    }
+
     /** A number the user picked or typed in the sheet; null if it is not a number. */
     public static Resolution manual(String raw) {
         String e164 = PhoneNumbers.toE164(raw, DEFAULT_REGION);
