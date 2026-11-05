@@ -62,7 +62,23 @@ public class GVoiceWebViewActivity extends Activity {
     private static final String TAG = "Voice2SMS";
     private static final String GV_MESSAGES_URL = "https://voice.google.com/u/0/messages";
     private static final int REQUEST_ACCOUNT_PICKER = 2001;
+    /**
+     * LIVE-F2: AccountManager "weblogin:service=grandcentral" token exchange. Off by default: on
+     * current Google Play services (seen on the S22) it shows the UnsupportedTokenLabel consent
+     * screen again and again and the token it finally returns is not usable, so the WebView ends
+     * on the Workspace marketing page. With it off, a signed-out WebView loads Google's own
+     * sign-in page ({@link #signInUrl}) and the user signs in there. Flip to true only to
+     * experiment with the old token flow (attemptAccountAuth / requestAuthToken are kept intact).
+     */
+    static final boolean USE_WEBLOGIN_TOKEN = false;
+    /** Google sign-in that returns to GV messages. The account hint, if any, is appended. */
+    private static final String SIGN_IN_BASE =
+            "https://accounts.google.com/ServiceLogin?continue=" + GV_MESSAGES_URL;
+    /** Bounds the signed-out-landing -> sign-in redirect per Activity (cookie-less loop guard). */
+    static final int MAX_SIGN_IN_REDIRECTS = 3;
     private static final int FILE_CHOOSER_REQUEST = 3001;
+    /** LIVE-F2: signed-out landings redirected to sign-in by this Activity (UI thread only). */
+    private int signInRedirects;
 
     private WebView webView;
     private String recipient;
@@ -264,6 +280,9 @@ public class GVoiceWebViewActivity extends Activity {
                 Log.d(TAG, "onPageFinished: " + withoutQuery(url));
 
                 CookieManager.getInstance().flush();
+                // LIVE-F2: signed out, GV bounces to its marketing/about page. Show Google's
+                // sign-in instead; the user signs in in the WebView (never automated).
+                if (isSignedOutLanding(url) && redirectToSignIn()) return;
                 // Send Later module (v2sSendLaterInit), once per page load.
                 if (url.startsWith("https://voice.google.com") && sendLaterHooks != null) installSendLater();
                 // R44: Enter inserts a newline in the composer, once per page load.
@@ -320,6 +339,11 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     private void attemptAccountAuth() {
+        if (!USE_WEBLOGIN_TOKEN) {
+            // LIVE-F2: no AccountManager consent loop; the user signs in on Google's page.
+            loadSignIn();
+            return;
+        }
         try {
             android.accounts.AccountManager am = android.accounts.AccountManager.get(this);
             android.accounts.Account[] accounts = am.getAccountsByType("com.google");
@@ -356,6 +380,10 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     private void requestAuthToken(android.accounts.AccountManager am, android.accounts.Account account) {
+        if (!USE_WEBLOGIN_TOKEN) {
+            loadSignIn();
+            return;
+        }
         am.getAuthToken(account, "weblogin:service=grandcentral",
                 null, this, future -> {
                     runOnUiThread(() -> {
@@ -427,6 +455,65 @@ public class GVoiceWebViewActivity extends Activity {
     private void loadGoogleVoice() {
         if (webView == null) return;
         webView.loadUrl(GV_MESSAGES_URL);
+    }
+
+    /**
+     * LIVE-F2: load Google's sign-in page, continuing to GV messages. The saved account
+     * (pref "google_account", set by the old picker flow) is only an Email= hint; never logged.
+     */
+    private void loadSignIn() {
+        if (webView == null) return;
+        String saved = null;
+        try {
+            saved = PreferenceManager.getDefaultSharedPreferences(this).getString("google_account", null);
+        } catch (RuntimeException ignored) {
+            // No hint then.
+        }
+        webView.loadUrl(signInUrl(saved));
+    }
+
+    /**
+     * LIVE-F2: replace a signed-out landing with Google's sign-in. Returns false (page left as is)
+     * during a scheduled send (it may be over the lock screen) or after MAX_SIGN_IN_REDIRECTS.
+     */
+    private boolean redirectToSignIn() {
+        if (scheduledSend != null && scheduledSend.isActive()) return false;
+        if (signInRedirects >= MAX_SIGN_IN_REDIRECTS) return false;
+        signInRedirects++;
+        Log.d(TAG, "Signed-out landing, loading Google sign-in");
+        loadSignIn();
+        return true;
+    }
+
+    /** LIVE-F2: ServiceLogin URL continuing to GV messages, with an encoded Email= hint if given. */
+    static String signInUrl(String accountHint) {
+        if (accountHint == null || accountHint.trim().isEmpty()) return SIGN_IN_BASE;
+        try {
+            return SIGN_IN_BASE + "&Email=" + java.net.URLEncoder.encode(accountHint.trim(), "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return SIGN_IN_BASE;
+        }
+    }
+
+    /**
+     * LIVE-F2: the main frame is where signed-out GV lands: any https page on
+     * workspace.google.com, or https://voice.google.com/about (and below). accounts.google.com
+     * is the sign-in itself and is left alone.
+     */
+    static boolean isSignedOutLanding(String url) {
+        if (url == null) return false;
+        java.net.URI u;
+        try {
+            u = new java.net.URI(url);
+        } catch (java.net.URISyntaxException e) {
+            return false;
+        }
+        if (!"https".equalsIgnoreCase(u.getScheme()) || u.getHost() == null) return false;
+        String host = u.getHost().toLowerCase(java.util.Locale.ROOT);
+        if (host.equals("workspace.google.com")) return true;
+        if (!host.equals("voice.google.com")) return false;
+        String path = u.getPath() == null ? "" : u.getPath();
+        return path.equals("/about") || path.startsWith("/about/");
     }
 
 
