@@ -67,6 +67,12 @@ import java.util.concurrent.Executors;
  *       an outcome, so nothing is armed for it and no thread source is registered.</li>
  *   <li>R3: an unclaimed launch (a stale intent, or the relaunch after a renderer crash) clears
  *       the lock flags and, while locked, finishes at once without loading the page.</li>
+ *   <li>live-send-path ({@link ScheduledCompose}): inject.js v2sScheduledCompose runs the
+ *       compose flow without its own auto-send and is injected again after a cold WebView's
+ *       later main-frame loads (LIVE-F6); the job is "typed" only once the page confirms our
+ *       body is in the box (LIVE-F8), and Stop stays on the cover until then (LIVE-F7); Send is
+ *       tapped only when {@link #mayClick} grants it, at most once per job, never after Stop, a
+ *       failure or the outcome.</li>
  * </ul>
  */
 public final class ScheduledSendController {
@@ -163,7 +169,15 @@ public final class ScheduledSendController {
         String e164;
         String bodyHash;
         SendWatch watch;
+        /**
+         * LIVE-F8: the page confirmed our body is in the message box for the current injection
+         * (main-thread mirror of {@link ScheduledCompose#isTyped}). Typing has started: Stop goes.
+         */
         boolean injected;
+        /** LIVE-F6: injections, typed state and the Send click gate; null until the row loaded. */
+        ScheduledCompose compose;
+        /** inject.js send delay of the last injection. */
+        long sendDelayMs;
         long deadlineMs;
         /** Hard end, {@link LockCoverPolicy#HARD_TIMEOUT_MS} after the claim (every job, OD26). */
         final long hardDeadlineMs;
@@ -184,6 +198,8 @@ public final class ScheduledSendController {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<Job> queue = new ArrayDeque<>();
     private Job current;
+    /** Compose state of the running job, read by the JavaBridge thread ({@link #mayClick}). */
+    private volatile ScheduledCompose liveCompose;
     private volatile boolean busy;
     /**
      * The keyguard is locked or the screen is dark, as last re-read (resume, pause, focus change,
@@ -384,7 +400,7 @@ public final class ScheduledSendController {
         if (job != null) {
             // Typed -> SENT_UNVERIFIED (never re-sent unread, I5); not typed -> CANNOT_SHOW.
             current = null;
-            toEngine(job, failureOutcome(job.injected), "timeout");
+            toEngine(job, failureOutcome(job), "timeout");
         }
         abandonAll("timeout");   // queued jobs: nothing typed -> CANNOT_SHOW
         endJob(LockCoverPolicy.finishNow(LockCoverPolicy.Event.TIMEOUT, refreshLockState(), launchedDark));
@@ -397,7 +413,48 @@ public final class ScheduledSendController {
 
     /** The running send has asked for the page and is waiting for onPageFinished. */
     public boolean isComposing() {
-        return current != null && current.e164 != null && !current.injected;
+        Job job = current;
+        return job != null && job.e164 != null && job.compose != null && job.compose.mayInject();
+    }
+
+    /**
+     * LIVE-F6: a later main-frame onPageFinished during the running job. True when the activity
+     * must inject the scheduled composer again (see {@link ScheduledCompose#shouldReinject}): the
+     * new document wiped the script and no Send click was granted.
+     */
+    public boolean wantsReinject(String url) {
+        Job job = current;
+        if (job == null || job.e164 == null || job.compose == null) return false;
+        return ScheduledCompose.shouldReinject(url, job.compose.injections(),
+                job.compose.isClickGranted(), job.compose.isClosed());
+    }
+
+    /**
+     * The activity is about to inject the scheduled composer (first time or again, LIVE-F6).
+     * Returns the token inject.js echoes in its callbacks, or null when nothing may be injected.
+     * A re-injection starts over as not typed: the document that held the text is gone and no
+     * click was granted.
+     */
+    public String onComposeInjection(long autoSendDelayMs) {
+        Job job = current;
+        if (job == null || job.e164 == null || job.compose == null) return null;
+        String token = job.compose.nextInjection();
+        if (token == null) return null;
+        job.sendDelayMs = Math.max(0L, autoSendDelayMs);
+        job.injected = false;
+        updateStop();
+        return token;
+    }
+
+    /**
+     * JavaBridge thread: inject.js asks to tap Send for {@code token}. Granted at most once per
+     * job, only for the current injection and while the job's gate is open (Stop, a failure and
+     * the outcome close it), so the scheduled script can never send twice or after the job ended.
+     */
+    public static boolean mayClick(String token) {
+        ScheduledSendController c = live.get();
+        ScheduledCompose sc = c == null ? null : c.liveCompose;
+        return sc != null && sc.grantClick(token);
     }
 
     /** inject.js auto-send delay for a scheduled send: the user's setting, at least the minimum. */
@@ -405,14 +462,21 @@ public final class ScheduledSendController {
         return Math.max(MIN_SEND_DELAY_MS, preferredMs);
     }
 
-    /** The activity injected inject.js auto-send for the running job. */
-    public void onComposerInjected(long autoSendDelayMs) {
+    /**
+     * LIVE-F8: the page confirmed that our body is in the message box (inject.js
+     * v2sScheduledCompose, for {@code token}). Only now is the job "typed": Stop goes away and a
+     * later failure is SENT_UNVERIFIED. Starts the verify polls once per job; a re-typed
+     * injection extends the deadline.
+     */
+    public void onComposerInjected(String token) {
         final Job job = current;
-        if (job == null || job.injected || job.e164 == null) return;
+        if (job == null || job.injected || job.e164 == null || job.compose == null) return;
+        if (!job.compose.onTyped(token)) return;
         job.injected = true;
         updateStop();   // OD31 PQ3: typing has started, Stop goes away
+        job.deadlineMs = System.currentTimeMillis() + job.sendDelayMs + VERIFY_WINDOW_MS;
+        if (job.watch != null) return;
         job.watch = new SendWatch(job.bodyHash);
-        job.deadlineMs = System.currentTimeMillis() + Math.max(0L, autoSendDelayMs) + VERIFY_WINDOW_MS;
         main.postDelayed(() -> readOnce(job), BASELINE_POLL_MS);
     }
 
@@ -424,12 +488,22 @@ public final class ScheduledSendController {
     public void onWebFailure(String reason) {
         Job job = current;
         if (job == null) return;
-        report(job, failureOutcome(job.injected), reason);
+        report(job, failureOutcome(job), reason);
     }
 
     /** Typed -> SENT_UNVERIFIED (never re-sent unread, I5); not typed -> CANNOT_SHOW (G2). */
     static SendOutcome failureOutcome(boolean typed) {
         return typed ? SendOutcome.SENT_UNVERIFIED : SendOutcome.CANNOT_SHOW;
+    }
+
+    /**
+     * LIVE-F8: the failure outcome of {@code job} right now. Closes its Send gate first, so a
+     * CANNOT_SHOW can no longer turn into a send; typed (the page confirmed our body) or a granted
+     * click -> SENT_UNVERIFIED, else CANNOT_SHOW.
+     */
+    private static SendOutcome failureOutcome(Job job) {
+        if (job.compose == null) return failureOutcome(false);
+        return job.compose.closeForFailure();
     }
 
     /**
@@ -525,15 +599,17 @@ public final class ScheduledSendController {
         job.bodyHash = ThreadEvent.hashOf(m.getText());
         targetE164 = job.e164;
         cover.setRecipient(job.e164);
+        job.compose = new ScheduledCompose(job.id);
+        liveCompose = job.compose;
         updateStop();
         if (!host.isAlive() || !host.beginCompose(job.e164, m.getText())) {
             report(job, SendOutcome.CANNOT_SHOW, "activity_gone");
             return;
         }
         main.postDelayed(() -> {
-            if (current == job && !job.injected) {
-                // Nothing typed yet: CANNOT_SHOW with the cause (G2).
-                report(job, failureOutcome(false), isSignInUrl(host.mainFrameUrl()) ? "auth" : "compose_timeout");
+            if (current == job && !job.injected && !job.compose.isClickGranted()) {
+                // Nothing typed yet: CANNOT_SHOW with the cause (G2); the gate closes first.
+                report(job, failureOutcome(job), isSignInUrl(host.mainFrameUrl()) ? "auth" : "compose_timeout");
             }
         }, COMPOSE_TIMEOUT_MS);
     }
@@ -542,13 +618,13 @@ public final class ScheduledSendController {
     private void readOnce(final Job job) {
         if (current != job) return;
         if (!host.isAlive()) {
-            report(job, SendOutcome.SENT_UNVERIFIED, "activity_gone");
+            report(job, failureOutcome(job), "activity_gone");
             return;
         }
         host.readThread(job.e164, READ_LIMIT, bubbles -> {
             if (current != job) return;
             if (!host.isAlive()) {
-                report(job, SendOutcome.SENT_UNVERIFIED, "activity_gone");
+                report(job, failureOutcome(job), "activity_gone");
                 return;
             }
             host.probeComposer(pending -> onThreadRead(job, bubbles, pending));
@@ -576,7 +652,8 @@ public final class ScheduledSendController {
             }
         }
         if (now >= job.deadlineMs) {
-            report(job, SendOutcome.SENT_UNVERIFIED, "no_match");
+            // Typed -> SENT_UNVERIFIED; re-injected and not typed again -> per the gate (LIVE-F8).
+            report(job, job.injected ? SendOutcome.SENT_UNVERIFIED : failureOutcome(job), "no_match");
             return;
         }
         main.postDelayed(() -> readOnce(job),
@@ -587,6 +664,7 @@ public final class ScheduledSendController {
     private void report(Job job, SendOutcome outcome, String detail) {
         if (current != job) return;
         current = null;
+        closeCompose(job);
         awaitingEngineId = job.id;
         toEngine(job, outcome, detail);
         afterOutcome();
@@ -600,7 +678,15 @@ public final class ScheduledSendController {
      * ({@link SendDetails#forEngine}).
      */
     private void toEngine(Job job, SendOutcome outcome, String cause) {
+        closeCompose(job);
         SendLaterEngine.onSendOutcome(app, job.id, outcome, SendDetails.forEngine(outcome, cause));
+    }
+
+    /** The job is over: its Send gate shuts for good (no click after the outcome). */
+    private void closeCompose(Job job) {
+        if (job.compose == null) return;
+        job.compose.close();
+        if (liveCompose == job.compose) liveCompose = null;
     }
 
     private void afterOutcome() {
@@ -689,13 +775,22 @@ public final class ScheduledSendController {
      */
     void onStopTapped() {
         refreshLockState();
-        if (!stopAllowed()) {
+        if (!stopAllowed() || !closeForStop()) {
             updateStop();
             return;
         }
         main.removeCallbacksAndMessages(null);
         abandonAll(RemindCause.DETAIL_STOPPED);
         endJob(true);
+    }
+
+    /**
+     * Shuts the running job's Send gate for Stop. False when a click was already granted (the
+     * tap came too late: the job goes on and verifies).
+     */
+    private boolean closeForStop() {
+        Job job = current;
+        return job == null || job.compose == null || job.compose.close();
     }
 
     private void listenForEngine() {
@@ -760,7 +855,7 @@ public final class ScheduledSendController {
     private void abandonAll(String detail) {
         Job job = current;
         current = null;
-        if (job != null) toEngine(job, failureOutcome(job.injected), detail);
+        if (job != null) toEngine(job, failureOutcome(job), detail);
         Job q;
         while ((q = queue.poll()) != null) toEngine(q, SendOutcome.CANNOT_SHOW, detail);
         busy = false;

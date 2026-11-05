@@ -713,6 +713,79 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     start(MAX_RETRIES);
 }
 
+// ── Scheduled send entry (Send Later R30; LIVE-F6, LIVE-F8) ─────────────────
+
+/**
+ * Scheduled compose: runs the unchanged voice2sms() flow WITHOUT its auto-send, then reports
+ * "typed" only once the message box really holds our body (V2SBridge.onScheduledTyped), and taps
+ * Send only when Java grants it (V2SBridge.scheduledMayClick: at most once per job, current
+ * token only, never after Stop or a failure). Java may inject this again after a main-frame
+ * reload wiped the page; voice2sms()'s generation counter cancels an older run in the same
+ * document. Never logs the number or the text.
+ */
+function v2sScheduledCompose(phone, body, autoSendDelay, token) {
+    'use strict';
+    voice2sms(phone, body, false, 0);
+    var myGeneration = window._v2sGeneration;
+    var POLL_MS = 250;
+    var MAX_POLLS = 160;   // 40 s, the Java compose timeout
+
+    function cancelled() {
+        return window._v2sGeneration !== myGeneration;
+    }
+
+    function composer() {
+        return document.querySelector(
+            'textarea[placeholder="Type a message"], ' +
+            'textarea[placeholder*="message"], ' +
+            'textarea[placeholder*="text"], ' +
+            'textarea[aria-label*="message"], ' +
+            '[contenteditable="true"][aria-label*="message"]'
+        );
+    }
+
+    function holdsBody(el) {
+        if (!el || !body) return false;
+        var v = el.isContentEditable ? el.textContent : el.value;
+        return typeof v === 'string' && (v === body || v.trim() === body.trim());
+    }
+
+    function waitTyped(polls) {
+        if (cancelled() || polls <= 0) return;
+        if (!holdsBody(composer())) {
+            setTimeout(function() { waitTyped(polls - 1); }, POLL_MS);
+            return;
+        }
+        console.log('[Voice2SMS] Scheduled send: message box filled');
+        if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledTyped) V2SBridge.onScheduledTyped(token);
+        var jittered = Math.max(0, autoSendDelay + Math.floor(Math.random() * 801) - 300);
+        setTimeout(function() { clickWhenGranted(10); }, jittered);
+    }
+
+    function clickWhenGranted(retries) {
+        if (cancelled() || retries <= 0) return;
+        // The box must still hold exactly our body: never send anything else.
+        if (!holdsBody(composer())) {
+            console.log('[Voice2SMS] Scheduled send: message box changed, not sending');
+            return;
+        }
+        var sendBtn = document.querySelector('button[aria-label*="Send"]');
+        if (!sendBtn || sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
+            setTimeout(function() { clickWhenGranted(retries - 1); }, 500);
+            return;
+        }
+        if (typeof V2SBridge === 'undefined' || !V2SBridge.scheduledMayClick
+                || !V2SBridge.scheduledMayClick(token)) {
+            console.log('[Voice2SMS] Scheduled send: Send not granted');
+            return;
+        }
+        console.log('[Voice2SMS] Scheduled send: clicking send');
+        sendBtn.click();
+    }
+
+    waitTyped(MAX_POLLS);
+}
+
 // ── Sticker/Image Bridge ──────────────────────────────────────────────────
 
 /**

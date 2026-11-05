@@ -268,6 +268,9 @@ public class GVoiceWebViewActivity extends Activity {
                 if (url.startsWith("https://voice.google.com") && sendLaterHooks != null) installSendLater();
                 // R44: Enter inserts a newline in the composer, once per page load.
                 if (url.startsWith("https://voice.google.com")) installEnterNewline();
+                // LIVE-F6: a later main-frame load during a scheduled compose (a cold WebView's
+                // post-load reloads) wiped the script; let the dispatch below inject it again.
+                if (injected && scheduledSend != null && scheduledSend.wantsReinject(url)) injected = false;
 
                 if (url.startsWith("https://voice.google.com") && !injected && recipient != null) {
                     // Mark SPA as loaded for future warm starts
@@ -505,10 +508,12 @@ public class GVoiceWebViewActivity extends Activity {
         }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
         long delayMs = ScheduledSendController.sendDelayMs(prefs.getInt("auto_send_delay", 2) * 1000L);
-        script += "\nvoice2sms(" + jsonEncode(recipient) + ", " + jsonEncode(body != null ? body : "")
-                + ", true, " + delayMs + ");";
+        // LIVE-F6/F8: a token per injection; inject.js reports "typed" and asks before tapping Send.
+        String token = scheduledSend.onComposeInjection(delayMs);
+        if (token == null) return;
+        script += "\nv2sScheduledCompose(" + jsonEncode(recipient) + ", " + jsonEncode(body != null ? body : "")
+                + ", " + delayMs + ", " + jsonEncode(token) + ");";
         webView.evaluateJavascript(script, null);
-        scheduledSend.onComposerInjected(delayMs);
     }
 
     private String readAssetScript(String name) {
@@ -811,6 +816,25 @@ public class GVoiceWebViewActivity extends Activity {
                 return;
             }
             sendLaterHooks.bridgeThreadRead(json);
+        }
+
+        // ---- Scheduled send (R30; LIVE-F6/F8); binder thread ----
+
+        /** inject.js v2sScheduledCompose: our body is in the message box for {@code token}. */
+        @JavascriptInterface
+        public void onScheduledTyped(String token) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+            runOnUiThread(() -> {
+                if (!isActivityAlive() || scheduledSend == null) return;
+                scheduledSend.onComposerInjected(token);
+            });
+        }
+
+        /** inject.js v2sScheduledCompose asks to tap Send: at most once per job (the Send gate). */
+        @JavascriptInterface
+        public boolean scheduledMayClick(String token) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return false;
+            return ScheduledSendController.mayClick(token);
         }
 
         @JavascriptInterface
