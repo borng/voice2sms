@@ -186,6 +186,11 @@ public class GVoiceWebViewActivity extends Activity {
             // R3 (send-hardening): an unclaimed scheduled launch over the keyguard (e.g. the
             // relaunch after a renderer crash) is finishing; never load the inbox under it.
             Log.d(TAG, "Unclaimed scheduled launch over the keyguard: finishing without a page load");
+        } else if (scheduledLaunch && scheduledSend.isActive()) {
+            // LIVE-F11: a claimed scheduled job owns the page load, cold or warm: beginCompose
+            // loads the job's thread once its row is read; never the messages list over it.
+            webView.onResume();
+            loadForScheduledJob(app);
         } else if (app.isSpaLoaded() && recipient != null) {
             // Warm start — SPA already loaded but may be on a stale view.
             // Reload the page for a clean messages-list state.
@@ -312,7 +317,9 @@ public class GVoiceWebViewActivity extends Activity {
                         && url.contains("MergeSession")
                         && !url.contains("WILL_NOT_SIGN_IN")) {
                     Log.d(TAG, "Auth MergeSession loaded, redirecting to GV");
-                    view.loadUrl(GV_MESSAGES_URL);
+                    // LIVE-F11: a running scheduled job continues to its thread, not the list.
+                    if (scheduledSend != null && scheduledSend.isActive()) loadForScheduledJob(null);
+                    else view.loadUrl(GV_MESSAGES_URL);
                 }
             }
 
@@ -455,6 +462,25 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /**
+     * LIVE-F11: the one page-load path while a scheduled job is active (onCreate's cold and warm
+     * starts, the auth MergeSession continuation). Never GV_MESSAGES_URL for a job in its thread:
+     * the controller loads the job's thread URL (beginCompose once the row is read, else a bounded
+     * reload) or, after the fallback, the messages list. {@code app} (onCreate only): a cold
+     * WebView without a web session fails the job instead (never the account picker).
+     */
+    private void loadForScheduledJob(Voice2SmsApplication app) {
+        if (!isActivityAlive() || scheduledSend == null) return;
+        if (app != null && !app.isSpaLoaded()) {
+            String cookies = CookieManager.getInstance().getCookie("https://voice.google.com");
+            if (cookies == null || !cookies.contains("SID")) {
+                scheduledSend.onWebFailure("no_session");
+                return;
+            }
+        }
+        scheduledSend.loadForJob();
+    }
+
     private void loadGoogleVoice() {
         if (webView == null) return;
         webView.loadUrl(GV_MESSAGES_URL);
@@ -591,6 +617,12 @@ public class GVoiceWebViewActivity extends Activity {
     private void injectScheduledComposer() {
         injected = true;
         if (!isActivityAlive() || scheduledSend == null) return;
+        // LIVE-F11: a finished GV page that is not the job's thread (the messages list, or GV
+        // rewrote the thread URL while booting) loads the job's thread again (bounded) instead.
+        if (scheduledSend.reloadsThreadInsteadOf(mainFrameUrl)) {
+            injected = false;
+            return;
+        }
         String script = readAssetScript("inject.js");
         if (script == null) {
             scheduledSend.onWebFailure("inject_failed");
@@ -990,6 +1022,16 @@ public class GVoiceWebViewActivity extends Activity {
             runOnUiThread(() -> {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onNoThread(token);
+            });
+        }
+
+        /** LIVE-F11: the scheduled script found the page is not the job's thread (load it again, bounded). */
+        @JavascriptInterface
+        public void onScheduledWrongPage(String token) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+            runOnUiThread(() -> {
+                if (!isActivityAlive() || scheduledSend == null) return;
+                scheduledSend.onWrongPage(token);
             });
         }
 
