@@ -22,12 +22,14 @@ public final class VoiceOverlayIds {
     public static final String SEND_BUTTON = VoiceScreenSignature.ID_SEND_BUTTON;
     /** The compose row: bounds only, the anchor of the tab, chip and confirmation. */
     public static final String INPUT_CONTAINER = PREFIX + "input_message_container";
+    /** Recipient chip on the new-conversation screen: text only, stands in for the title (LIVE-F1). */
+    public static final String CHIP = VoiceScreenSignature.ID_CHIP;
     /** RecyclerView of bubbles: row content descriptions for the watermark and reply detection. */
     public static final String BUBBLE_LIST = PREFIX + "list";
 
     /** R8 allowlist: the full resource ids above, nothing else. */
     public static final List<String> R8_IDS = Collections.unmodifiableList(Arrays.asList(
-            TOOLBAR_TITLE, SEND_TEXT, SEND_BUTTON, INPUT_CONTAINER, BUBBLE_LIST));
+            TOOLBAR_TITLE, SEND_TEXT, SEND_BUTTON, INPUT_CONTAINER, BUBBLE_LIST, CHIP));
 
     private VoiceOverlayIds() {}
 

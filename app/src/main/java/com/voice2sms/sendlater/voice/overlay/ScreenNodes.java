@@ -75,6 +75,31 @@ final class ScreenNodes implements VoiceNodeAccessor {
         return first;
     }
 
+    /**
+     * Texts of every {@code chip} node (LIVE-F1); all nodes recycled. Only called when there is no
+     * {@code toolbar_title}, so ordinary thread screens pay no extra lookup.
+     */
+    private static List<String> chipTexts(AccessibilityNodeInfo root) {
+        if (!VoiceOverlayIds.isAllowed(VoiceOverlayIds.CHIP)) throw new IllegalArgumentException("not an R8 id");
+        List<String> out = new ArrayList<>();
+        List<AccessibilityNodeInfo> found = root.findAccessibilityNodeInfosByViewId(VoiceOverlayIds.CHIP);
+        if (found == null) return out;
+        for (AccessibilityNodeInfo n : found) {
+            if (n == null) continue;
+            try {
+                out.add(textOf(n));
+            } finally {
+                n.recycle();
+            }
+        }
+        return out;
+    }
+
+    /** The 1:1 title: toolbar_title text, else the single chip's text, else null (LIVE-F1, OD13). */
+    private static String titleText(AccessibilityNodeInfo title, List<String> chips) {
+        return VoiceScreenSignature.title(title != null ? textOf(title) : null, chips);
+    }
+
     private static void recycle(AccessibilityNodeInfo n) {
         if (n != null) n.recycle();
     }
@@ -105,8 +130,10 @@ final class ScreenNodes implements VoiceNodeAccessor {
             title = find(root, VoiceOverlayIds.TOOLBAR_TITLE);
             field = find(root, VoiceOverlayIds.SEND_TEXT);
             send = find(root, VoiceOverlayIds.SEND_BUTTON);
-            VoiceScreenSignature.Level level = VoiceScreenSignature.classify(title != null, field != null,
-                    send != null, VoiceScreenSignature.VOICE_PACKAGE);
+            List<String> chips = title == null && field != null && send != null
+                    ? chipTexts(root) : Collections.<String>emptyList();
+            VoiceScreenSignature.Level level = VoiceScreenSignature.classify(title != null, chips.size(),
+                    field != null, send != null, VoiceScreenSignature.VOICE_PACKAGE);
             if (level != VoiceScreenSignature.Level.HIGH) {
                 return new Reading(level, null, null, null, false);
             }
@@ -122,7 +149,7 @@ final class ScreenNodes implements VoiceNodeAccessor {
             if (list != null) {
                 atNewest = !list.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
             }
-            return new Reading(level, textOf(title), draftOf(field), anchor, atNewest);
+            return new Reading(level, titleText(title, chips), draftOf(field), anchor, atNewest);
         } catch (RuntimeException e) {
             return null;
         } finally {
@@ -141,7 +168,7 @@ final class ScreenNodes implements VoiceNodeAccessor {
         AccessibilityNodeInfo n = null;
         try {
             n = find(root, VoiceOverlayIds.TOOLBAR_TITLE);
-            return textOf(n);
+            return titleText(n, n == null ? chipTexts(root) : Collections.<String>emptyList());
         } catch (RuntimeException e) {
             return null;
         } finally {
