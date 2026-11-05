@@ -39,6 +39,7 @@ import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.send.ForegroundUse;
 import com.voice2sms.sendlater.send.ScheduledSendController;
+import com.voice2sms.sendlater.send.ScheduledCompose;
 import com.voice2sms.sendlater.web.SendLaterWebHooks;
 import com.voice2sms.sendlater.web.ThreadReadCallback;
 import com.voice2sms.sendlater.web.ThreadUrl;
@@ -598,6 +599,13 @@ public class GVoiceWebViewActivity extends Activity {
         // LIVE-F6/F8: a token per injection; inject.js reports "typed" and asks before tapping Send.
         String token = scheduledSend.onComposeInjection(delayMs);
         if (token == null) return;
+        // LIVE-F10: type into the job's own thread when this is its page, else the new-conversation
+        // flow; the script polls the tri-state Send gate while the pre-send check is pending.
+        String mode = scheduledSend.composeModeFor(webView.getUrl());
+        script += "\nwindow._v2sScheduledOpts = {mode: " + jsonEncode(mode)
+                + ", settleMs: " + ScheduledCompose.THREAD_SETTLE_MS
+                + ", pollMs: " + ScheduledCompose.CLICK_POLL_MS
+                + ", waitMs: " + ScheduledSendController.clickWaitMs() + "};";
         script += "\nv2sScheduledCompose(" + jsonEncode(recipient) + ", " + jsonEncode(body != null ? body : "")
                 + ", " + delayMs + ", " + jsonEncode(token) + ");";
         webView.evaluateJavascript(script, null);
@@ -714,8 +722,32 @@ public class GVoiceWebViewActivity extends Activity {
             body = text;
             injected = false;
             webView.onResume();
+            // LIVE-F10: a FULL load of the job's thread (an SPA push does not route), so the
+            // pre-send check and the verification read the conversation itself.
+            String thread = ThreadUrl.threadUrlOf(e164);
+            if (thread != null) webView.loadUrl(thread);
+            else loadGoogleVoice();
+            return true;
+        }
+
+        @Override
+        public boolean loadMessagesList() {
+            if (!isActivityAlive()) return false;
+            injected = false;
             loadGoogleVoice();
             return true;
+        }
+
+        @Override
+        public void clearComposer(String text) {
+            if (text == null) return;
+            final String script = readAssetScript("inject.js");
+            if (script == null) return;
+            runOnUiThread(() -> {
+                if (!isActivityAlive()) return;
+                // Only our exact body is removed; never logged.
+                webView.evaluateJavascript(script + "\nv2sScheduledClear(" + jsonEncode(text) + ");", null);
+            });
         }
 
         @Override
@@ -922,6 +954,26 @@ public class GVoiceWebViewActivity extends Activity {
         public boolean scheduledMayClick(String token) {
             if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return false;
             return ScheduledSendController.mayClick(token);
+        }
+
+        /**
+         * LIVE-F10: inject.js v2sScheduledCompose's tri-state Send ask: "yes" (tap now, once per
+         * job), "wait" (the pre-send check is pending: ask again) or "no".
+         */
+        @JavascriptInterface
+        public String scheduledClickState(String token) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
+            return ScheduledSendController.clickState(token);
+        }
+
+        /** LIVE-F10: the job's thread page settled without the conversation (new-conversation flow next). */
+        @JavascriptInterface
+        public void onScheduledNoThread(String token) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+            runOnUiThread(() -> {
+                if (!isActivityAlive() || scheduledSend == null) return;
+                scheduledSend.onNoThread(token);
+            });
         }
 
         @JavascriptInterface

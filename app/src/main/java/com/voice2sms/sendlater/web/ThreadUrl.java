@@ -15,7 +15,22 @@ public final class ThreadUrl {
 
     private static final Pattern ONE_TO_ONE = Pattern.compile("^t\\.(\\+\\d{7,15})$");
 
+    private static final Pattern E164 = Pattern.compile("^\\+(\\d{7,15})$");
+    private static final String MESSAGES = "https://voice.google.com/u/0/messages?itemId=t.%2B";
+
     private ThreadUrl() {}
+
+    /**
+     * LIVE-F10: the GV web URL of the 1:1 thread of {@code e164} ("+" + 7-15 digits), for a FULL
+     * page load ({@code https://voice.google.com/u/0/messages?itemId=t.%2B<digits>}); null for
+     * anything else. GV routes this URL only on a full load, never on an SPA history push.
+     * {@link #isThreadOf} accepts what it returns.
+     */
+    public static String threadUrlOf(String e164) {
+        if (e164 == null) return null;
+        Matcher m = E164.matcher(e164);
+        return m.matches() ? MESSAGES + m.group(1) : null;
+    }
 
     /** E.164 ("+" + digits) of a 1:1 thread URL, else null. */
     public static String oneToOneE164(String url) {

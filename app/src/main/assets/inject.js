@@ -713,77 +713,180 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     start(MAX_RETRIES);
 }
 
-// ── Scheduled send entry (Send Later R30; LIVE-F6, LIVE-F8) ─────────────────
+// ── Scheduled send entry (Send Later R30; LIVE-F6, LIVE-F8, LIVE-F10) ──────
+
+/** Message box selectors of the scheduled path (fillBody's). */
+var _V2S_SCHEDULED_COMPOSER = 'textarea[placeholder="Type a message"], ' +
+    'textarea[placeholder*="message"], ' +
+    'textarea[placeholder*="text"], ' +
+    'textarea[aria-label*="message"], ' +
+    '[contenteditable="true"][aria-label*="message"]';
+
+/** The box holds our scheduled text (surrounding whitespace aside). */
+function _v2sScheduledHolds(el, text) {
+    if (!el || typeof text !== 'string' || !text) return false;
+    var v = el.isContentEditable ? el.textContent : el.value;
+    return typeof v === 'string' && (v === text || v.trim() === text.trim());
+}
+
+/** Puts value into the message box, Angular-safe (native setter + InputEvent in the zone). */
+function _v2sScheduledSet(el, value, focus) {
+    if (el.isContentEditable) {
+        if (focus) el.focus();
+        el.textContent = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+        _v2sSlSetInputValue(el, value, focus);
+    }
+}
 
 /**
- * Scheduled compose: runs the unchanged voice2sms() flow WITHOUT its auto-send, then reports
- * "typed" only once the message box really holds our body (V2SBridge.onScheduledTyped), and taps
- * Send only when Java grants it (V2SBridge.scheduledMayClick: at most once per job, current
- * token only, never after Stop or a failure). Java may inject this again after a main-frame
- * reload wiped the page; voice2sms()'s generation counter cancels an older run in the same
- * document. Never logs the number or the text.
+ * LIVE-F10: a scheduled job ended unsent after typing (pre-send hold, timeout, Stop). Empties the
+ * message box only when it still holds our scheduled text, so none is left in GV's box to be sent
+ * by hand by mistake; any other text is left alone. Never logs the text.
+ */
+function v2sScheduledClear(text) {
+    var el = document.querySelector(_V2S_SCHEDULED_COMPOSER);
+    if (!_v2sScheduledHolds(el, text)) return false;
+    _v2sScheduledSet(el, '', false);
+    console.log('[Voice2SMS] Scheduled send: cleared the message box');
+    return true;
+}
+
+/**
+ * Scheduled compose. Java sets window._v2sScheduledOpts first: {mode, settleMs, pollMs, waitMs}.
+ *
+ * mode 'thread' (LIVE-F10): Java loaded the job's own thread URL by a full page load. Once GV
+ * shows that conversation (gv-message-list, and the location is the job's 1:1 thread) the thread's
+ * own box is filled; when GV goes elsewhere or shows no conversation within settleMs, Java is told
+ * (V2SBridge.onScheduledNoThread) and loads the messages list for mode 'new'.
+ * mode 'new': runs the unchanged voice2sms() flow WITHOUT its auto-send (new conversation).
+ *
+ * Either way it reports "typed" only once the box really holds our text
+ * (V2SBridge.onScheduledTyped) and taps Send only when Java says yes: the tri-state ask
+ * (V2SBridge.scheduledClickState) answers 'wait' while the pre-send check is pending, so the
+ * script asks again every pollMs (re-checking the box each time, bounded by waitMs) and taps only
+ * on 'yes' (once per job, current token only, never after Stop or a failure). On 'no' it clears
+ * our text. Java may inject this again after a main-frame reload wiped the page; the generation
+ * counter cancels an older run in the same document. Never logs the number or the text.
  */
 function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     'use strict';
-    voice2sms(phone, body, false, 0);
+    var opts = window._v2sScheduledOpts || {};
+    window._v2sScheduledOpts = null;
+    var threadMode = opts.mode === 'thread';
+    var SETTLE_MS = opts.settleMs > 0 ? opts.settleMs : 10000;
+    var CLICK_POLL_MS = opts.pollMs > 0 ? opts.pollMs : 500;
+    var WAIT_MS = opts.waitMs > 0 ? opts.waitMs : 30000;
+    var jobE164 = String(phone || '').replace(/[^\d+]/g, '');
+    if (threadMode) {
+        // As voice2sms() does: a newer run cancels an older one in this document.
+        window._v2sGeneration = (window._v2sGeneration || 0) + 1;
+    } else {
+        voice2sms(phone, body, false, 0);
+    }
     var myGeneration = window._v2sGeneration;
     var POLL_MS = 250;
     var MAX_POLLS = 160;   // 40 s, the Java compose timeout
+    var startedAt = Date.now();
 
     function cancelled() {
         return window._v2sGeneration !== myGeneration;
     }
 
     function composer() {
-        return document.querySelector(
-            'textarea[placeholder="Type a message"], ' +
-            'textarea[placeholder*="message"], ' +
-            'textarea[placeholder*="text"], ' +
-            'textarea[aria-label*="message"], ' +
-            '[contenteditable="true"][aria-label*="message"]'
-        );
+        return document.querySelector(_V2S_SCHEDULED_COMPOSER);
     }
 
     function holdsBody(el) {
-        if (!el || !body) return false;
-        var v = el.isContentEditable ? el.textContent : el.value;
-        return typeof v === 'string' && (v === body || v.trim() === body.trim());
+        return _v2sScheduledHolds(el, body);
+    }
+
+    /** Mirrors ScheduledCompose.threadPageState: 'thread' | 'wait' | 'fallback'. */
+    function threadPageState() {
+        var pageE164 = _v2sSlThreadE164();
+        if (!pageE164 || pageE164 !== jobE164) return 'fallback';
+        if (document.querySelector('gv-message-list')) return 'thread';
+        return (Date.now() - startedAt) >= SETTLE_MS ? 'fallback' : 'wait';
+    }
+
+    function fillThread(polls) {
+        if (cancelled() || polls <= 0) return;
+        var state = threadPageState();
+        if (state === 'fallback') {
+            console.log('[Voice2SMS] Scheduled send: no conversation shown, new-conversation flow next');
+            if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledNoThread) V2SBridge.onScheduledNoThread(token);
+            return;
+        }
+        var ta = state === 'thread' ? composer() : null;
+        if (!ta) {
+            setTimeout(function() { fillThread(polls - 1); }, POLL_MS);
+            return;
+        }
+        if (!holdsBody(ta)) _v2sScheduledSet(ta, body, true);
+        waitTyped(polls);
     }
 
     function waitTyped(polls) {
         if (cancelled() || polls <= 0) return;
-        if (!holdsBody(composer())) {
+        var box = composer();
+        if (!holdsBody(box)) {
+            // Thread mode: GV may re-render the box empty after we filled it; fill an EMPTY box again.
+            if (threadMode && box && !(box.isContentEditable ? box.textContent : box.value)) {
+                _v2sScheduledSet(box, body, true);
+            }
             setTimeout(function() { waitTyped(polls - 1); }, POLL_MS);
             return;
         }
         console.log('[Voice2SMS] Scheduled send: message box filled');
         if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledTyped) V2SBridge.onScheduledTyped(token);
         var jittered = Math.max(0, autoSendDelay + Math.floor(Math.random() * 801) - 300);
-        setTimeout(function() { clickWhenGranted(10); }, jittered);
+        setTimeout(function() { clickWhenGranted(10, 0); }, jittered);
     }
 
-    function clickWhenGranted(retries) {
-        if (cancelled() || retries <= 0) return;
-        // The box must still hold exactly our body: never send anything else.
+    /** The Java Send gate: 'yes' | 'wait' | 'no'. */
+    function askClick() {
+        if (typeof V2SBridge === 'undefined') return 'no';
+        if (V2SBridge.scheduledClickState) return String(V2SBridge.scheduledClickState(token));
+        // A bridge without the tri-state ask: its one-shot boolean answer.
+        return (V2SBridge.scheduledMayClick && V2SBridge.scheduledMayClick(token)) ? 'yes' : 'no';
+    }
+
+    function clickWhenGranted(retries, waitUntil) {
+        if (cancelled()) return;
+        // Before every ask: the box must still hold exactly our text: never send anything else.
         if (!holdsBody(composer())) {
             console.log('[Voice2SMS] Scheduled send: message box changed, not sending');
             return;
         }
         var sendBtn = document.querySelector('button[aria-label*="Send"]');
         if (!sendBtn || sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
-            setTimeout(function() { clickWhenGranted(retries - 1); }, 500);
+            if (retries <= 0) return;
+            setTimeout(function() { clickWhenGranted(retries - 1, waitUntil); }, 500);
             return;
         }
-        if (typeof V2SBridge === 'undefined' || !V2SBridge.scheduledMayClick
-                || !V2SBridge.scheduledMayClick(token)) {
+        var state = askClick();
+        if (state === 'wait') {
+            // The pre-send check is still reading the thread: ask again shortly.
+            if (!waitUntil) waitUntil = Date.now() + WAIT_MS;
+            if (Date.now() < waitUntil) {
+                setTimeout(function() { clickWhenGranted(retries, waitUntil); }, CLICK_POLL_MS);
+            } else {
+                console.log('[Voice2SMS] Scheduled send: stopped waiting for the check');
+            }
+            return;
+        }
+        if (state !== 'yes') {
             console.log('[Voice2SMS] Scheduled send: Send not granted');
+            v2sScheduledClear(body);
             return;
         }
         console.log('[Voice2SMS] Scheduled send: clicking send');
         sendBtn.click();
     }
 
-    waitTyped(MAX_POLLS);
+    if (threadMode) fillThread(MAX_POLLS);
+    else waitTyped(MAX_POLLS);
 }
 
 // ── Sticker/Image Bridge ──────────────────────────────────────────────────

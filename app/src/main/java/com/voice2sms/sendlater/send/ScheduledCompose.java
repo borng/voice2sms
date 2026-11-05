@@ -1,6 +1,7 @@
 package com.voice2sms.sendlater.send;
 
 import com.voice2sms.sendlater.domain.SendOutcome;
+import com.voice2sms.sendlater.web.ThreadUrl;
 
 import java.util.UUID;
 
@@ -26,8 +27,19 @@ import java.util.UUID;
  *       a job reported CANNOT_SHOW can no longer send, and re-injection can never send twice.</li>
  *   <li><b>Pre-send check (D30, LIVE-F3).</b> When the job must check the thread first
  *       ({@link #requirePreSendCheck}), no click is granted until {@link #clearPreSend}. A click
- *       asked for before that is refused and remembered ({@link #wasClickRefusedForCheck}): the
- *       script does not ask again, so such a job can no longer send.</li>
+ *       asked for before that through the old boolean ask ({@link #grantClick}) is refused and
+ *       remembered ({@link #wasClickRefusedForCheck}): such a job can no longer send.</li>
+ *   <li><b>Tri-state ask (LIVE-F10).</b> The scheduled script asks {@link #clickState}: WAIT while
+ *       the check is pending and the gate is open (the script polls again every
+ *       {@link #CLICK_POLL_MS}, re-checking the box each time), YES at most once per job for the
+ *       current token once the check cleared, NO otherwise. A WAIT answer is never remembered as a
+ *       refusal, so a check that clears after typing still lets the job send.</li>
+ *   <li><b>Thread page (LIVE-F10).</b> The scheduled compose loads the job's own thread URL
+ *       ({@link ThreadUrl#threadUrlOf}) and types into that thread's box
+ *       ({@link #threadPageState}); only when GV shows no conversation for the number does it use
+ *       the new-conversation flow ({@link #composeMode}). A reload of the job's own thread
+ *       re-injects like a reload of the messages list ({@link #shouldReinject(String, String, int,
+ *       boolean, boolean)}).</li>
  * </ul>
  */
 public final class ScheduledCompose {
@@ -35,7 +47,60 @@ public final class ScheduledCompose {
     /** Bound on injections per job (the first one plus re-injections); COMPOSE_TIMEOUT_MS bounds time. */
     public static final int MAX_INJECTIONS = 6;
 
+    /** inject.js polls a WAIT answer this often. */
+    public static final long CLICK_POLL_MS = 500L;
+    /**
+     * LIVE-F10: on the job's thread page, GV must show the conversation (gv-message-list) within
+     * this of the injection; otherwise there is none for the number and the new-conversation
+     * flow is used. A GV reload of the thread page re-injects and the wait starts over.
+     */
+    public static final long THREAD_SETTLE_MS = 10_000L;
+    /** The script stops polling WAIT this long after the pre-send deadline (Java decides by then). */
+    public static final long CLICK_WAIT_MARGIN_MS = 5_000L;
+
     private static final String GV_PREFIX = "https://voice.google.com/";
+
+    /** Answer of {@link #clickState}; {@link #wire()} is what inject.js sees. */
+    public enum ClickState {
+        /** Tap Send now (granted, once per job). */
+        YES("yes"),
+        /** The pre-send check is still pending and the gate is open: ask again later. */
+        WAIT("wait"),
+        /** Never tap Send for this token. */
+        NO("no");
+
+        private final String wire;
+
+        ClickState(String wire) {
+            this.wire = wire;
+        }
+
+        public String wire() {
+            return wire;
+        }
+    }
+
+    /** Which compose flow an injection runs (LIVE-F10). */
+    public enum Mode {
+        /** Type into the open thread of the job's number (the page is that thread's URL). */
+        THREAD,
+        /** voice2sms()'s new-conversation flow (recipient chip); the conversation counts as empty. */
+        NEW_CONVERSATION;
+
+        public String wire() {
+            return this == THREAD ? "thread" : "new";
+        }
+    }
+
+    /** What the thread page shows (LIVE-F10, mirrored by inject.js v2sScheduledCompose). */
+    public enum ThreadPage {
+        /** The job's conversation is shown: type into its box. */
+        THREAD,
+        /** Not yet rendered: poll again. */
+        WAIT,
+        /** No conversation for the number (GV went elsewhere, or nothing after the settle time). */
+        FALLBACK
+    }
 
     private final long jobId;
     private int injections;
@@ -60,6 +125,42 @@ public final class ScheduledCompose {
         if (url == null || !url.startsWith(GV_PREFIX)) return false;
         if (url.contains("itemId=")) return false;   // a thread page: our own run navigated there
         return injections > 0 && injections < MAX_INJECTIONS && !clickGranted && !closed;
+    }
+
+    /**
+     * LIVE-F10 overload: as {@link #shouldReinject(String, int, boolean, boolean)}, and a reload of
+     * the job's own thread page ({@code e164}'s 1:1 thread URL) re-injects too. Any other thread or
+     * itemId page (the new-conversation draft) still never does; never after a granted click.
+     */
+    public static boolean shouldReinject(String url, String e164, int injections, boolean clickGranted,
+                                         boolean closed) {
+        if (url == null || !url.startsWith(GV_PREFIX)) return false;
+        if (url.contains("itemId=") && !ThreadUrl.isThreadOf(url, e164)) return false;
+        return injections > 0 && injections < MAX_INJECTIONS && !clickGranted && !closed;
+    }
+
+    /**
+     * LIVE-F10: the flow an injection on {@code url} runs. THREAD on the job's own thread page,
+     * unless GV already showed no conversation there for this job ({@code gvShowedNoThread});
+     * anything else (GV redirected away, the messages list) is NEW_CONVERSATION.
+     */
+    public static Mode composeMode(String url, String e164, boolean gvShowedNoThread) {
+        if (!gvShowedNoThread && ThreadUrl.isThreadOf(url, e164)) return Mode.THREAD;
+        return Mode.NEW_CONVERSATION;
+    }
+
+    /**
+     * LIVE-F10 thread-vs-fallback decision on the thread page (inject.js mirrors it):
+     * {@code pageE164} is the open thread's number from the location (null when not a 1:1
+     * thread), {@code messageListShown} whether gv-message-list is rendered, {@code waitedMs} the
+     * time since the injection. Another page -> FALLBACK; the list shown -> THREAD; else WAIT
+     * until {@code settleMs}, then FALLBACK.
+     */
+    public static ThreadPage threadPageState(String pageE164, String jobE164, boolean messageListShown,
+                                             long waitedMs, long settleMs) {
+        if (pageE164 == null || jobE164 == null || !pageE164.equals(jobE164)) return ThreadPage.FALLBACK;
+        if (messageListShown) return ThreadPage.THREAD;
+        return waitedMs >= settleMs ? ThreadPage.FALLBACK : ThreadPage.WAIT;
     }
 
     /** LIVE-F8: typed (or a click granted) -> SENT_UNVERIFIED; nothing typed -> CANNOT_SHOW. */
@@ -98,13 +199,32 @@ public final class ScheduledCompose {
     public synchronized boolean grantClick(String t) {
         if (closed || clickGranted || t == null || !t.equals(token)) return false;
         if (preSendRequired && !preSendCleared) {
-            // D30: the thread check has not cleared the send yet; inject.js gives up on a refusal.
+            // D30: the thread check has not cleared the send yet. The old boolean ask cannot wait,
+            // so the refusal is remembered; the scheduled script uses clickState (WAIT) instead.
             clickRefusedForCheck = true;
             return false;
         }
         clickGranted = true;
         typed = true;
         return true;
+    }
+
+    /**
+     * LIVE-F10 tri-state ask (JavaBridge thread). NO for a closed gate, a granted click, a stale
+     * or null token; WAIT while the pre-send check is pending (not remembered as a refusal); else
+     * YES, once per job (a granted click counts as typed).
+     */
+    public synchronized ClickState clickState(String t) {
+        if (closed || clickGranted || t == null || !t.equals(token)) return ClickState.NO;
+        if (preSendRequired && !preSendCleared) return ClickState.WAIT;
+        clickGranted = true;
+        typed = true;
+        return ClickState.YES;
+    }
+
+    /** {@code t} is the current injection's token and the gate is open. */
+    public synchronized boolean isCurrent(String t) {
+        return !closed && t != null && t.equals(token);
     }
 
     /** Shuts the gate. True when no click was ever granted (nothing can be sent from now on). */
