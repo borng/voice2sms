@@ -244,6 +244,17 @@
             </intent-filter>
         </receiver>
         <!-- sendlater:battery-guard end -->
+        <!-- sendlater:live-a11y-warn start -->
+        <!-- LIVE-F5: once-a-day warning when the accessibility service is off while a message is
+             scheduled, on the app-internal SCHEDULED broadcast. -->
+        <receiver
+            android:name=".sendlater.a11y.A11yScheduledReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.SCHEDULED" />
+            </intent-filter>
+        </receiver>
+        <!-- sendlater:live-a11y-warn end -->
 
         <!-- Wearable listener: receives SMS send requests from the Voice2SMS watch companion.
              Transport is DataClient on /voice2sms/requests/* (durable) plus MessageClient on

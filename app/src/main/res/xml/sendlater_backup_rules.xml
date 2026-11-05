@@ -13,4 +13,5 @@
     <exclude domain="sharedpref" path="sendlater_battery.xml" />
     <exclude domain="sharedpref" path="sendlater_settings_asked.xml" />
     <exclude domain="sharedpref" path="sendlater_retention.xml" />
+    <exclude domain="sharedpref" path="sendlater_a11y.xml" />
 </full-backup-content>

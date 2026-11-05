@@ -20,6 +20,8 @@ import androidx.core.content.ContextCompat;
 import com.voice2sms.R;
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.a11y.A11yHealth;
+import com.voice2sms.sendlater.a11y.A11yWarning;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ScheduledMessage.Status;
@@ -55,6 +57,8 @@ public class UpcomingActivity extends AppCompatActivity {
     private TextView empty;
     private View filterBar;
     private View disabledBanner;
+    /** LIVE-F5: red "accessibility is off" row, shown while a message is pending. */
+    private View a11yBanner;
     /** SCHEDULED ids the engine already reminded about (UI M5); main thread only. */
     private Set<Long> reminded = new HashSet<>();
 
@@ -78,6 +82,14 @@ public class UpcomingActivity extends AppCompatActivity {
         empty = findViewById(R.id.sendlater_upcoming_empty);
         filterBar = findViewById(R.id.sendlater_upcoming_filter_bar);
         disabledBanner = findViewById(R.id.sendlater_upcoming_disabled);
+        a11yBanner = findViewById(R.id.sendlater_upcoming_a11y_off);
+        a11yBanner.setOnClickListener(v -> {
+            try {
+                startActivity(A11yWarning.settingsIntent());
+            } catch (android.content.ActivityNotFoundException | SecurityException e) {
+                Log.w(TAG, "accessibility settings not found");
+            }
+        });
         Button showAll = findViewById(R.id.sendlater_upcoming_show_all);
         showAll.setOnClickListener(v -> {
             filterE164 = null;
@@ -142,6 +154,7 @@ public class UpcomingActivity extends AppCompatActivity {
             io.execute(() -> {
                 UpcomingSections sections;
                 boolean enabled;
+                boolean a11yWarn = false;
                 Set<Long> remindedIds = new HashSet<>();
                 try {
                     long now = System.currentTimeMillis();
@@ -154,6 +167,11 @@ public class UpcomingActivity extends AppCompatActivity {
                     sections = UpcomingSections.build(all, filter, now);
                     remindedIds = SendLaterEngine.remindedIds(app, sections.getPending());
                     enabled = SendLaterSettings.isEnabled(app);
+                    List<ScheduledMessage> pending = repo.allPending();
+                    boolean serviceOn = A11yWarning.isServiceEnabled(app);
+                    if (serviceOn) A11yWarning.clearIfEnabled(app);
+                    a11yWarn = A11yHealth.decide(enabled, pending == null ? 0 : pending.size(), serviceOn)
+                            == A11yHealth.State.WARN;
                 } catch (RuntimeException e) {
                     Log.w(TAG, "load failed: " + e.getClass().getSimpleName());
                     sections = null;
@@ -161,11 +179,13 @@ public class UpcomingActivity extends AppCompatActivity {
                 }
                 final UpcomingSections result = sections;
                 final boolean on = enabled;
+                final boolean warnA11y = a11yWarn;
                 final Set<Long> marks = remindedIds;
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) return;
                     reminded = marks;
                     render(result, filter, on);
+                    a11yBanner.setVisibility(warnA11y ? View.VISIBLE : View.GONE);
                 });
             });
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
