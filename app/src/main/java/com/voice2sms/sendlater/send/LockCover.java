@@ -41,6 +41,8 @@ final class LockCover {
 
     private PopupWindow stop;
     private boolean stopWanted;
+    /** LIVE-F7: failed popup attempts for the current cover (no window token yet). */
+    private int stopAttempts;
     private Runnable onStop;
 
     LockCover(Activity activity) {
@@ -65,12 +67,26 @@ final class LockCover {
         if (stop != null) return;
         final View anchor = cover;
         // A popup needs the window token: post runs once the cover is attached.
-        anchor.post(() -> {
-            if (stopWanted && stop == null && cover == anchor && !activity.isFinishing()) showStopNow(anchor);
-        });
+        anchor.post(() -> tryShowStop(anchor));
     }
 
-    private void showStopNow(View anchor) {
+    /** Max popup attempts per cover, {@link #STOP_RETRY_MS} apart (LIVE-F7). */
+    static final int STOP_MAX_ATTEMPTS = 20;
+    static final long STOP_RETRY_MS = 250L;
+
+    /**
+     * LIVE-F7: shows the Stop popup once the cover's window can take it. The first post can run
+     * before the activity window has a usable token (a launch from a notification over the
+     * shade); a failed attempt retries instead of leaving the cover without Stop.
+     */
+    private void tryShowStop(View anchor) {
+        if (!stopWanted || stop != null || cover != anchor || activity.isFinishing()) return;
+        if (anchor.getWindowToken() != null && showStopNow(anchor)) return;
+        if (++stopAttempts >= STOP_MAX_ATTEMPTS) return;
+        anchor.postDelayed(() -> tryShowStop(anchor), STOP_RETRY_MS);
+    }
+
+    private boolean showStopNow(View anchor) {
         Button b = new Button(activity);
         b.setText(R.string.sendlater_send_cover_stop);
         b.setContentDescription(activity.getString(R.string.sendlater_send_cover_stop_description));
@@ -90,8 +106,10 @@ final class LockCover {
         try {
             w.showAtLocation(anchor, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, dp(72));
             stop = w;
+            return true;
         } catch (RuntimeException e) {
-            // no window token (finishing): no Stop; Home still leaves, the job still times out
+            // no window token yet (or finishing): tryShowStop retries; Home still leaves
+            return false;
         }
     }
 
@@ -129,6 +147,7 @@ final class LockCover {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         v.bringToFront();
         cover = v;
+        stopAttempts = 0;
         page = pageView;
         if (page != null) {
             page.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
