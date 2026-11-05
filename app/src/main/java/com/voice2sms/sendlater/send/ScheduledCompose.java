@@ -103,7 +103,19 @@ public final class ScheduledCompose {
         FALLBACK
     }
 
+    /** live-presend-failclosed: what to do when the job's thread page settled without the conversation. */
+    public enum NoThread {
+        /** Full-load the job's thread page once more and settle again (a slow render looks the same). */
+        RELOAD,
+        /** Use the new-conversation flow. */
+        FALLBACK,
+        /** Nothing (stale token, closed gate, a granted click). */
+        IGNORE
+    }
+
     private final long jobId;
+    /** live-presend-failclosed: the job's thread page was reloaded once after a settle without the list. */
+    private boolean threadReloaded;
     private int injections;
     private String token;
     private boolean typed;
@@ -166,6 +178,27 @@ public final class ScheduledCompose {
         if (pageE164 == null || jobE164 == null || !pageE164.equals(jobE164)) return ThreadPage.FALLBACK;
         if (messageListShown) return ThreadPage.THREAD;
         return waitedMs >= settleMs ? ThreadPage.FALLBACK : ThreadPage.WAIT;
+    }
+
+    /**
+     * live-presend-failclosed: inject.js reported that the thread page settled without the
+     * conversation for {@code t}. On the S22 a never-texted number's thread page shows the box but
+     * no gv-message-list, exactly like a slow render: so the first time, while the page is still
+     * the job's own thread ({@code pageIsJobThread}), the thread is reloaded once (full load) and
+     * given one more settle; after that, or when GV went elsewhere, the new-conversation flow runs.
+     */
+    public synchronized NoThread onNoThread(String t, boolean pageIsJobThread) {
+        if (closed || clickGranted || t == null || !t.equals(token)) return NoThread.IGNORE;
+        if (pageIsJobThread && !threadReloaded && injections < MAX_INJECTIONS) {
+            threadReloaded = true;
+            return NoThread.RELOAD;
+        }
+        return NoThread.FALLBACK;
+    }
+
+    /** The job's thread page was reloaded once after a settle without the conversation. */
+    public synchronized boolean wasThreadReloaded() {
+        return threadReloaded;
     }
 
     /** LIVE-F8: typed (or a click granted) -> SENT_UNVERIFIED; nothing typed -> CANNOT_SHOW. */

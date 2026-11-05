@@ -1,5 +1,6 @@
 package com.voice2sms.sendlater.engine;
 
+import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.NetworkState;
 import com.voice2sms.sendlater.domain.OutboundPolicy;
 import com.voice2sms.sendlater.domain.SessionState;
@@ -21,4 +22,12 @@ public interface EngineConditions extends EngineClock {
      * sent automatically and no alarm is re-armed; IN_FLIGHT rows are still resolved.
      */
     default boolean sendLaterEnabled() { return true; }
+
+    /**
+     * live-presend-failclosed (D30, R31): whether the notification listener's store ever matched a
+     * notification to {@code ref}'s conversation (a number match, or any stored event of it).
+     * The pre-send check may count an unseen conversation as empty only when this is false.
+     * Default true (fail closed: no empty-conversation clearance).
+     */
+    default boolean listenerSawConversation(ConversationRef ref) { return true; }
 }

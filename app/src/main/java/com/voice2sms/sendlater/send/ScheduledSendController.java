@@ -154,6 +154,13 @@ public final class ScheduledSendController {
     /** D30 detail when the check cleared only after the script's Send request was refused. */
     static final String DETAIL_PRESEND_SLOW = "presend_slow";
     /**
+     * OD34: thread mode found text in the thread's box that is not our body before typing; the
+     * job stops unsent (CANNOT_SHOW -> reminder) and the user's draft is left as it was.
+     */
+    static final String DETAIL_DRAFT_PRESENT = "draft_present";
+    /** Extra compose time after the one reload of the thread page (a second settle plus the load). */
+    static final long RELOAD_COMPOSE_GRACE_MS = ScheduledCompose.THREAD_SETTLE_MS + 5_000L;
+    /**
      * Upper bound on staying covered after the last outcome (12 s, kept from send-hardening; OD27
      * accepts it). The activity normally finishes on the engine's state broadcast, well before
      * this.
@@ -247,6 +254,8 @@ public final class ScheduledSendController {
         NewConversationReads fallbackReads;
         /** LIVE-F10: the end-of-job clear of our text was sent once. */
         boolean composerCleared;
+        /** live-presend-failclosed: compose time added once by the thread-page reload. */
+        long composeGraceMs;
 
         Job(long id, long checkTimeMs, long claimedAtMs) {
             this.id = id;
@@ -613,6 +622,14 @@ public final class ScheduledSendController {
         Job job = current;
         if (job == null || job.e164 == null || job.compose == null || job.gvShowedNoThread) return;
         if (!job.compose.isCurrent(token) || job.compose.isClickGranted()) return;
+        // live-presend-failclosed: a never-texted thread looks exactly like a slow render, so the
+        // job's thread page is reloaded once (full load) and settles again before any fallback.
+        ScheduledCompose.NoThread next = job.compose.onNoThread(token, ThreadUrl.isThreadOf(host.mainFrameUrl(), job.e164));
+        if (next == ScheduledCompose.NoThread.IGNORE) return;
+        if (next == ScheduledCompose.NoThread.RELOAD) {
+            reloadThread(job);
+            return;
+        }
         job.gvShowedNoThread = true;
         job.presend = job.presend == null ? null : new PreSendRead();
         // The check reads the new page from scratch: it gets its full time again (hard timeout bounds it).
@@ -620,6 +637,34 @@ public final class ScheduledSendController {
             job.presendDeadlineMs = System.currentTimeMillis() + PRESEND_TIMEOUT_MS;
         }
         if (!host.isAlive() || !host.loadMessagesList()) report(job, failureOutcome(job), "activity_gone");
+    }
+
+    /**
+     * live-presend-failclosed, main thread: the one reload of the job's thread page. The pre-send
+     * reads start over with their full time, the compose timeout gets one more settle, and the
+     * page's onPageFinished re-injects the thread composer (the job's own thread URL re-injects).
+     */
+    private void reloadThread(Job job) {
+        if (job.presend != null && job.compose.isPreSendPending()) {
+            job.presend = new PreSendRead();
+            job.presendDeadlineMs = System.currentTimeMillis() + PRESEND_TIMEOUT_MS;
+        }
+        job.composeGraceMs = RELOAD_COMPOSE_GRACE_MS;
+        if (!host.isAlive() || !host.beginCompose(job.e164, job.message.getText())) {
+            report(job, failureOutcome(job), "activity_gone");
+        }
+    }
+
+    /**
+     * OD34, main thread: thread mode found text in the thread's box that is not our body before it
+     * typed (inject.js, for {@code token}). A draft the user left is never overwritten or
+     * deleted: the job stops unsent (CANNOT_SHOW, "draft_present", reminder); the end-of-job clear
+     * removes only our exact body, so the draft stays.
+     */
+    public void onDraftPresent(String token) {
+        Job job = current;
+        if (job == null || job.compose == null || !job.compose.isCurrent(token)) return;
+        stopUnsent(job, DETAIL_DRAFT_PRESENT);
     }
 
     /**
@@ -788,10 +833,27 @@ public final class ScheduledSendController {
         }
         main.postDelayed(() -> {
             if (current == job && !job.injected && !job.compose.isClickGranted()) {
+                if (extendComposeTimeout(job)) return;   // the thread page was reloaded once
                 // Nothing typed yet: CANNOT_SHOW with the cause (G2); the gate closes first.
                 report(job, failureOutcome(job), isSignInUrl(host.mainFrameUrl()) ? "auth" : "compose_timeout");
             }
         }, COMPOSE_TIMEOUT_MS);
+    }
+
+    /**
+     * live-presend-failclosed: the compose timeout found grace left by the thread-page reload; it
+     * is used once (a second timer with the same cause), then the timeout stands.
+     */
+    private boolean extendComposeTimeout(final Job job) {
+        if (job.composeGraceMs <= 0) return false;
+        long grace = job.composeGraceMs;
+        job.composeGraceMs = 0;
+        main.postDelayed(() -> {
+            if (current == job && !job.injected && !job.compose.isClickGranted()) {
+                report(job, failureOutcome(job), isSignInUrl(host.mainFrameUrl()) ? "auth" : "compose_timeout");
+            }
+        }, grace);
+        return true;
     }
 
     // ================================================================== pre-send check (D30)
@@ -840,7 +902,12 @@ public final class ScheduledSendController {
             Classification c = agreed.empty
                     ? PreSendRead.classifyNoConversation(job.message, READ_LIMIT, now)
                     : PreSendRead.classify(job.message, agreed.bubbles, READ_LIMIT, now);
-            onPreSendVerdict(job, job.check.decide(job.message, c), now, agreed.empty);
+            // live-presend-failclosed: an empty conversation clears only on fail-closed evidence
+            // (nothing seen at scheduling, listener on, listener never matched the number).
+            PreSendCheck.Verdict v = agreed.empty
+                    ? PreSendRead.noConversationVerdict(job.check, job.message, c)
+                    : job.check.decide(job.message, c);
+            onPreSendVerdict(job, v, now, agreed.empty);
             return;
         }
         if (now >= job.presendDeadlineMs) {

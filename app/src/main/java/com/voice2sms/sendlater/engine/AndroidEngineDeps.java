@@ -21,6 +21,7 @@ import com.voice2sms.sendlater.domain.LatenessPolicy;
 import com.voice2sms.sendlater.domain.NetworkState;
 import com.voice2sms.sendlater.domain.OutboundPolicy;
 import com.voice2sms.sendlater.domain.RemindReason;
+import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.RpcThreadEventSource;
 import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
@@ -272,6 +273,15 @@ final class AndroidEngineDeps {
                 return SendLaterListenerStatus.isAvailable(app);
             } catch (RuntimeException e) {
                 return false;
+            }
+        }
+
+        /** live-presend-failclosed: the listener store's own view; fails closed (true). */
+        @Override public boolean listenerSawConversation(ConversationRef ref) {
+            try {
+                return NotificationThreadEventSource.create(app).sawConversation(ref);
+            } catch (RuntimeException e) {
+                return true;
             }
         }
 

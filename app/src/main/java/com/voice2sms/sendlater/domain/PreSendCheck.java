@@ -69,25 +69,83 @@ public final class PreSendCheck {
         }
     }
 
-    private static final PreSendCheck OFF = new PreSendCheck(Mode.OFF, OutboundPolicy.STILL_SEND);
+    private static final PreSendCheck OFF = new PreSendCheck(Mode.OFF, OutboundPolicy.STILL_SEND, false, false, false);
 
     private final Mode mode;
     private final OutboundPolicy outboundPolicy;
+    /** live-presend-failclosed: the engine stated the listener facts below at dispatch. */
+    private final boolean listenerFactsKnown;
+    /** The notification listener was enabled (and bound) at dispatch. */
+    private final boolean listenerEnabled;
+    /** The listener store ever matched a notification to this conversation (number match or stored event). */
+    private final boolean listenerSawConversation;
 
-    private PreSendCheck(Mode mode, OutboundPolicy outboundPolicy) {
+    private PreSendCheck(Mode mode, OutboundPolicy outboundPolicy, boolean listenerFactsKnown,
+                         boolean listenerEnabled, boolean listenerSawConversation) {
         if (mode == null) throw new IllegalArgumentException("mode");
         this.mode = mode;
         this.outboundPolicy = outboundPolicy != null ? outboundPolicy : OutboundPolicy.STILL_SEND;
+        this.listenerFactsKnown = listenerFactsKnown;
+        this.listenerEnabled = listenerEnabled;
+        this.listenerSawConversation = listenerSawConversation;
     }
 
     /** The user's tap: no check. */
     public static PreSendCheck off() { return OFF; }
 
     /** Due time with listener evidence: the check adds holds. */
-    public static PreSendCheck check(OutboundPolicy policy) { return new PreSendCheck(Mode.CHECK, policy); }
+    public static PreSendCheck check(OutboundPolicy policy) {
+        return new PreSendCheck(Mode.CHECK, policy, false, false, false);
+    }
 
     /** Due time without listener evidence (OD22(5)): the check is the evidence. */
-    public static PreSendCheck required(OutboundPolicy policy) { return new PreSendCheck(Mode.REQUIRED, policy); }
+    public static PreSendCheck required(OutboundPolicy policy) {
+        return new PreSendCheck(Mode.REQUIRED, policy, false, false, false);
+    }
+
+    /**
+     * live-presend-failclosed (D30, R31): this check with the listener facts the engine knows at
+     * dispatch, which the empty-conversation rule ({@link #mayClearEmptyConversation}) needs:
+     * {@code listenerEnabled} (the notification listener is enabled and bound now) and
+     * {@code listenerSawConversation} (its store ever matched a notification to this
+     * conversation). A check without them never clears an empty conversation (fail closed).
+     */
+    public PreSendCheck withListenerFacts(boolean listenerEnabled, boolean listenerSawConversation) {
+        if (mode == Mode.OFF) return this;
+        return new PreSendCheck(mode, outboundPolicy, true, listenerEnabled, listenerSawConversation);
+    }
+
+    /** The engine stated the listener facts ({@link #withListenerFacts}). */
+    public boolean hasListenerFacts() { return listenerFactsKnown; }
+
+    public boolean isListenerEnabled() { return listenerFactsKnown && listenerEnabled; }
+
+    /** True when unknown (fail closed). */
+    public boolean listenerSawConversation() { return !listenerFactsKnown || listenerSawConversation; }
+
+    /**
+     * live-presend-failclosed: whether a read that sees NO conversation for the number (GV's
+     * new-conversation draft never shows one, a never-texted thread is indistinguishable from a
+     * slow render, the inbox list is lazy) may open the Send gate. Only when ALL hold:
+     * <ol>
+     *   <li>nothing was seen when the message was scheduled: neither the reply watermark nor the
+     *       self-preemption baseline has a newest message (newestTs, bubbleHash and server id all null; a
+     *       missing watermark is unknown, so false);</li>
+     *   <li>the notification listener is enabled now (dispatch time);</li>
+     *   <li>the listener store never matched a notification to this conversation (a reply after
+     *       scheduling would have posted one).</li>
+     * </ol>
+     * Otherwise the empty read proves nothing and the verdict is {@link Verdict#HOLD_UNVERIFIED}.
+     */
+    public boolean mayClearEmptyConversation(ScheduledMessage message) {
+        if (message == null || !listenerFactsKnown) return false;
+        if (!nothingSeen(message.getWatermark()) || !nothingSeen(message.getSelfPreemptionBaseline())) return false;
+        return listenerEnabled && !listenerSawConversation;
+    }
+
+    private static boolean nothingSeen(Watermark w) {
+        return w != null && w.getNewestTs() == null && w.getBubbleHash() == null && w.getNewestServerId() == null;
+    }
 
     public Mode getMode() { return mode; }
 
@@ -138,10 +196,17 @@ public final class PreSendCheck {
     @Override public boolean equals(Object o) {
         if (!(o instanceof PreSendCheck)) return false;
         PreSendCheck c = (PreSendCheck) o;
-        return mode == c.mode && outboundPolicy == c.outboundPolicy;
+        return mode == c.mode && outboundPolicy == c.outboundPolicy && listenerFactsKnown == c.listenerFactsKnown
+                && listenerEnabled == c.listenerEnabled && listenerSawConversation == c.listenerSawConversation;
     }
 
-    @Override public int hashCode() { return Objects2.hash(mode, outboundPolicy); }
+    @Override public int hashCode() {
+        return Objects2.hash(mode, outboundPolicy, listenerFactsKnown, listenerEnabled, listenerSawConversation);
+    }
 
-    @Override public String toString() { return "PreSendCheck{" + mode + ", " + outboundPolicy + "}"; }
+    @Override public String toString() {
+        return "PreSendCheck{" + mode + ", " + outboundPolicy
+                + (listenerFactsKnown ? ", listener=" + listenerEnabled + ", saw=" + listenerSawConversation : "")
+                + "}";
+    }
 }
