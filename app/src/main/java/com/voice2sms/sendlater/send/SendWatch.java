@@ -32,6 +32,10 @@ import java.util.List;
  *       (a new conversation). In an existing thread it can be an older identical text, so it is
  *       treated as old; a timed one is judged by its time (SendVerifier's clock slack).</li>
  * </ul>
+ *
+ * <p>LIVE-F9: on the real GV web page a bubble's only time is its screen-reader label, which the
+ * page draws on an optimistic bubble as well. A label time dates a bubble (G3) but never confirms
+ * it at once: such a match must settle like an untimed one. A failed bubble never matches.
  */
 public final class SendWatch {
 
@@ -66,7 +70,7 @@ public final class SendWatch {
                 own = -1;   // G3: may be an older identical text; only a new conversation qualifies
             }
             // Without a baseline an id cannot date the bubble; only a time can.
-            lastMatchConfirmed = own >= 0 && bubbles.get(own).getTimeMs() != null;
+            lastMatchConfirmed = own >= 0 && serverTimed(bubbles.get(own));
             return ThreadBaseline.verificationEvents(bodyHash, bubbles, own, nowMs);
         }
         if (bubbles == null) return null;
@@ -74,7 +78,7 @@ public final class SendWatch {
         ThreadBubble match = firstNewOwn(bubbles, newStart);
         // R4 (OD26): an id attribute proves nothing (an optimistic bubble may carry a client id);
         // only a time the page shows confirms at once, else the settle rule decides.
-        lastMatchConfirmed = match != null && match.getTimeMs() != null;
+        lastMatchConfirmed = match != null && serverTimed(match);
         return ThreadBaseline.verificationEvents(bodyHash, bubbles, newStart, nowMs);
     }
 
@@ -102,12 +106,17 @@ public final class SendWatch {
         if (bodyHash == null || newStart < 0) return null;
         for (int i = newStart; i < bubbles.size(); i++) {
             ThreadBubble b = bubbles.get(i);
-            if (b != null && b.getDirection() == ThreadEvent.Direction.OUT
+            if (b != null && b.getDirection() == ThreadEvent.Direction.OUT && !b.isFailed()
                     && bodyHash.equals(ThreadEvent.hashOf(b.getText()))) {
                 return b;
             }
         }
         return null;
+    }
+
+    /** A time the page itself gave (not a label minute, which an optimistic bubble shows too). */
+    private static boolean serverTimed(ThreadBubble b) {
+        return b.getTimeMs() != null && !b.isTimeFromLabel();
     }
 
     private static int outboundCount(List<ThreadBubble> bubbles) {
