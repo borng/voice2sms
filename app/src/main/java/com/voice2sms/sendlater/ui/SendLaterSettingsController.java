@@ -30,6 +30,7 @@ import androidx.preference.SwitchPreferenceCompat;
 import com.voice2sms.R;
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.a11y.A11yWarning;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.engine.SendLaterScheduler;
@@ -147,10 +148,15 @@ public final class SendLaterSettingsController {
 
         Preference a11y = fragment.findPreference(KEY_ACCESSIBILITY_ROW);
         if (a11y != null) {
-            a11y.setSummary(c.getString(isAccessibilityServiceEnabled(c)
+            boolean a11yOn = isAccessibilityServiceEnabled(c);
+            a11y.setSummary(c.getString(a11yOn
                     ? R.string.sendlater_settings_accessibility_on
                     : R.string.sendlater_settings_accessibility_off)
                     + "\n" + c.getString(R.string.sendlater_settings_accessibility_why));
+            // LIVE-F5: red row while the service is off (like the battery row); back on clears
+            // the "accessibility off" warning notification.
+            a11y.setIcon(a11yOn ? R.drawable.sendlater_ic_battery_ok : R.drawable.sendlater_ic_a11y_warn);
+            if (a11yOn) A11yWarning.clearIfEnabled(c);
         }
 
         Preference listener = fragment.findPreference(KEY_LISTENER_ROW);

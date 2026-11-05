@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Send Later "accessibility service is off" warning (LIVE-F5, like the D25/D28 battery
+     warning). Never names a contact or shows message text. -->
+<resources>
+    <string name="sendlater_a11y_warning_title">Scheduled messages may not send on their own</string>
+    <string name="sendlater_a11y_warning_text">Accessibility for voice2sms is off. Without it a scheduled message may wait for your tap on a locked or dark screen, and the Google Voice edge tab is gone. Tap to turn it back on.</string>
+    <string name="sendlater_a11y_fix">Turn on</string>
+    <string name="sendlater_a11y_channel">Send Later accessibility warnings</string>
+    <string name="sendlater_a11y_channel_description">At most once a day, when the accessibility service is off while a message is scheduled</string>
+    <string name="sendlater_a11y_upcoming_banner">Accessibility for voice2sms is off. Scheduled messages may wait for your tap on a locked or dark screen. Tap to turn it back on.</string>
+    <string name="sendlater_a11y_indicator_ok">Accessibility on</string>
+    <string name="sendlater_a11y_indicator_off">Warning: accessibility off</string>
+    <!-- Red warning: #C5221F is 5.6:1 on #FFFFFF, 3.4:1 on #121212; white mark on it 5.6:1. -->
+    <color name="sendlater_a11y_warn">#C5221F</color>
+    <!-- Upcoming banner: dark red text on a pale red fill (8.6:1). -->
+    <color name="sendlater_a11y_banner_bg">#FCE8E6</color>
+    <color name="sendlater_a11y_banner_text">#8C1D18</color>
+</resources>
