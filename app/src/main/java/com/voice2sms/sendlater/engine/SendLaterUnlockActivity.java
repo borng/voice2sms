@@ -8,27 +8,42 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 
 import com.voice2sms.sendlater.SendLaterIntents;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
- * L1 (OD31) below API 31: Send now / Send anyway from a notification open this invisible,
- * non-exported activity instead of a broadcast, so the action never runs from the lock screen
- * without an unlock. The activity is not show-when-locked, so Android asks for the unlock before
- * it appears; it also checks the keyguard itself:
+ * Send now / Send anyway from a notification, on every API level, open this invisible,
+ * non-exported, no-history activity instead of a broadcast (LIVE-F4). Two reasons:
  * <ul>
- *   <li>unlocked: applies the tap (same engine path as the action receiver) and finishes;</li>
- *   <li>still locked, API 26+: {@code requestDismissKeyguard}; acts only on success;</li>
- *   <li>still locked, API 24/25: does nothing (fails closed); the notification stays tappable.</li>
+ *   <li>L1 (OD31): the action never runs from the lock screen without an unlock. The activity is
+ *       not show-when-locked, so Android asks for the unlock before it appears (on API 31+ the
+ *       action is also marked authentication-required); it checks the keyguard itself too:
+ *       unlocked: acts; still locked, API 26+: {@code requestDismissKeyguard}, acts only on
+ *       success; still locked, API 24/25: does nothing (fails closed).</li>
+ *   <li>LIVE-F4: the send it starts is planned from the foreground. While this activity is
+ *       showing, voice2sms may start GVoiceWebViewActivity itself, so the send does not depend
+ *       on the accessibility service (a broadcast trampoline cannot start an activity on API
+ *       31+). It grants {@link UserTapGrant} for the message, hands the tap to the engine (same
+ *       path as the action receiver), and stays until the send path has started the activity
+ *       ({@link UserTapGrant#consume}), the engine started no send, or {@link #HOLD_MS}.</li>
  * </ul>
- * On API 31+ the notification uses an authenticated broadcast action instead
- * ({@link SendLaterNotifications#usesAuthenticatedBroadcast}).
  */
 public final class SendLaterUnlockActivity extends Activity {
 
-    private boolean acted;
+    /** Longest the activity waits for the send path to start GVoiceWebViewActivity. */
+    static final long HOLD_MS = 5_000L;
 
-    /** The Send now / Send anyway PendingIntent for API < 31 (immutable, distinct per id and action). */
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private boolean acted;
+    private boolean released;
+    private long grantedId = -1L;
+
+    /** The Send now / Send anyway PendingIntent (immutable, distinct per id and action). */
     static PendingIntent pendingIntent(Context c, String action, long id) {
         Intent i = new Intent(c, SendLaterUnlockActivity.class)
                 .setAction(action)
@@ -37,7 +52,8 @@ public final class SendLaterUnlockActivity extends Activity {
                 .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_HISTORY
                         | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
-        return PendingIntent.getActivity(c, 0, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        return PendingIntent.getActivity(c, SendLaterNotifications.requestCode(action, id), i,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     /** Only Send now / Send anyway are accepted here. */
@@ -74,11 +90,43 @@ public final class SendLaterUnlockActivity extends Activity {
         if (acted) return;
         acted = true;
         final Context app = getApplicationContext();
+        grantedId = id;
+        // LIVE-F4: from here until release() the send path may plan DIRECT for this message.
+        UserTapGrant.grant(id, SystemClock.elapsedRealtime(), () -> main.post(this::release));
+        final AtomicBoolean launching = new AtomicBoolean(false);
         try {
-            SendLaterEngine.runInBackground(app, () -> SendLaterEngine.onNotificationTap(app, action, id), null);
+            SendLaterEngine.runInBackground(app, () -> {
+                TapResult r = SendLaterEngine.onNotificationTap(app, action, id);
+                launching.set(r == TapResult.DONE && SendLaterEngine.isInFlight(app, id));
+            }, () -> main.post(() -> afterTap(id, launching.get())));
         } catch (RuntimeException e) {
-            // engine unavailable: nothing sent
+            release();   // engine unavailable: nothing sent
         }
+    }
+
+    /** The engine has handled the tap; wait for the launch only when a send is under way. */
+    private void afterTap(long id, boolean launching) {
+        if (released) return;
+        if (!launching || !UserTapGrant.isActive(id, SystemClock.elapsedRealtime())) {
+            release();
+            return;
+        }
+        main.postDelayed(this::release, HOLD_MS);
+    }
+
+    /** Ends the grant and the activity (once). */
+    private void release() {
+        if (released) return;
+        released = true;
+        main.removeCallbacksAndMessages(null);
+        if (grantedId >= 0) UserTapGrant.revoke(grantedId);
         finish();
+    }
+
+    @Override protected void onDestroy() {
+        main.removeCallbacksAndMessages(null);
+        if (grantedId >= 0 && !released) UserTapGrant.revoke(grantedId);
+        released = true;
+        super.onDestroy();
     }
 }

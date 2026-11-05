@@ -200,8 +200,24 @@ public final class SendLaterNotifications {
                 "Not sent. Tap to review: " + preview(m), reviewMode(c, m, true), "expired");
     }
 
-    /** I5: an interrupted send could not be verified. Never retried automatically. */
+    /**
+     * I5: a send that typed the text could not be verified (SENT_UNVERIFIED). Never retried
+     * automatically; the button reads "Send anyway (may be a duplicate)" (OD21, LIVE-F8).
+     */
     public static void mayHaveSent(Context c, ScheduledMessage m) {
+        postMayHaveSent(c, m, sendAnywayLabel(m, System.currentTimeMillis(), true));
+    }
+
+    /**
+     * LIVE-F8: as {@link #mayHaveSent(Context, ScheduledMessage)}, but the duplicate warning on
+     * the button only when {@code duplicateRisk} ({@link #duplicateRisk}): an interruption that
+     * may have typed nothing (IN_FLIGHT at restart) gets the plain label.
+     */
+    public static void mayHaveSent(Context c, ScheduledMessage m, boolean duplicateRisk) {
+        postMayHaveSent(c, m, sendAnywayLabel(m, System.currentTimeMillis(), duplicateRisk));
+    }
+
+    private static void postMayHaveSent(Context c, ScheduledMessage m, String sendAnyway) {
         NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
                 .setContentTitle("Message to " + who(m) + " may have already sent")
                 .setContentText("Check the conversation before sending again: " + preview(m))
@@ -209,8 +225,7 @@ public final class SendLaterNotifications {
                         .bigText("Check the conversation before sending again: " + preview(m)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(reviewMode(c, m, false))
-                .addAction(unlockedAction(c, sendAnywayLabel(m, System.currentTimeMillis(), true),
-                        SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
+                .addAction(unlockedAction(c, sendAnyway, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
                 .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
         post(c, m.getId(), b.build(), "mayHaveSent");
     }
@@ -244,12 +259,37 @@ public final class SendLaterNotifications {
     }
 
     /**
-     * L1 (OD31): on API 31+ Send now / Send anyway are broadcast actions that Android runs only
-     * after the user unlocks ({@code setAuthenticationRequired}); below 31 they open
-     * {@link SendLaterUnlockActivity}, which asks for the unlock before acting.
+     * L1 (OD31): whether Send now / Send anyway are also marked authentication-required
+     * ({@code setAuthenticationRequired}, API 31+), so Android asks for the unlock before it
+     * opens {@link SendLaterUnlockActivity}. The name predates LIVE-F4: the action is an activity
+     * on every API level now, never a broadcast; below 31 the activity asks for the unlock itself.
      */
     static boolean usesAuthenticatedBroadcast(int sdkInt) {
         return sdkInt >= 31;
+    }
+
+    /**
+     * LIVE-F8: whether a "may have already sent" notification warns that Send anyway may send a
+     * duplicate. Only after SENT_UNVERIFIED (the send path reports it only once the text was
+     * typed, {@code ScheduledSendController.failureOutcome}); CANNOT_SHOW (nothing typed), an
+     * interrupted IN_FLIGHT row of unknown progress, or no outcome at all gets the plain label.
+     */
+    static boolean duplicateRisk(com.voice2sms.sendlater.domain.SendOutcome lastOutcome) {
+        return lastOutcome == com.voice2sms.sendlater.domain.SendOutcome.SENT_UNVERIFIED;
+    }
+
+    /**
+     * Notification PendingIntent request code, distinct per message and action (the data URI
+     * already keeps them apart; this keeps the request codes apart too).
+     */
+    static int requestCode(String action, long id) {
+        int a;
+        if (SendLaterIntents.ACTION_SEND_NOW.equals(action)) a = 1;
+        else if (SendLaterIntents.ACTION_SEND_ANYWAY.equals(action)) a = 2;
+        else if (SendLaterIntents.ACTION_SNOOZE.equals(action)) a = 3;
+        else if (SendLaterIntents.ACTION_CANCEL.equals(action)) a = 4;
+        else a = 5;
+        return slot(id) * 8 + a;
     }
 
     /** "Send anyway" within the lateness budget, "Send anyway (3 h late)" past it (R28). */
@@ -460,15 +500,17 @@ public final class SendLaterNotifications {
         }
     }
 
-    /** Send now / Send anyway: never runs from the lock screen without an unlock (L1, OD31). */
+    /**
+     * Send now / Send anyway: an activity on every API level (LIVE-F4), so the send is started
+     * from the foreground and never depends on the accessibility service; it never runs from the
+     * lock screen without an unlock (L1, OD31): authentication-required on API 31+, and the
+     * activity itself asks for the unlock below that.
+     */
     private static NotificationCompat.Action unlockedAction(Context c, String label, String action, long id) {
-        if (usesAuthenticatedBroadcast(Build.VERSION.SDK_INT)) {
-            return new NotificationCompat.Action.Builder(0, label, broadcast(c, action, id))
-                    .setAuthenticationRequired(true)
-                    .build();
-        }
-        return new NotificationCompat.Action.Builder(0, label, SendLaterUnlockActivity.pendingIntent(c, action, id))
-                .build();
+        NotificationCompat.Action.Builder b =
+                new NotificationCompat.Action.Builder(0, label, SendLaterUnlockActivity.pendingIntent(c, action, id));
+        if (usesAuthenticatedBroadcast(Build.VERSION.SDK_INT)) b.setAuthenticationRequired(true);
+        return b.build();
     }
 
     private static PendingIntent broadcast(Context c, String action, long id) {
@@ -477,7 +519,8 @@ public final class SendLaterNotifications {
                 .setPackage(c.getPackageName())
                 .setData(Uri.parse("voice2sms-sendlater://action/" + id))
                 .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id);
-        return PendingIntent.getBroadcast(c, 0, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        return PendingIntent.getBroadcast(c, requestCode(action, id), i,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     /** ACTION_EDIT for the sheet, or null when no activity in this package handles it yet. */

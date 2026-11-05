@@ -36,6 +36,12 @@ public interface EngineNotifier {
     void mayHaveSent(ScheduledMessage m);
 
     /**
+     * LIVE-F8: "may have already sent", with the duplicate warning on Send anyway only when
+     * {@code duplicateRisk} (the send typed the text: SENT_UNVERIFIED).
+     */
+    default void mayHaveSent(ScheduledMessage m, boolean duplicateRisk) { mayHaveSent(m); }
+
+    /**
      * R31: the send failed within the budget and was not retried (or the retry failed too). The
      * default falls back to a plain reminder so older notifier fakes keep compiling.
      */

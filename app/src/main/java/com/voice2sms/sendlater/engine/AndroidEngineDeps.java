@@ -194,6 +194,9 @@ final class AndroidEngineDeps {
         @Override public void selfPreempted(ScheduledMessage m) { SendLaterNotifications.selfPreempted(app, m); }
         @Override public void expired(ScheduledMessage m) { SendLaterNotifications.expired(app, m); }
         @Override public void mayHaveSent(ScheduledMessage m) { SendLaterNotifications.mayHaveSent(app, m); }
+        @Override public void mayHaveSent(ScheduledMessage m, boolean duplicateRisk) {
+            SendLaterNotifications.mayHaveSent(app, m, duplicateRisk);
+        }
         @Override public void sendFailed(ScheduledMessage m) { SendLaterNotifications.sendFailed(app, m); }
         @Override public void dismiss(long id) { SendLaterNotifications.dismiss(app, id); }
         @Override public void sending(ScheduledMessage m) { SendLaterNotifications.sending(app, m); }

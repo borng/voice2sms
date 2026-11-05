@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.accessibility.AccessibilityManager;
 
@@ -26,6 +27,7 @@ import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.engine.ScheduledSender;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
+import com.voice2sms.sendlater.engine.UserTapGrant;
 import com.voice2sms.sendlater.store.ScheduledSendQueue;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 
@@ -41,7 +43,9 @@ import java.util.concurrent.Executors;
  * as {@link LaunchPlanner} decides: DIRECT startActivity when voice2sms's accessibility service is
  * enabled, a full-screen-intent notification on a locked or dark screen, otherwise nothing
  * (CANNOT_SHOW, then false: "Unlock to send" while locked (D15), else "Couldn't send
- * automatically"). A corrupt row (no recipient or text) is CANNOT_SHOW with the generic reminder.
+ * automatically"). LIVE-F4: a send started by the user's Send now / Send anyway tap while
+ * voice2sms's tap activity is showing ({@link UserTapGrant}) is DIRECT on an unlocked screen,
+ * accessibility service or not. A corrupt row (no recipient or text) is CANNOT_SHOW with the generic reminder.
  * At the slot's time the row is reloaded and a launch more than {@link LaunchRecheck#QUEUE_SLACK_MS}
  * past its lateness deadline is CANNOT_SHOW {@code late} (F4, I2, OD30). Every CANNOT_SHOW detail goes through
  * {@link SendDetails#forEngine}.
@@ -82,7 +86,7 @@ public final class WebViewScheduledSender implements ScheduledSender {
             // OD23: the user is typing in the voice2sms WebView; never take it over. Reminder.
             return notStarted(app, id, ForegroundUse.DETAIL_USER_BUSY);
         }
-        LaunchPlanner.Result plan = currentPlan(app);
+        LaunchPlanner.Result plan = currentPlan(app, id);
         if (plan == LaunchPlanner.Result.CANNOT_SHOW && !ScheduledSendController.isBusy()) {
             // CANNOT_SHOW: nothing attempted. Locked: "Unlock to send"; a lit, unlocked screen
             // with no accessibility service: "Couldn't send automatically" (F6).
@@ -122,35 +126,40 @@ public final class WebViewScheduledSender implements ScheduledSender {
      * {@link LaunchPlanner} decides NOW (the screen may have changed during the queue delay).
      */
     private static void launch(Context app, long id, String token, long checkTime) {
-        if (!LaunchClaims.INSTANCE.isPending(id)) return;
-        if (ScheduledSendController.offer(id, token, checkTime, 0L)) return;
-        if (ForegroundUse.isUserBusy(System.currentTimeMillis())) {
-            // OD23: the user started using the WebView during the queue delay.
-            if (LaunchClaims.INSTANCE.take(id, token)) {
-                SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
-                        SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY));
-            }
-            return;
-        }
-        // OD28: whether the screen was dark is recorded now, when the launch is planned, and
-        // travels with the intent (the activity's own onCreate reading comes after the wake-up).
-        final boolean dark = !isScreenOn(app);
-        switch (planFor(app, dark)) {
-            case DIRECT:
-                launchDirect(app, id, token, checkTime, dark);
-                return;
-            case FULL_SCREEN_INTENT:
-                postFullScreenIntent(app, id, token, checkTime, dark);
-                return;
-            case CANNOT_SHOW:
-            default:
-                // Nothing was typed: the engine releases it with a reminder (locked: "Unlock to
-                // send"; unlocked: "Couldn't send automatically", F6).
+        try {
+            if (!LaunchClaims.INSTANCE.isPending(id)) return;
+            if (ScheduledSendController.offer(id, token, checkTime, 0L)) return;
+            if (ForegroundUse.isUserBusy(System.currentTimeMillis())) {
+                // OD23: the user started using the WebView during the queue delay.
                 if (LaunchClaims.INSTANCE.take(id, token)) {
                     SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
-                            SendDetails.forEngine(SendOutcome.CANNOT_SHOW,
-                                    SendDetails.plannerCause(isKeyguardLocked(app))));
+                            SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY));
                 }
+                return;
+            }
+            // OD28: whether the screen was dark is recorded now, when the launch is planned, and
+            // travels with the intent (the activity's own onCreate reading comes after the wake-up).
+            final boolean dark = !isScreenOn(app);
+            switch (planFor(app, dark, id)) {
+                case DIRECT:
+                    launchDirect(app, id, token, checkTime, dark);
+                    return;
+                case FULL_SCREEN_INTENT:
+                    postFullScreenIntent(app, id, token, checkTime, dark);
+                    return;
+                case CANNOT_SHOW:
+                default:
+                    // Nothing was typed: the engine releases it with a reminder (locked: "Unlock to
+                    // send"; unlocked: "Couldn't send automatically", F6).
+                    if (LaunchClaims.INSTANCE.take(id, token)) {
+                        SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                                SendDetails.forEngine(SendOutcome.CANNOT_SHOW,
+                                        SendDetails.plannerCause(isKeyguardLocked(app))));
+                    }
+            }
+        } finally {
+            // LIVE-F4: the launch is decided (and a DIRECT start made); the tap activity may go.
+            UserTapGrant.consume(id, SystemClock.elapsedRealtime());
         }
     }
 
@@ -164,7 +173,10 @@ public final class WebViewScheduledSender implements ScheduledSender {
      * launches: the controller reloads and re-checks it before anything is typed.
      */
     private static void recheckThen(final Context app, final long id, final String token, final Runnable launch) {
-        if (!LaunchClaims.INSTANCE.isPending(id)) return;
+        if (!LaunchClaims.INSTANCE.isPending(id)) {
+            UserTapGrant.consume(id, SystemClock.elapsedRealtime());
+            return;
+        }
         IO.execute(() -> {
             LaunchRecheck.Verdict verdict = LaunchRecheck.Verdict.PROCEED;
             try {
@@ -179,9 +191,11 @@ public final class WebViewScheduledSender implements ScheduledSender {
                         SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
                                 SendDetails.forEngine(SendOutcome.CANNOT_SHOW, LaunchRecheck.DETAIL_LATE));
                     }
+                    UserTapGrant.consume(id, SystemClock.elapsedRealtime());
                     return;
                 case GONE:
                     LaunchClaims.INSTANCE.take(id, token);
+                    UserTapGrant.consume(id, SystemClock.elapsedRealtime());
                     return;
                 case PROCEED:
                 default:
@@ -190,13 +204,18 @@ public final class WebViewScheduledSender implements ScheduledSender {
         });
     }
 
-    private static LaunchPlanner.Result currentPlan(Context app) {
-        return planFor(app, !isScreenOn(app));
+    private static LaunchPlanner.Result currentPlan(Context app, long id) {
+        return planFor(app, !isScreenOn(app), id);
     }
 
-    private static LaunchPlanner.Result planFor(Context app, boolean screenDark) {
+    private static LaunchPlanner.Result planFor(Context app, boolean screenDark, long id) {
         return LaunchPlanner.plan(isOwnAccessibilityServiceEnabled(app),
-                isKeyguardLocked(app), !screenDark, canUseFullScreenIntent(app));
+                isKeyguardLocked(app), !screenDark, canUseFullScreenIntent(app), isUserTapForeground(id));
+    }
+
+    /** LIVE-F4: the user's tap activity for {@code id} is showing now ({@link UserTapGrant}). */
+    static boolean isUserTapForeground(long id) {
+        return UserTapGrant.isActive(id, SystemClock.elapsedRealtime());
     }
 
     /** Cheap pre-check before a slot is taken: the row is IN_FLIGHT with this text. */
