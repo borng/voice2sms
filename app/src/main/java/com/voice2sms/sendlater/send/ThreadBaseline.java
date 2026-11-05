@@ -1,5 +1,6 @@
 package com.voice2sms.sendlater.send;
 
+import com.voice2sms.sendlater.domain.EchoFilter;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.web.ThreadBubble;
 
@@ -18,6 +19,10 @@ import java.util.List;
  * before it (the earliest it can be, 0 when none), so an old untimed reply is never read as a
  * reply that landed during the send; a new one takes the next timed bubble's time or now (the
  * latest it can be).
+ *
+ * <p>LIVE-F9: a bubble the page marks failed ("Not sent") never verifies, and an inbound echo of
+ * an outbound text ({@link EchoFilter}, judged over the whole read so an echo of an old outbound
+ * counts too) is never a reply.
  */
 public final class ThreadBaseline {
 
@@ -69,6 +74,7 @@ public final class ThreadBaseline {
         for (int i = later.size() - 1; i >= 0; i--) {
             ThreadBubble b = later.get(i);
             if (b == null || b.getDirection() != ThreadEvent.Direction.OUT) continue;
+            if (b.isFailed()) return -1;   // the newest attempt failed: nothing here is this send
             return bodyHash.equals(ThreadEvent.hashOf(b.getText())) ? i : -1;
         }
         return -1;
@@ -113,7 +119,8 @@ public final class ThreadBaseline {
      * What {@link SendVerifier#verify} may see: old inbound bubbles (a timed one after the thread
      * check is a late reply), then the new bubbles up to and including the first new outbound
      * with {@code bodyHash}. Old outbound bubbles are left out (they can never be this send), and
-     * so are bubbles after our own (a reply to the sent message is not a late reply).
+     * so are bubbles after our own (a reply to the sent message is not a late reply). Failed
+     * outbound bubbles and inbound echoes are left out too.
      */
     public static List<ThreadEvent> verificationEvents(String bodyHash, List<ThreadBubble> later, int newStart,
                                                        long nowMs) {
@@ -122,11 +129,23 @@ public final class ThreadBaseline {
         int n = later.size();
         int firstNew = newStart < 0 ? n : Math.min(newStart, n);
         List<ThreadEvent> stamped = stamp(later, newStart, nowMs);
+        // Echo flags over the whole read; a failed outbound was never delivered, so it is no echo source.
+        List<ThreadEvent> forEcho = new ArrayList<>();
         int e = 0;
         for (int i = 0; i < n; i++) {
             ThreadBubble b = later.get(i);
             if (b == null || b.getDirection() == null) continue;
             ThreadEvent ev = stamped.get(e++);
+            forEcho.add(b.isFailed() ? null : ev);
+        }
+        boolean[] echo = EchoFilter.echoFlags(forEcho);
+        e = 0;
+        for (int i = 0; i < n; i++) {
+            ThreadBubble b = later.get(i);
+            if (b == null || b.getDirection() == null) continue;
+            int k = e++;
+            ThreadEvent ev = stamped.get(k);
+            if (b.isFailed() || echo[k]) continue;
             if (i < firstNew) {
                 if (ev.getDirection() == ThreadEvent.Direction.IN) out.add(ev);
                 continue;

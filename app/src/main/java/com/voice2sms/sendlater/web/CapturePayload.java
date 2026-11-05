@@ -5,6 +5,7 @@ import com.voice2sms.sendlater.domain.Watermark;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.TimeZone;
 import java.util.regex.Pattern;
 
 /**
@@ -15,6 +16,11 @@ import java.util.regex.Pattern;
  * the page: EXACT needs id + time, TIMESTAMP needs time, anything else is DEVICE_ONLY. A display
  * name is never accepted as the recipient (I3). The draft is kept exactly as typed.
  * {@link #toString()} redacts the draft and name.
+ *
+ * <p>LIVE-F9: GV web shows no bubble time or id, so the page may send
+ * {@code newestMessageLabel} (the newest bubble's screen-reader label) instead of a time. Java
+ * parses its minute ({@link GvBubbleLabel}); a capture with a parsed label is TIMESTAMP quality,
+ * never EXACT (there is no id). The label holds message text and is not kept.
  */
 public final class CapturePayload {
 
@@ -39,6 +45,11 @@ public final class CapturePayload {
 
     /** Parsed payload, or null when the JSON is malformed or fails validation. */
     public static CapturePayload parse(String json) {
+        return parse(json, TimeZone.getDefault());
+    }
+
+    /** As {@link #parse(String)}, reading a label time in {@code tz}. */
+    public static CapturePayload parse(String json, TimeZone tz) {
         if (json == null || json.trim().isEmpty()) return null;
         JSONObject o;
         try {
@@ -61,6 +72,7 @@ public final class CapturePayload {
             long l = ((Number) t).longValue();
             if (d > 0 && !Double.isNaN(d) && !Double.isInfinite(d)) time = l;
         }
+        if (time == null) time = GvBubbleLabel.parseTimeMs(string(o, "newestMessageLabel"), tz);
         return new CapturePayload(e164, name, draft, id, time);
     }
 
