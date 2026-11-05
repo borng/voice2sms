@@ -31,6 +31,8 @@ import java.util.concurrent.Executors;
  * and IN_FLIGHT rows) is built on the worker when the listener connects and rebuilt on
  * ACTION_STATE_CHANGED / ACTION_SCHEDULED, through a RECEIVER_NOT_EXPORTED receiver that lives
  * from connect to disconnect. A Voice notification no live key matches makes no database call.
+ * LIVE-F12: the gate and the recorder also match a contact's name to a number-only message through
+ * {@link AndroidContactNames} (READ_CONTACTS only if granted), on the worker thread only.
  *
  * <p>Notification content never reaches a log (I7). Room work runs on one background thread.
  * Voice suppresses notifications for the thread open in native Voice; the on-screen reader covers
@@ -114,7 +116,8 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
 
     private static void rebuildGate(Context app, boolean forcePurge) {
         try {
-            LiveConversationKeys gate = LiveConversationKeys.rebuild(new RepositoryListenerStore(app));
+            LiveConversationKeys gate = LiveConversationKeys.rebuild(new RepositoryListenerStore(app),
+                    new AndroidContactNames(app));
             // R34: misses no longer reach the purge, so state changes drive it. Nothing live left
             // means every stored event is an orphan: purge now rather than at the hourly mark.
             long now = System.currentTimeMillis();
@@ -153,7 +156,8 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
                 return;
             }
             ListenerEventRecorder recorder = new ListenerEventRecorder(new RepositoryListenerStore(app),
-                    (String key, ThreadEvent event) -> SendLaterEngine.onInboundEvent(app, key, event), gate);
+                    (String key, ThreadEvent event) -> SendLaterEngine.onInboundEvent(app, key, event), gate,
+                    new AndroidContactNames(app));
             recorder.onNotification(fields, now);
             if (now - lastPurgeMs > PURGE_INTERVAL_MS) purge(app, now);
         } catch (RuntimeException e) {

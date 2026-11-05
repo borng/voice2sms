@@ -15,7 +15,9 @@ import java.util.Set;
  * conversation costs no database work.
  *
  * <p>Matching mirrors {@link ListenerEventRecorder}: by E.164 when the notification carries a
- * number, otherwise by the {@link ConversationRef} name key of its conversation title. The snapshot
+ * number, otherwise by the {@link ConversationRef} name key of its conversation title (against
+ * the display name and, when a {@link ContactNames} resolver is given, the contact names saved for
+ * the number: LIVE-F12). The snapshot
  * is immutable; the process-wide copy is replaced off the main thread on listener connect and on
  * ACTION_STATE_CHANGED / ACTION_SCHEDULED. A null current copy means "unknown" and the recorder
  * falls back to the store (fail toward detection). Pure JVM; never log its contents.
@@ -34,6 +36,16 @@ public final class LiveConversationKeys {
 
     /** Snapshot of the non-terminal messages in {@code live}; a null list gives an empty gate. */
     public static LiveConversationKeys of(List<ScheduledMessage> live) {
+        return of(live, null);
+    }
+
+    /**
+     * As {@link #of(List)}, plus the name keys of the device-contact names saved for each live
+     * message's E.164 (LIVE-F12), so a notification titled with a contact's name passes the gate
+     * for a message scheduled with only a number. {@code contactNames} null or failing = no extra
+     * keys. Resolves each distinct E.164 once; call off the main thread.
+     */
+    public static LiveConversationKeys of(List<ScheduledMessage> live, ContactNames contactNames) {
         Set<String> e164s = new HashSet<>();
         Set<String> names = new HashSet<>();
         if (live != null) {
@@ -42,6 +54,14 @@ public final class LiveConversationKeys {
                 if (m.getRecipientE164() != null) e164s.add(m.getRecipientE164());
                 String nk = nameKey(m.getRecipientDisplayName());
                 if (nk != null) names.add(nk);
+            }
+            if (contactNames != null) {
+                for (String e164 : e164s) {
+                    for (String name : ContactNames.safeNamesFor(contactNames, e164)) {
+                        String ck = nameKey(name);
+                        if (ck != null) names.add(ck);
+                    }
+                }
             }
         }
         return new LiveConversationKeys(e164s, names);
@@ -53,9 +73,14 @@ public final class LiveConversationKeys {
      * Call off the main thread, on the listener's worker so it orders with recording.
      */
     public static LiveConversationKeys rebuild(ListenerEventStore store) {
+        return rebuild(store, null);
+    }
+
+    /** As {@link #rebuild(ListenerEventStore)}, adding contact-name keys through {@code contactNames}. */
+    public static LiveConversationKeys rebuild(ListenerEventStore store, ContactNames contactNames) {
         LiveConversationKeys next;
         try {
-            next = of(store.liveMessages());
+            next = of(store.liveMessages(), contactNames);
         } catch (RuntimeException e) {
             next = null;
         }
