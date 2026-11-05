@@ -46,6 +46,11 @@ public final class ScheduledCompose {
 
     /** Bound on injections per job (the first one plus re-injections); COMPOSE_TIMEOUT_MS bounds time. */
     public static final int MAX_INJECTIONS = 6;
+    /**
+     * LIVE-F11: thread-URL loads per job: the one of beginCompose plus the single reload, shared by
+     * {@link #onWrongPage} and {@link #onNoThread}.
+     */
+    public static final int MAX_THREAD_LOADS = 2;
 
     /** inject.js polls a WAIT answer this often. */
     public static final long CLICK_POLL_MS = 500L;
@@ -100,7 +105,13 @@ public final class ScheduledCompose {
         /** Not yet rendered: poll again. */
         WAIT,
         /** No conversation for the number (GV went elsewhere, or nothing after the settle time). */
-        FALLBACK
+        FALLBACK,
+        /**
+         * LIVE-F11 ({@link #pageState}): the page is not the job's thread (the messages list, or GV
+         * rewrote the URL while booting). Not a fallback: Java loads the job's thread again
+         * ({@link #onWrongPage}) or decides the fallback once the thread-load budget is spent.
+         */
+        WRONG_PAGE
     }
 
     /** live-presend-failclosed: what to do when the job's thread page settled without the conversation. */
@@ -178,6 +189,42 @@ public final class ScheduledCompose {
         if (pageE164 == null || jobE164 == null || !pageE164.equals(jobE164)) return ThreadPage.FALLBACK;
         if (messageListShown) return ThreadPage.THREAD;
         return waitedMs >= settleMs ? ThreadPage.FALLBACK : ThreadPage.WAIT;
+    }
+
+    /**
+     * LIVE-F11 thread-vs-fallback decision of the scheduled script (inject.js threadPageState
+     * mirrors it): as {@link #threadPageState}, except that a page which is not the job's 1:1
+     * thread is {@link ThreadPage#WRONG_PAGE} (the script waits and asks Java to load the job's
+     * thread again, {@link #onWrongPage}) instead of an immediate FALLBACK. FALLBACK is left for
+     * the job's own thread page settling without the conversation.
+     */
+    public static ThreadPage pageState(String pageE164, String jobE164, boolean messageListShown,
+                                       long waitedMs, long settleMs) {
+        if (pageE164 == null || jobE164 == null || !pageE164.equals(jobE164)) return ThreadPage.WRONG_PAGE;
+        return threadPageState(pageE164, jobE164, messageListShown, waitedMs, settleMs);
+    }
+
+    /**
+     * LIVE-F11: the page of the running job is not its thread (a GV load other than the job's thread
+     * URL finished, an auth MergeSession continuation, or inject.js saw another location). The
+     * job's thread URL is loaded again (RELOAD) while the single reload budget is unspent and the
+     * injection bound is not reached: at most {@link #MAX_THREAD_LOADS} thread loads per job,
+     * shared with {@link #onNoThread}. After that FALLBACK (the fail-closed pre-send rule then
+     * decides the new-conversation flow). IGNORE once a click was granted or the gate is closed.
+     */
+    public synchronized NoThread onWrongPage() {
+        if (closed || clickGranted) return NoThread.IGNORE;
+        if (!threadReloaded && injections < MAX_INJECTIONS) {
+            threadReloaded = true;
+            return NoThread.RELOAD;
+        }
+        return NoThread.FALLBACK;
+    }
+
+    /** LIVE-F11: as {@link #onWrongPage()}, reported by inject.js for {@code t} (stale token: IGNORE). */
+    public synchronized NoThread onWrongPage(String t) {
+        if (closed || clickGranted || t == null || !t.equals(token)) return NoThread.IGNORE;
+        return onWrongPage();
     }
 
     /**

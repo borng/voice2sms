@@ -160,6 +160,8 @@ public final class ScheduledSendController {
     static final String DETAIL_DRAFT_PRESENT = "draft_present";
     /** Extra compose time after the one reload of the thread page (a second settle plus the load). */
     static final long RELOAD_COMPOSE_GRACE_MS = ScheduledCompose.THREAD_SETTLE_MS + 5_000L;
+    // Split so no "//" sits inside a literal (the source-scanning tests strip // to end of line).
+    private static final String GV_PAGE_PREFIX = "https:/" + "/voice.google.com/";
     /**
      * Upper bound on staying covered after the last outcome (12 s, kept from send-hardening; OD27
      * accepts it). The activity normally finishes on the engine's state broadcast, well before
@@ -653,6 +655,75 @@ public final class ScheduledSendController {
         if (!host.isAlive() || !host.beginCompose(job.e164, job.message.getText())) {
             report(job, failureOutcome(job), "activity_gone");
         }
+    }
+
+    /**
+     * LIVE-F11, main thread (onPageFinished, before the scheduled injection): a GV main-frame load
+     * finished on {@code url} that is not the running job's thread (the messages list, or GV
+     * rewrote the thread URL while booting) while the job still composes in its thread. True when
+     * the job's thread URL is being loaded again instead (the activity injects nothing now); false
+     * when the activity injects here as before: the page is the job's thread, no thread-mode job is
+     * composing, or the thread-load budget is spent ({@link ScheduledCompose#onWrongPage}), in which
+     * case this page gets the new-conversation flow (the fail-closed pre-send rule decides).
+     */
+    public boolean reloadsThreadInsteadOf(String url) {
+        Job job = current;
+        if (job == null || job.e164 == null || job.compose == null || job.gvShowedNoThread) return false;
+        if (url == null || !url.startsWith(GV_PAGE_PREFIX) || ThreadUrl.isThreadOf(url, job.e164)) return false;
+        ScheduledCompose.NoThread next = job.compose.onWrongPage();
+        if (next == ScheduledCompose.NoThread.RELOAD) {
+            reloadThread(job);
+            return true;
+        }
+        if (next == ScheduledCompose.NoThread.FALLBACK) fallBackToNewConversation(job, false);
+        return false;
+    }
+
+    /**
+     * LIVE-F11, main thread: inject.js (for {@code token}) found the page is not the job's thread.
+     * Loads the job's thread again within the shared budget; once it is spent, the messages list is
+     * loaded for the new-conversation flow.
+     */
+    public void onWrongPage(String token) {
+        Job job = current;
+        if (job == null || job.e164 == null || job.compose == null || job.gvShowedNoThread) return;
+        ScheduledCompose.NoThread next = job.compose.onWrongPage(token);
+        if (next == ScheduledCompose.NoThread.RELOAD) reloadThread(job);
+        else if (next == ScheduledCompose.NoThread.FALLBACK) fallBackToNewConversation(job, true);
+    }
+
+    /**
+     * LIVE-F11, main thread: the activity would load GV for the running scheduled job (the auth
+     * MergeSession continuation; onCreate while a job is claimed). Never the messages list for a
+     * job in its thread: before the row is read beginCompose makes the one load itself (nothing
+     * here); in thread mode the job's thread is loaded again within the shared budget; after the
+     * fallback the messages list continues the new-conversation flow.
+     */
+    public void loadForJob() {
+        Job job = current;
+        if (job == null || job.e164 == null || job.compose == null) return;
+        if (job.gvShowedNoThread) {
+            if (!host.isAlive() || !host.loadMessagesList()) report(job, failureOutcome(job), "activity_gone");
+            return;
+        }
+        ScheduledCompose.NoThread next = job.compose.onWrongPage();
+        if (next == ScheduledCompose.NoThread.RELOAD) reloadThread(job);
+        else if (next == ScheduledCompose.NoThread.FALLBACK) fallBackToNewConversation(job, true);
+    }
+
+    /**
+     * LIVE-F11: from now on the job composes with the new-conversation flow (as onNoThread's
+     * fallback): the pre-send reads start over with their full time; {@code loadList} loads the
+     * messages list (else the current GV page is injected by the caller).
+     */
+    private void fallBackToNewConversation(Job job, boolean loadList) {
+        job.gvShowedNoThread = true;
+        job.presend = job.presend == null ? null : new PreSendRead();
+        if (job.presend != null && job.compose.isPreSendPending()) {
+            job.presendDeadlineMs = System.currentTimeMillis() + PRESEND_TIMEOUT_MS;
+        }
+        if (!loadList) return;
+        if (!host.isAlive() || !host.loadMessagesList()) report(job, failureOutcome(job), "activity_gone");
     }
 
     /**

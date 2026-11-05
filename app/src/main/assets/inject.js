@@ -760,9 +760,10 @@ function v2sScheduledClear(text) {
  * shows that conversation (gv-message-list, and the location is the job's 1:1 thread) the thread's
  * own box is filled, unless it already holds text that is not our body (OD34: the user's draft is
  * never overwritten; V2SBridge.onScheduledDraftPresent and the job stops unsent); when GV goes
- * elsewhere or shows no conversation within settleMs, Java is told (V2SBridge.onScheduledNoThread),
- * which reloads the thread page once (full load, one more settle) and only then loads the
- * messages list for mode 'new'.
+ * elsewhere (LIVE-F11) Java is asked to load the job's thread again (V2SBridge.onScheduledWrongPage,
+ * bounded) while the script waits; when the thread shows no conversation within settleMs, Java is
+ * told (V2SBridge.onScheduledNoThread), which reloads the thread page once (full load, one more
+ * settle) and only then loads the messages list for mode 'new'.
  * mode 'new': runs the unchanged voice2sms() flow WITHOUT its auto-send (new conversation).
  *
  * Either way it reports "typed" only once the box really holds our text
@@ -805,10 +806,16 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
         return _v2sScheduledHolds(el, body);
     }
 
-    /** Mirrors ScheduledCompose.threadPageState: 'thread' | 'wait' | 'fallback'. */
+    var wrongPageReported = false;
+
+    /**
+     * Mirrors ScheduledCompose.pageState: 'thread' | 'wait' | 'wrong' | 'fallback'. LIVE-F11: a
+     * page that is not the job's thread (the messages list, or GV rewrote the URL while booting)
+     * is 'wrong', never 'fallback': the script waits and Java loads the job's thread again.
+     */
     function threadPageState() {
         var pageE164 = _v2sSlThreadE164();
-        if (!pageE164 || pageE164 !== jobE164) return 'fallback';
+        if (!pageE164 || pageE164 !== jobE164) return 'wrong';
         if (document.querySelector('gv-message-list')) return 'thread';
         return (Date.now() - startedAt) >= SETTLE_MS ? 'fallback' : 'wait';
     }
@@ -816,6 +823,15 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     function fillThread(polls) {
         if (cancelled() || polls <= 0) return;
         var state = threadPageState();
+        if (state === 'wrong') {
+            // LIVE-F11: once per run; Java reloads the thread (bounded) or decides the fallback.
+            if (!wrongPageReported) {
+                wrongPageReported = true;
+                console.log('[Voice2SMS] Scheduled send: not the conversation page, asking for it again');
+                if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledWrongPage) V2SBridge.onScheduledWrongPage(token);
+            }
+            state = 'wait';
+        }
         if (state === 'fallback') {
             console.log('[Voice2SMS] Scheduled send: no conversation shown, new-conversation flow next');
             if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledNoThread) V2SBridge.onScheduledNoThread(token);
