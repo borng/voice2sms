@@ -17,6 +17,9 @@ import android.view.WindowManager;
 import androidx.core.content.ContextCompat;
 
 import com.voice2sms.sendlater.SendLaterIntents;
+import com.voice2sms.sendlater.domain.Classification;
+import com.voice2sms.sendlater.domain.OutboundPolicy;
+import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.domain.ThreadEvent;
@@ -29,6 +32,8 @@ import com.voice2sms.sendlater.web.ThreadReadCallback;
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -73,6 +78,16 @@ import java.util.concurrent.Executors;
  *       body is in the box (LIVE-F8), and Stop stays on the cover until then (LIVE-F7); Send is
  *       tapped only when {@link #mayClick} grants it, at most once per job, never after Stop, a
  *       failure or the outcome.</li>
+ *   <li>live-presend (D30, LIVE-F3; {@link PreSendRead}, {@link PreSendCheck}): unless the
+ *       engine dispatched with {@link PreSendCheck#off()} (the user's own tap), the open thread is
+ *       read from the first injection on, and Send is granted only once two agreeing reads
+ *       {@link PreSendRead#MIN_GAP_MS} apart show nothing that stops the send. The compose script
+ *       types first and asks for the tap after its delay; the gate refuses it while the check is
+ *       pending, so the order is "compose without sending, read, then send". A newer genuine
+ *       reply (echoes of our own text excluded) with holdIfReplied, the user's similar text, an
+ *       outbound under HOLD_AND_ASK, or an unreadable thread end the job with CANNOT_SHOW and the
+ *       verdict's detail; the engine holds, self-preempts or reminds. Nothing is sent then, and
+ *       never "may have already sent".</li>
  * </ul>
  */
 public final class ScheduledSendController {
@@ -114,9 +129,17 @@ public final class ScheduledSendController {
     static final long READ_INTERVAL_MS = 1_000L;
     /**
      * Minimum inject.js auto-send delay on the scheduled path: leaves the polls time to read the
-     * opened thread before Send is tapped (a late baseline only ever errs to unverified).
+     * opened thread before Send is tapped (a late baseline only ever errs to unverified) and the
+     * pre-send check (D30) time for its two agreeing reads before the script asks to tap Send.
      */
-    static final long MIN_SEND_DELAY_MS = 3_000L;
+    static final long MIN_SEND_DELAY_MS = 4_000L;
+    /**
+     * D30: the pre-send check must have two agreeing reads within this from the first injection;
+     * otherwise the thread is unreadable (CHECK: reminder; REQUIRED: HELD(UNVERIFIED)).
+     */
+    static final long PRESEND_TIMEOUT_MS = 25_000L;
+    /** D30 detail when the check cleared only after the script's Send request was refused. */
+    static final String DETAIL_PRESEND_SLOW = "presend_slow";
     /**
      * Upper bound on staying covered after the last outcome (12 s, kept from send-hardening; OD27
      * accepts it). The activity normally finishes on the engine's state broadcast, well before
@@ -181,6 +204,13 @@ public final class ScheduledSendController {
         long deadlineMs;
         /** Hard end, {@link LockCoverPolicy#HARD_TIMEOUT_MS} after the claim (every job, OD26). */
         final long hardDeadlineMs;
+        /** The IN_FLIGHT row as loaded (text, watermarks, policy) for the pre-send check. */
+        ScheduledMessage message;
+        /** D30: how strict the pre-send check is ({@link PreSendCheck#off()}: none). */
+        PreSendCheck check = PreSendCheck.off();
+        /** D30: the agreement state of the pre-send reads; null until they start. */
+        PreSendRead presend;
+        long presendDeadlineMs;
 
         Job(long id, long checkTimeMs, long claimedAtMs) {
             this.id = id;
@@ -190,6 +220,8 @@ public final class ScheduledSendController {
     }
 
     private static volatile WeakReference<ScheduledSendController> live = new WeakReference<>(null);
+    /** D30: the pre-send check the engine asked for, per message id, until its job loads. */
+    private static final Map<Long, PreSendCheck> preSendChecks = new ConcurrentHashMap<>();
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
 
     private final Activity activity;
@@ -274,6 +306,25 @@ public final class ScheduledSendController {
         WebViewScheduledSender.cancelLaunchNotification(app, id);
         onClaimed();
         enqueue(new Job(id, checkTimeMs, System.currentTimeMillis()));
+    }
+
+    /**
+     * D30: records the pre-send check for the launch of {@code id} ({@link WebViewScheduledSender}
+     * calls it before the launch). Any thread.
+     */
+    static void notePreSendCheck(long id, PreSendCheck check) {
+        preSendChecks.put(id, check != null ? check : defaultPreSendCheck());
+    }
+
+    /** The check for {@code id}'s job, removed; a job with none recorded is checked strictly. */
+    static PreSendCheck takePreSendCheck(long id) {
+        PreSendCheck c = preSendChecks.remove(id);
+        return c != null ? c : defaultPreSendCheck();
+    }
+
+    /** Fail safe when nothing was recorded (never expected): the read is the evidence. */
+    static PreSendCheck defaultPreSendCheck() {
+        return PreSendCheck.required(OutboundPolicy.STILL_SEND);
     }
 
     // ================================================================== activity entry points
@@ -443,6 +494,7 @@ public final class ScheduledSendController {
         job.sendDelayMs = Math.max(0L, autoSendDelayMs);
         job.injected = false;
         updateStop();
+        startPreSendCheck(job);
         return token;
     }
 
@@ -597,9 +649,13 @@ public final class ScheduledSendController {
         }
         job.e164 = m.getRecipientE164();
         job.bodyHash = ThreadEvent.hashOf(m.getText());
+        job.message = m;
+        job.check = takePreSendCheck(job.id);
         targetE164 = job.e164;
         cover.setRecipient(job.e164);
         job.compose = new ScheduledCompose(job.id);
+        // D30: no Send tap until the thread check clears it (none for the user's own tap).
+        if (!job.check.isOff()) job.compose.requirePreSendCheck();
         liveCompose = job.compose;
         updateStop();
         if (!host.isAlive() || !host.beginCompose(job.e164, m.getText())) {
@@ -613,6 +669,70 @@ public final class ScheduledSendController {
             }
         }, COMPOSE_TIMEOUT_MS);
     }
+
+    // ================================================================== pre-send check (D30)
+
+    /** Starts the pre-send reads once per job, at its first injection. */
+    private void startPreSendCheck(final Job job) {
+        if (job.presend != null || job.compose == null || !job.compose.isPreSendPending()) return;
+        job.presend = new PreSendRead();
+        job.presendDeadlineMs = System.currentTimeMillis() + PRESEND_TIMEOUT_MS;
+        main.postDelayed(() -> preSendReadOnce(job), BASELINE_POLL_MS);
+    }
+
+    private void preSendReadOnce(final Job job) {
+        if (current != job || job.compose == null || !job.compose.isPreSendPending()) return;
+        if (!host.isAlive()) {
+            report(job, failureOutcome(job), "activity_gone");
+            return;
+        }
+        host.readThread(job.e164, READ_LIMIT, bubbles -> onPreSendRead(job, bubbles));
+    }
+
+    /** One pre-send read: two agreeing reads decide; none by the deadline is "unreadable". */
+    private void onPreSendRead(final Job job, List<ThreadBubble> bubbles) {
+        if (current != job || job.compose == null || !job.compose.isPreSendPending()) return;
+        long now = System.currentTimeMillis();
+        List<ThreadBubble> agreed = job.presend.onRead(bubbles, now);
+        if (agreed != null) {
+            Classification c = PreSendRead.classify(job.message, agreed, READ_LIMIT, now);
+            onPreSendVerdict(job, job.check.decide(job.message, c), now);
+            return;
+        }
+        if (now >= job.presendDeadlineMs) {
+            onPreSendVerdict(job, job.check.decide(job.message, Classification.UNVERIFIED), now);
+            return;
+        }
+        main.postDelayed(() -> preSendReadOnce(job), BASELINE_POLL_MS);
+    }
+
+    /**
+     * SEND opens the Send gate (after a last lateness check, I2); every other verdict ends the
+     * job unsent with the verdict's detail, so the engine holds, self-preempts or reminds.
+     */
+    private void onPreSendVerdict(Job job, PreSendCheck.Verdict verdict, long now) {
+        if (verdict == PreSendCheck.Verdict.SEND) {
+            if (LaunchRecheck.isLate(job.message, now, LaunchRecheck.QUEUE_SLACK_MS)) {
+                stopUnsent(job, LaunchRecheck.DETAIL_LATE);
+                return;
+            }
+            // The script asked before the check cleared and will not ask again: nothing was sent.
+            if (!job.compose.clearPreSend()) stopUnsent(job, DETAIL_PRESEND_SLOW);
+            return;
+        }
+        stopUnsent(job, verdict.detail());
+    }
+
+    /**
+     * Ends the job as CANNOT_SHOW: its Send gate shuts first and no click was ever granted (the
+     * gate grants none while the check is pending), so nothing was sent, whatever was typed.
+     */
+    private void stopUnsent(Job job, String detail) {
+        if (!job.compose.close()) return;   // a click was granted: the job goes on and verifies
+        report(job, SendOutcome.CANNOT_SHOW, detail);
+    }
+
+    // ================================================================== verify polls
 
     /** One poll: read the thread, THEN probe the composer (a pending probe dates the read). */
     private void readOnce(final Job job) {

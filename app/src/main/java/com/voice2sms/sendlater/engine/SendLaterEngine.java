@@ -12,7 +12,9 @@ import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.Decision;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LadderEvaluator;
+import com.voice2sms.sendlater.domain.OutboundPolicy;
 import com.voice2sms.sendlater.domain.LatenessBudget;
+import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.RemindReason;
 import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
@@ -294,19 +296,41 @@ public final class SendLaterEngine {
     private static void evaluateAndApply(EngineDeps d, Context context, ScheduledMessage m) {
         long now = d.conditions.nowMs();
         List<ThreadEvent> events = readThread(d, m);
+        boolean listener = d.conditions.listenerEnabled();
+        OutboundPolicy policy = d.conditions.outboundPolicy();
+        PreSendCheck check = PreSendCheck.check(policy);
+        ScheduledSender s = sender;
+        // D30 / OD22(5): no listener evidence for this number, but the sender reads the thread
+        // right before it sends: that read is the evidence (REQUIRED), so the ladder runs as if
+        // nothing had changed instead of holding UNVERIFIED. Listener evidence still applies first.
+        if (s != null && PreSendCheck.checkReplacesMissingEvidence(
+                ThreadEventClassifier.classify(m, events, listener, m.getWatermark(), m.getSelfPreemptionBaseline()),
+                m.getRung(), senderChecksThread(s))) {
+            events = Collections.emptyList();
+            listener = true;
+            check = PreSendCheck.required(policy);
+        }
         // OD22(1): replies from the (possibly snoozed) watermark, self-preemption from the original.
         Decision decision = LadderEvaluator.evaluate(m, m.getRung(), events, now, d.conditions.session(),
-                d.conditions.network(), d.conditions.listenerEnabled(), d.conditions.outboundPolicy(),
-                m.getWatermark(), m.getSelfPreemptionBaseline());
-        apply(d, context, m, decision, now);
+                d.conditions.network(), listener, policy, m.getWatermark(), m.getSelfPreemptionBaseline());
+        apply(d, context, m, decision, now, check);
     }
 
-    private static void apply(EngineDeps d, Context context, ScheduledMessage m, Decision decision, long now) {
+    private static boolean senderChecksThread(ScheduledSender s) {
+        try {
+            return s.checksThreadBeforeSend();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private static void apply(EngineDeps d, Context context, ScheduledMessage m, Decision decision, long now,
+                              PreSendCheck check) {
         long id = m.getId();
         switch (decision.getKind()) {
             case SEND:
                 d.networkWaiter.cancel(id);
-                startSend(d, context, m, now);
+                startSend(d, context, m, now, check);
                 break;
             case HOLD:
                 d.networkWaiter.cancel(id);
@@ -346,7 +370,12 @@ public final class SendLaterEngine {
 
     // ================================================================== effects
 
-    private static void startSend(EngineDeps d, Context context, ScheduledMessage m, long checkTime) {
+    /**
+     * {@code check}: the pre-send thread check the sender makes before it taps Send (D30);
+     * {@link PreSendCheck#off()} for the user's own tap.
+     */
+    private static void startSend(EngineDeps d, Context context, ScheduledMessage m, long checkTime,
+                                  PreSendCheck check) {
         ScheduledSender s = sender;
         long id = m.getId();
         if (s == null) {
@@ -366,7 +395,7 @@ public final class SendLaterEngine {
         if (lastCallShown) d.notifier.sending(inFlight);
         boolean started;
         try {
-            started = s.start(context, inFlight);
+            started = s.start(context, inFlight, check != null ? check : PreSendCheck.off());
         } catch (RuntimeException e) {
             Log.e(TAG, "sender.start threw for id " + id + ": " + e.getClass().getSimpleName());
             started = false;
@@ -679,7 +708,8 @@ public final class SendLaterEngine {
             selfPreempt(d, m);
         } else if (decision.getKind() == Decision.Kind.SEND) {
             d.notifier.dismiss(id);
-            startSend(d, context, m, now);
+            // R28: the user's tap skips the thread check, so no pre-send check either (D30).
+            startSend(d, context, m, now, PreSendCheck.off());
         }
         return TapResult.DONE;
     }
@@ -874,9 +904,21 @@ public final class SendLaterEngine {
                 return;
             }
             case CANNOT_SHOW: {
+                checkTimes.remove(id);
+                // D30: the sender's pre-send check stopped the send (nothing was sent: the Send
+                // tap was never granted). A reply holds with the normal hold notification, never
+                // "may have already sent"; the user's similar text self-preempts.
+                PreSendCheck.Verdict presend = PreSendCheck.Verdict.fromDetail(detail);
+                if (presend != null && presend.holdReason() != null) {
+                    hold(d, m, presend.holdReason(), now, false);
+                    return;
+                }
+                if (presend == PreSendCheck.Verdict.SELF_PREEMPTED) {
+                    selfPreempt(d, m);
+                    return;
+                }
                 // Nothing was typed: back to SCHEDULED with a reminder (the store counts the
                 // release in attemptCount; it is recorded as a free release).
-                checkTimes.remove(id);
                 RemindCause cause = RemindCause.fromDetail(detail);
                 if (d.store.releaseForRetry(id, "cannot_show")) {
                     d.marks.addFreeRelease(id);

@@ -22,6 +22,7 @@ import androidx.core.app.NotificationManagerCompat;
 
 import com.voice2sms.GVoiceWebViewActivity;
 import com.voice2sms.GeminiSmsInterceptService;
+import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.domain.ThreadEvent;
@@ -45,7 +46,8 @@ import java.util.concurrent.Executors;
  * (CANNOT_SHOW, then false: "Unlock to send" while locked (D15), else "Couldn't send
  * automatically"). LIVE-F4: a send started by the user's Send now / Send anyway tap while
  * voice2sms's tap activity is showing ({@link UserTapGrant}) is DIRECT on an unlocked screen,
- * accessibility service or not. A corrupt row (no recipient or text) is CANNOT_SHOW with the generic reminder.
+ * accessibility service or not. D30: the engine's {@link PreSendCheck} travels to the job
+ * ({@link ScheduledSendController#notePreSendCheck}); the job reads the thread before Send. A corrupt row (no recipient or text) is CANNOT_SHOW with the generic reminder.
  * At the slot's time the row is reloaded and a launch more than {@link LaunchRecheck#QUEUE_SLACK_MS}
  * past its lateness deadline is CANNOT_SHOW {@code late} (F4, I2, OD30). Every CANNOT_SHOW detail goes through
  * {@link SendDetails#forEngine}.
@@ -70,6 +72,16 @@ public final class WebViewScheduledSender implements ScheduledSender {
     /** Row reloads before a launch (Room is never read on the main thread). */
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
 
+    /** D30: the controller reads the thread before it taps Send ({@link PreSendRead}). */
+    @Override
+    public boolean checksThreadBeforeSend() {
+        return true;
+    }
+
+    /**
+     * Without {@link #start(Context, ScheduledMessage, PreSendCheck)} first the job uses the strict
+     * default ({@link ScheduledSendController#defaultPreSendCheck}).
+     */
     @Override
     public boolean start(Context context, ScheduledMessage message) {
         if (context == null || message == null) return false;
@@ -106,6 +118,17 @@ public final class WebViewScheduledSender implements ScheduledSender {
         MAIN.postDelayed(() -> recheckThen(app, id, token, () -> launch(app, id, token, checkTime)), delayMs);
         watchClaim(app, id, token, delayMs);
         return true;
+    }
+
+    /**
+     * D30: records the engine's pre-send check for this message's job (off for the user's own
+     * tap), then starts as {@link #start(Context, ScheduledMessage)}. The job reads the thread
+     * before it taps Send.
+     */
+    @Override
+    public boolean start(Context context, ScheduledMessage message, PreSendCheck check) {
+        if (message != null) ScheduledSendController.notePreSendCheck(message.getId(), check);
+        return start(context, message);
     }
 
     /**

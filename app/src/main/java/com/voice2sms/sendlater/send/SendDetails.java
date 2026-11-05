@@ -1,5 +1,6 @@
 package com.voice2sms.sendlater.send;
 
+import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.engine.RemindCause;
 
@@ -19,6 +20,9 @@ import com.voice2sms.sendlater.engine.RemindCause;
  *       LATE wording;</li>
  *   <li>{@code stopped} (the user tapped Stop on the cover before typing, OD31 PQ3):
  *       {@code stopped}, "You stopped the send";</li>
+ *   <li>the pre-send check's hold and self-preemption details (D30,
+ *       {@link PreSendCheck.Verdict#detail()}): unchanged, the engine holds or self-preempts;
+ *       its {@code presend_unreadable} (CHECK mode, thread unreadable): {@code could_not_send};</li>
  *   <li>null: null, the LOCKED default;</li>
  *   <li>everything else ({@code compose_timeout}: GV was only slow to open the thread, not a
  *       sign-in problem (OD27); {@code timeout}, {@code inject_failed}, {@code paused},
@@ -44,6 +48,10 @@ public final class SendDetails {
     /** CANNOT_SHOW cause -> one of the engine's detail strings ({@link RemindCause}), or null. */
     static String cannotShowDetail(String cause) {
         if (cause == null) return null;
+        PreSendCheck.Verdict presend = PreSendCheck.Verdict.fromDetail(cause);
+        if (presend != null && presend != PreSendCheck.Verdict.CANNOT_CHECK && presend != PreSendCheck.Verdict.SEND) {
+            return presend.detail();
+        }
         switch (cause) {
             case RemindCause.DETAIL_NO_SESSION:
             case "auth":

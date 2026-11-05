@@ -24,6 +24,10 @@ import java.util.UUID;
  *       {@link #grantClick}, which says yes at most once per job, only for the current token and
  *       only while the gate is open. {@link #close} (Stop, any failure, the outcome) shuts it, so
  *       a job reported CANNOT_SHOW can no longer send, and re-injection can never send twice.</li>
+ *   <li><b>Pre-send check (D30, LIVE-F3).</b> When the job must check the thread first
+ *       ({@link #requirePreSendCheck}), no click is granted until {@link #clearPreSend}. A click
+ *       asked for before that is refused and remembered ({@link #wasClickRefusedForCheck}): the
+ *       script does not ask again, so such a job can no longer send.</li>
  * </ul>
  */
 public final class ScheduledCompose {
@@ -39,6 +43,9 @@ public final class ScheduledCompose {
     private boolean typed;
     private boolean clickGranted;
     private boolean closed;
+    private boolean preSendRequired;
+    private boolean preSendCleared;
+    private boolean clickRefusedForCheck;
 
     public ScheduledCompose(long jobId) {
         this.jobId = jobId;
@@ -90,6 +97,11 @@ public final class ScheduledCompose {
      */
     public synchronized boolean grantClick(String t) {
         if (closed || clickGranted || t == null || !t.equals(token)) return false;
+        if (preSendRequired && !preSendCleared) {
+            // D30: the thread check has not cleared the send yet; inject.js gives up on a refusal.
+            clickRefusedForCheck = true;
+            return false;
+        }
         clickGranted = true;
         typed = true;
         return true;
@@ -101,10 +113,39 @@ public final class ScheduledCompose {
         return !clickGranted;
     }
 
-    /** Shuts the gate and returns the outcome of a failure at this moment. */
+    /**
+     * Shuts the gate and returns the outcome of a failure at this moment. D30: CANNOT_SHOW while
+     * the pre-send check has not cleared the send (no click can have been granted).
+     */
     public synchronized SendOutcome closeForFailure() {
         closed = true;
+        // D30: while the pre-send check is pending no click can have been granted: nothing sent.
+        if (preSendRequired && !preSendCleared && !clickGranted) return SendOutcome.CANNOT_SHOW;
         return outcomeOnFailure(typed, clickGranted);
+    }
+
+    /** D30: no click may be granted until {@link #clearPreSend}. Call before the first injection. */
+    public synchronized void requirePreSendCheck() {
+        preSendRequired = true;
+    }
+
+    /**
+     * D30: the pre-send check found nothing that stops the send. True when a click can still be
+     * granted (open gate, no click refused while the check was pending).
+     */
+    public synchronized boolean clearPreSend() {
+        preSendCleared = true;
+        return !closed && !clickRefusedForCheck;
+    }
+
+    /** A pre-send check is required and has not cleared the send. */
+    public synchronized boolean isPreSendPending() {
+        return preSendRequired && !preSendCleared;
+    }
+
+    /** The script asked to tap Send while the check was pending (and was refused). */
+    public synchronized boolean wasClickRefusedForCheck() {
+        return clickRefusedForCheck;
     }
 
     public synchronized boolean isTyped() {
