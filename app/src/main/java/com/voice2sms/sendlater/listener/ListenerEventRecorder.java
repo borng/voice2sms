@@ -6,6 +6,7 @@ import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 import com.voice2sms.sendlater.store.ThreadEventEntity;
 
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,10 @@ import java.util.Map;
  *   <li>Stored fields are what R32 needs: direction, kind, time and textHash. The text itself is not
  *       kept (inbound events need no text to classify).</li>
  *   <li>UNKNOWN kinds (T4) are dropped. A repost of an event already stored is not stored again.</li>
+ *   <li>LIVE-F12: a number-less event also matches a live message whose E.164 has a saved contact
+ *       name with the event title's name key ({@link ContactNames}, resolved at most once per
+ *       distinct E.164 per event). A shared contact name may match several messages; that only
+ *       holds them (safe direction). Such a match is not number evidence: no noteNumberMatch.</li>
  *   <li>A match by number is noted ({@link ListenerEventStore#noteNumberMatch}) so the thread
  *       source can vouch for a message that has no display name (OD22(5)).</li>
  *   <li>With a {@link LiveConversationKeys} gate, an event no live key matches returns before any
@@ -34,6 +39,7 @@ public final class ListenerEventRecorder {
     private final ListenerEventStore store;
     private final InboundSink sink;
     private final LiveConversationKeys gate;
+    private final ContactNames contactNames;
 
     /** Ungated: every parsed event asks the store for live messages. */
     public ListenerEventRecorder(ListenerEventStore store, InboundSink sink) {
@@ -42,9 +48,19 @@ public final class ListenerEventRecorder {
 
     /** {@code gate} null = ungated; otherwise a miss makes no store call (R40). */
     public ListenerEventRecorder(ListenerEventStore store, InboundSink sink, LiveConversationKeys gate) {
+        this(store, sink, gate, null);
+    }
+
+    /**
+     * {@code contactNames} (null = none) lets a number-less event match a live message through the
+     * contact names saved for its E.164 (LIVE-F12). Resolved only after the gate passed.
+     */
+    public ListenerEventRecorder(ListenerEventStore store, InboundSink sink, LiveConversationKeys gate,
+                                 ContactNames contactNames) {
         this.store = store;
         this.sink = sink;
         this.gate = gate;
+        this.contactNames = contactNames;
     }
 
     /** Parses and, when the policy allows, stores the event and fires the early hold. True = stored. */
@@ -88,6 +104,7 @@ public final class ListenerEventRecorder {
         if (live == null) return out;
         String number = p.getNumber();
         String nameKey = nameKey(p.getConversationTitle());
+        Map<String, Boolean> contactMatch = new HashMap<>();
         for (ScheduledMessage m : live) {
             if (m == null || m.getStatus() == null || m.getStatus().isTerminal()) continue;
             boolean match;
@@ -95,13 +112,31 @@ public final class ListenerEventRecorder {
                 match = number.equals(m.getRecipientE164());
             } else {
                 String mk = nameKey(m.getRecipientDisplayName());
-                match = nameKey != null && nameKey.equals(mk);
+                match = nameKey != null && (nameKey.equals(mk)
+                        || contactNameMatches(m.getRecipientE164(), nameKey, contactMatch));
             }
             if (!match) continue;
             ConversationRef ref = ConversationRef.of(m);
             if (!out.containsKey(ref.key())) out.put(ref.key(), ref);
         }
         return out;
+    }
+
+    /** Whether a contact name saved for {@code e164} has {@code nameKey}; cached per E.164. */
+    private boolean contactNameMatches(String e164, String nameKey, Map<String, Boolean> cache) {
+        if (contactNames == null || e164 == null) return false;
+        Boolean hit = cache.get(e164);
+        if (hit == null) {
+            hit = false;
+            for (String name : ContactNames.safeNamesFor(contactNames, e164)) {
+                if (nameKey.equals(nameKey(name))) {
+                    hit = true;
+                    break;
+                }
+            }
+            cache.put(e164, hit);
+        }
+        return hit;
     }
 
     private boolean alreadyStored(String key, ThreadEvent event) {
