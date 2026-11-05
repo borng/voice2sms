@@ -392,6 +392,15 @@ public final class SendLaterEngine {
      */
     private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent,
                              boolean armExpiry, boolean notify) {
+        hold(d, m, reason, now, mayHaveSent, armExpiry, notify, null);
+    }
+
+    /**
+     * {@code lastOutcome}: the send outcome that caused a "may have already sent" hold, or null
+     * (an interrupted IN_FLIGHT row). LIVE-F8: only SENT_UNVERIFIED warns of a duplicate.
+     */
+    private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent,
+                             boolean armExpiry, boolean notify, SendOutcome lastOutcome) {
         long id = m.getId();
         if (!d.store.hold(id, reason)) return;
         d.marks.setReminded(id, false);
@@ -399,7 +408,7 @@ public final class SendLaterEngine {
         schedulerOf(d).cancelAlarms(id);
         ScheduledMessage held = reload(d, m);
         if (mayHaveSent) {
-            d.notifier.mayHaveSent(held);
+            d.notifier.mayHaveSent(held, SendLaterNotifications.duplicateRisk(lastOutcome));
         } else if (notify) {
             d.notifier.hold(held, reason, now);
         } else {
@@ -762,6 +771,22 @@ public final class SendLaterEngine {
         }
     }
 
+    /**
+     * Whether {@code id} is IN_FLIGHT now (a send is under way). Read-only; false on any error.
+     * The tap activity uses it to know whether to wait for the launch (LIVE-F4).
+     */
+    static boolean isInFlight(Context context, long id) {
+        try {
+            EngineDeps d = deps(context);
+            synchronized (LOCK) {
+                ScheduledMessage m = d.store.get(id);
+                return m != null && m.getStatus() == Status.IN_FLIGHT;
+            }
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     /** After a failed write on a tappable row: what it is now. */
     private static TapResult staleOrGone(EngineDeps d, long id) {
         TapResult r = TapResult.staleFor(d.store.get(id));
@@ -858,7 +883,7 @@ public final class SendLaterEngine {
             default: {
                 // OD27: nothing the engine can read proves the send did or did not go out.
                 checkTimes.remove(id);
-                hold(d, m, HoldReason.UNVERIFIED, now, true);
+                hold(d, m, HoldReason.UNVERIFIED, now, true, true, true, outcome);
             }
         }
     }

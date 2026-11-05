@@ -202,8 +202,9 @@
             android:exported="false" />
         <!-- sendlater:engine end -->
         <!-- sendlater:dl-actions start -->
-        <!-- L1 (OD31), API < 31: Send now / Send anyway open this invisible activity, which acts
-             only once the phone is unlocked (it is never shown over the keyguard). -->
+        <!-- L1 (OD31): Send now / Send anyway open this invisible activity, which acts only once
+             the phone is unlocked (it is never shown over the keyguard). LIVE-F4 (all API
+             levels): it starts the send from the foreground, so no accessibility is needed. -->
         <activity
             android:name=".sendlater.engine.SendLaterUnlockActivity"
             android:exported="false"

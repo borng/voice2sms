@@ -8,9 +8,9 @@ import com.voice2sms.sendlater.SendLaterIntents;
 
 /**
  * Non-exported receiver for notification buttons. The engine re-reads the stored status before
- * acting; a stale tap posts a short notice of what happened (UI M4). On API 31+ Send now / Send
- * anyway reach this receiver only after the user unlocks (L1); below 31 they go through
- * {@link SendLaterUnlockActivity} instead. ACTION_SEND_ANYWAY / ACTION_SEND_NOW: the user's "send anyway"
+ * acting; a stale tap posts a short notice of what happened (UI M4). Send now / Send anyway
+ * buttons go through {@link SendLaterUnlockActivity} on every API level (L1, LIVE-F4); this
+ * receiver still accepts them from notifications posted by an older build. ACTION_SEND_ANYWAY / ACTION_SEND_NOW: the user's "send anyway"
  * (self-preemption check only). ACTION_SNOOZE: +1 h. ACTION_CANCEL: cancel. ACTION_EDIT: opens the
  * sheet via SendLaterIntents.ACTION_EDIT when the row is still editable (notifications launch the
  * sheet directly, since Android blocks activity starts from notification trampolines).
