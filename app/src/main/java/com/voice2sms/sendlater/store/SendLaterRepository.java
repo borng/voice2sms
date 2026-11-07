@@ -13,7 +13,9 @@ import com.voice2sms.sendlater.domain.Watermark;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -291,10 +293,43 @@ public final class SendLaterRepository {
         return load(dao.byStatusesUpdatedSince(TERMINAL, nowMs - RECENT_WINDOW_MS));
     }
 
+    /** Rows with their watermarks: one watermark query per {@link #ID_CHUNK} rows, not per row. */
     private List<ScheduledMessage> load(List<ScheduledMessageEntity> rows) {
         if (rows == null || rows.isEmpty()) return Collections.emptyList();
+        Map<Long, WatermarkEntity> wms = new HashMap<>();
+        for (List<Long> ids : idChunks(rows, ID_CHUNK)) {
+            List<WatermarkEntity> found = dao.watermarks(ids);
+            if (found != null) for (WatermarkEntity w : found) if (w != null) wms.put(w.messageId, w);
+        }
+        return attach(rows, wms);
+    }
+
+    /** Below SQLite's 999 bound-variable limit on older devices. */
+    static final int ID_CHUNK = 500;
+
+    /** The rows' ids in order, split into lists of at most {@code size} (pure; JVM-tested). */
+    static List<List<Long>> idChunks(List<ScheduledMessageEntity> rows, int size) {
+        List<List<Long>> out = new ArrayList<>();
+        List<Long> cur = null;
+        for (ScheduledMessageEntity e : rows) {
+            if (e == null) continue;
+            if (cur == null || cur.size() >= size) {
+                cur = new ArrayList<>(size);
+                out.add(cur);
+            }
+            cur.add(e.id);
+        }
+        return out;
+    }
+
+    /**
+     * Each row mapped with its watermark from {@code byId} (null when it has none), in row order
+     * (pure; JVM-tested). Same result as one {@code dao.watermark(id)} lookup per row.
+     */
+    static List<ScheduledMessage> attach(List<ScheduledMessageEntity> rows,
+                                         Map<Long, WatermarkEntity> byId) {
         List<ScheduledMessage> out = new ArrayList<>(rows.size());
-        for (ScheduledMessageEntity e : rows) out.add(StoreMapping.toDomain(e, dao.watermark(e.id)));
+        for (ScheduledMessageEntity e : rows) out.add(StoreMapping.toDomain(e, byId.get(e.id)));
         return out;
     }
 

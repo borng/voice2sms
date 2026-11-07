@@ -160,14 +160,14 @@ public class UpcomingActivity extends AppCompatActivity {
                     long now = System.currentTimeMillis();
                     SendLaterRepository repo = SendLaterRepository.get(app);
                     List<ScheduledMessage> all = new ArrayList<>();
-                    addAll(all, repo.allPending());
+                    List<ScheduledMessage> pending = repo.allPending();
+                    addAll(all, pending);
                     addAll(all, repo.inFlight());
                     addAll(all, repo.allHeld());
                     addAll(all, repo.recent(now));
                     sections = UpcomingSections.build(all, filter, now);
                     remindedIds = SendLaterEngine.remindedIds(app, sections.getPending());
                     enabled = SendLaterSettings.isEnabled(app);
-                    List<ScheduledMessage> pending = repo.allPending();
                     boolean serviceOn = A11yWarning.isServiceEnabled(app);
                     if (serviceOn) A11yWarning.clearIfEnabled(app);
                     a11yWarn = A11yHealth.decide(enabled, pending == null ? 0 : pending.size(), serviceOn)
