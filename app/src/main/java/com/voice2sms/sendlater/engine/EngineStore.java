@@ -17,6 +17,20 @@ public interface EngineStore {
 
     boolean markInFlight(long id, String bodyHash);
 
+    /**
+     * Deliver M2: SCHEDULED/HELD -> IN_FLIGHT only while the row still has the
+     * {@code scheduledFor} / {@code updatedAt} snapshot the engine evaluated; false when it was
+     * edited in between (or is no longer waiting). Default: compares the snapshot against
+     * {@link #get} before the unguarded transition (callers hold the engine lock).
+     */
+    default boolean markInFlight(long id, String bodyHash, long scheduledFor, long updatedAt) {
+        ScheduledMessage now = get(id);
+        if (now == null || now.getScheduledFor() != scheduledFor || now.getUpdatedAt() != updatedAt) {
+            return false;
+        }
+        return markInFlight(id, bodyHash);
+    }
+
     boolean markSentVerified(long id);
 
     boolean hold(long id, HoldReason reason);

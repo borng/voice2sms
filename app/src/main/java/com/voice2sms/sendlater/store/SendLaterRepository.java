@@ -221,6 +221,16 @@ public final class SendLaterRepository {
         return dao.toInFlight(id, Status.IN_FLIGHT.name(), bodyHash, WAITING, clock.nowMs()) == 1;
     }
 
+    /**
+     * Deliver M2: {@link #markInFlight} only while the row still has the {@code scheduledFor} and
+     * {@code updatedAt} the engine evaluated ({@link ScheduledMessage#getUpdatedAt}). A row edited
+     * in between (new time, flags, baseline) is left alone: false, and the engine re-evaluates.
+     */
+    public boolean markInFlight(long id, String bodyHash, long scheduledFor, long updatedAt) {
+        return dao.toInFlightIfUnchanged(id, Status.IN_FLIGHT.name(), bodyHash, WAITING, scheduledFor,
+                updatedAt, clock.nowMs()) == 1;
+    }
+
     /** IN_FLIGHT -> SENT_VERIFIED, only after a matching outbound was read (R31). */
     public boolean markSentVerified(long id) {
         return to(id, Status.SENT_VERIFIED, null, IN_FLIGHT);

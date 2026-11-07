@@ -159,6 +159,16 @@ final class EngineFakes {
             return ok;
         }
 
+        /** Deliver M2: mirrors SendLaterDao.toInFlightIfUnchanged (scheduledFor + updatedAt snapshot). */
+        @Override public boolean markInFlight(long id, String hash, long scheduledFor, long updatedAt) {
+            ScheduledMessage m = rows.get(id);
+            if (m != null && (m.getScheduledFor() != scheduledFor || m.getUpdatedAt() != updatedAt)) {
+                j.add("store.markInFlight.refused " + id);
+                return false;
+            }
+            return markInFlight(id, hash);
+        }
+
         @Override public boolean markSentVerified(long id) {
             j.add("store.markSentVerified " + id);
             return to(id, Status.SENT_VERIFIED, null, Status.IN_FLIGHT);
@@ -199,8 +209,10 @@ final class EngineFakes {
             j.add("store.reschedule " + id + " " + scheduledFor);
             ScheduledMessage m = rows.get(id);
             if (m == null || (m.getStatus() != Status.SCHEDULED && m.getStatus() != Status.HELD)) return false;
+            // Deliver M2: like the real row's updatedAt, every edit gives the row a new version.
             ScheduledMessage.Builder b = m.toBuilder().status(Status.SCHEDULED).holdReason(null)
-                    .scheduledFor(scheduledFor).holdIfReplied(holdIfReplied).latenessPolicy(policy);
+                    .scheduledFor(scheduledFor).holdIfReplied(holdIfReplied).latenessPolicy(policy)
+                    .updatedAt(m.getUpdatedAt() + 1);
             if (wm != null) {
                 // Mirrors SendLaterRepository/StoreMapping.replacing (OD22(1)): the first watermark
                 // stays as the self-preemption baseline.
@@ -356,6 +368,8 @@ final class EngineFakes {
     static final class FakeNetworkWaiter implements NetworkWaiter {
         final List<Long> waits = new ArrayList<>();
         @Override public void awaitNetwork(long id) { waits.add(id); }
+        final List<Long> cancelled = new ArrayList<>();
+        @Override public void cancel(long id) { cancelled.add(id); }
     }
 
     static final class FakeConditions implements EngineConditions {
