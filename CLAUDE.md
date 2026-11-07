@@ -6,8 +6,8 @@ Adds scheduled send (`com.voice2sms.sendlater`): capture a draft in the native
 Google Voice app or the GV WebView, pick a time, and the app sends it through
 the GV WebView at the due time unless facts at that moment (a reply, lateness,
 no session, no confirmation, a draft of the user's in the box) say hold or
-remind. On by default on a fresh install (D26); a phone restored from backup
-starts with it off (D36). See ARCHITECTURE.md → Send Later and CHANGELOG.md.
+remind. On by default on a fresh install; a phone restored from backup
+starts with it off. See ARCHITECTURE.md → Send Later and CHANGELOG.md.
 
 Also in 2.0.0: `force_auto_send` counts only with the in-process `AutoSendAuth`
 token, so Gemini, Wear and RESPOND_VIA_MESSAGE still auto-send but an external
@@ -50,9 +50,9 @@ Other capture/send paths:
 | `app/src/main/res/xml/gemini_accessibility_config.xml` | AccessibilityService config |
 | `app/src/main/assets/inject.js` (Send Later module, after `sendImageToGV`) | Edge tab, chip, capture, Undo bar, thread read, thread-list scrape; installed only while Send Later is on |
 | `app/src/main/java/com/voice2sms/sendlater/SendLaterIntents.java`, `SendLaterSettings.java` | Pinned action/extra names; `sendlater_*` preference keys and defaults (enabled=true on a fresh install). The master switch lives in the non-backed-up `sendlater_switch` prefs file: use `isEnabled` / `setEnabled`, never `KEY_ENABLED` in the default prefs |
-| `app/src/main/java/com/voice2sms/sendlater/domain/` | Pure JVM: `ScheduledMessage`, `Watermark`, `ThreadEvent`, `ThreadEventClassifier`, `LadderEvaluator`, `LatenessBudget`, `PresetSlots`, `ChipLabel` (incl. `recipient` / `formatNumber`, D39), `DraftChoice` (D32), `ConversationRef` |
-| `app/src/main/java/com/voice2sms/sendlater/store/` | Room `SendLaterDatabase` (v2), `SendLaterRepository`, `ThreadDirectory`, `ScheduledSendQueue`, `DataRetention`, `RecipientNames` (fill a missing name from contacts, D33) |
-| `app/src/main/java/com/voice2sms/sendlater/engine/` | `SendLaterEngine` (only writer of status + notifications), `SendLaterScheduler` (alarms), receivers, `SendLaterNotifications`, `DraftNotice` + `DraftStash` (D32 draft-choice notification; draft in memory only), `SendLaterUnlockActivity`, `UserTapGrant` |
+| `app/src/main/java/com/voice2sms/sendlater/domain/` | Pure JVM: `ScheduledMessage`, `Watermark`, `ThreadEvent`, `ThreadEventClassifier`, `LadderEvaluator`, `LatenessBudget`, `PresetSlots`, `ChipLabel` (incl. `recipient` / `formatNumber`), `DraftChoice`, `ConversationRef` |
+| `app/src/main/java/com/voice2sms/sendlater/store/` | Room `SendLaterDatabase` (v2), `SendLaterRepository`, `ThreadDirectory`, `ScheduledSendQueue`, `DataRetention`, `RecipientNames` (fill a missing name from contacts) |
+| `app/src/main/java/com/voice2sms/sendlater/engine/` | `SendLaterEngine` (only writer of status + notifications), `SendLaterScheduler` (alarms), receivers, `SendLaterNotifications`, `DraftNotice` + `DraftStash` (draft-choice notification; draft in memory only), `SendLaterUnlockActivity`, `UserTapGrant` |
 | `app/src/main/java/com/voice2sms/sendlater/send/` | `WebViewScheduledSender`, `LaunchPlanner`, `LaunchRecheck`, `ScheduledSendController`, `ScheduledCompose`, `LockCover`, `SendVerifier`, `SendWatch` + `SentFollowUp` (settle, later "Not sent"), `RegularSend` + `ClaimWindow` (never take over a regular send) |
 | `app/src/main/java/com/voice2sms/sendlater/listener/` | `SendLaterNotificationListener`, `NotificationParser`, `LiveConversationKeys`, `NotificationThreadEventSource`, `AndroidContactNames`, `ContactsChangeWatcher` |
 | `app/src/main/java/com/voice2sms/sendlater/voice/logic/`, `voice/overlay/` | Native Voice screen signature, bubble parser, recipient resolver (directory-only match ⇒ `NEEDS_CHOICE`); overlay tab/chip/Undo, `OnScreenThreadSource`, `VoiceOverlayIds` (R8 allowlist) |
@@ -89,14 +89,14 @@ paths, and the auth callback — don't hide it behind a wrapper.
 
 ### Send Later Rules
 
-- **Defaults ON** (`SendLaterSettings.DEFAULT_ENABLED`, D26; a fresh install that never set the switch reads on; a restore/transfer reads off, D36). The switch is only read/written via `SendLaterSettings.isEnabled` / `setEnabled` (own `sendlater_switch` prefs file, never backed up). Every auto-send trigger checks the master switch; switch changes go through `SendLaterEngine.applySwitch` (never `SendLaterScheduler.reregisterAll` from UI). Off cancels alarms and keeps records.
+- **Defaults ON** (`SendLaterSettings.DEFAULT_ENABLED`; a fresh install that never set the switch reads on; a restore/transfer reads off). The switch is only read/written via `SendLaterSettings.isEnabled` / `setEnabled` (own `sendlater_switch` prefs file, never backed up). Every auto-send trigger checks the master switch; switch changes go through `SendLaterEngine.applySwitch` (never `SendLaterScheduler.reregisterAll` from UI). Off cancels alarms and keeps records.
 - **No Wear/Gemini auto-send machinery.** The scheduled path never uses `EXTRA_FORCE_AUTO_SEND` / `force_auto_send` or `AutoSendRateLimiter`; it has its own `ScheduledSendQueue` (2 s spacing, 50/day). Enforced by `SendLaterSourceSafetyTest`.
 - **Only `ScheduledSendController` produces SENT_VERIFIED** (a new outbound bubble with the body hash that settles, or a server time, during the job). The engine never verifies or retries from a thread read; unconfirmed / IN_FLIGHT-at-restart → HELD(UNVERIFIED) + "may have already sent". The only retry is the user's Send anyway.
 - **Cover and window flags are one decision.** Every scheduled job shows the opaque `LockCover`; show-when-locked / turn-screen-on / keep-screen-on are set only while it is up. Never dismiss the keyguard.
 - **`SendLaterEngine` is the only writer of status and Send Later notifications.** Anything that moves a row into or out of SCHEDULED/HELD/IN_FLIGHT broadcasts `ACTION_STATE_CHANGED` (setPackage'd), or the chip and listener gate go stale.
 - **New Send Later `V2SBridge` methods** take the `BridgeNonce` as their first argument (ignore the call without the current nonce) and check `OriginGuard.isTrustedGvUrl(mainFrameUrl)`. No `startsWith("https://voice.google.com")` checks. A thread-directory match alone never resolves a recipient.
 - **Auto-send:** any new auto-send origin must call `AutoSendAuth.attach` next to `force_auto_send`, and any new consumer must check `AutoSendAuth.isAuthorized` and `strip`. Send Later never does either.
-- **Scheduled compose never types or taps Send outside the job's thread**, never types over a user draft (D32 choice notification instead) and never loads a page over a running regular send (`RegularSend`).
+- **Scheduled compose never types or taps Send outside the job's thread**, never types over a user draft (draft-choice notification instead) and never loads a page over a running regular send (`RegularSend`).
 - **Every Send Later notification action needs an unlock** (`unlockedAction` / `lockedAction` helpers in `SendLaterNotifications`); never add a plain broadcast action.
 - **Voice ids:** reading a new Google Voice id means editing `VoiceOverlayIds.R8_IDS` deliberately.
 - **Room migrations:** `SendLaterDatabase` is at v2. Every schema change adds an explicit `Migration` for each step (next: `MIGRATION_2_3`); never `fallbackToDestructiveMigration`.
@@ -127,7 +127,7 @@ paths, and the auth callback — don't hide it behind a wrapper.
 ### Shipped (was backlog)
 
 - **GBoard sticker support in WebView** — shipped in v1.3.0 (`RichContentWebView` + `OnReceiveContentListener` + JS file-input injection). The `feature/gboard-sticker-bridge` branch is fully merged into `main`; the branch name carries nothing extra.
-- **Scheduled messaging with conditional send** — shipped in v2.0.0 as Send Later (`com.voice2sms.sendlater`), including the "auto-hold if the conversation changed" ladder, the D32 draft choice and GV failed-send ("Not sent") detection.
+- **Scheduled messaging with conditional send** — shipped in v2.0.0 as Send Later (`com.voice2sms.sendlater`), including the "auto-hold if the conversation changed" ladder, the draft-choice notification and GV failed-send ("Not sent") detection.
 
 ### Feature Backlog (Researched)
 

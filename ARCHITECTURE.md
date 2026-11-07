@@ -225,7 +225,7 @@ does work for Google Voice events; the WebView module is not installed and the
      the single matching chip of a new conversation) ends the job unsent
      (`could_not_send`, detail `wrong_thread`). The click ask re-checks the
      page, so the script never types or taps Send in another conversation.
-   - **Draft in the way (D32).** If the box holds text that is not ours
+   - **Draft in the way.** If the box holds text that is not ours
      (`domain.DraftChoice`; a draft equal to ours after normalization counts
      as ours), nothing is typed: the engine reminds with the draft-choice
      notification (`SendLaterNotifications.draftInTheWay`, `DraftNotice`):
