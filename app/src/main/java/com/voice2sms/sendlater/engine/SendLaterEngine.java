@@ -88,7 +88,8 @@ public final class SendLaterEngine {
     static void installForTest(EngineDeps d) {
         synchronized (LOCK) {
             deps = d;
-            scheduler = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions, d.marks);
+            scheduler = null;
+            schedulerOf(d);
             installedForTest = true;
         }
     }
@@ -135,13 +136,7 @@ public final class SendLaterEngine {
     }
 
     static SendLaterScheduler scheduler(Context context) {
-        EngineDeps d = deps(context);
-        SendLaterScheduler s = scheduler;
-        if (s != null) return s;
-        synchronized (LOCK) {
-            if (scheduler == null) scheduler = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions, d.marks);
-            return scheduler;
-        }
+        return schedulerOf(deps(context));
     }
 
     /** Runs {@code work} on the engine executor, then {@code done} (e.g. PendingResult.finish). */
@@ -1125,12 +1120,15 @@ public final class SendLaterEngine {
 
     // ================================================================== helpers
 
+    /** The scheduler for {@code d}, built once under {@link #LOCK} (cleared by registerSource/reset). */
     private static SendLaterScheduler schedulerOf(EngineDeps d) {
         SendLaterScheduler s = scheduler;
-        if (s == null) {
-            s = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions, d.marks);
-            scheduler = s;
+        if (s != null) return s;
+        synchronized (LOCK) {
+            if (scheduler == null) {
+                scheduler = new SendLaterScheduler(d.alarms, d.store, d.notifier, d.conditions, d.marks);
+            }
+            return scheduler;
         }
-        return s;
     }
 }

@@ -95,6 +95,19 @@ public final class ChipLabel {
         return f.format(new Date(t));
     }
 
+    /**
+     * Label of a just-scheduled message (the SCHEDULED broadcast's undo/clear text): {@code label}
+     * (EXTRA_LABEL) when it is not blank, else {@code scheduledFor} (EXTRA_SCHEDULED_FOR) as
+     * "EEE h:mm a" in {@code zone}, else "later" when there is no time ({@code <= 0}).
+     */
+    public static String scheduledLabel(String label, long scheduledFor, TimeZone zone) {
+        if (label != null && !label.trim().isEmpty()) return label;
+        if (scheduledFor <= 0) return "later";
+        SimpleDateFormat f = new SimpleDateFormat("EEE h:mm a", Locale.getDefault());
+        f.setTimeZone(zone);
+        return f.format(new Date(scheduledFor));
+    }
+
     /** REPLIED -> "replied", REACHED_OUT -> "called"; other reasons have no verb ("Held · Name"). */
     private static String verb(HoldReason r) {
         if (r == HoldReason.REPLIED) return "replied";

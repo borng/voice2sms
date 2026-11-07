@@ -14,6 +14,7 @@ import com.voice2sms.sendlater.domain.Watermark;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Synchronous Send Later store (R20, R21, R23, R34). Every method does disk I/O: call it from a
@@ -143,20 +144,20 @@ public final class SendLaterRepository {
     static boolean sameContent(ScheduledMessage a, ScheduledMessage b) {
         return a.getCreatedAt() == b.getCreatedAt()
                 && a.getScheduledFor() == b.getScheduledFor()
-                && eq(a.getText(), b.getText())
-                && eq(a.getRecipientE164(), b.getRecipientE164())
-                && eq(a.getRecipientDisplayName(), b.getRecipientDisplayName())
-                && eq(a.getThreadItemId(), b.getThreadItemId())
+                && Objects.equals(a.getText(), b.getText())
+                && Objects.equals(a.getRecipientE164(), b.getRecipientE164())
+                && Objects.equals(a.getRecipientDisplayName(), b.getRecipientDisplayName())
+                && Objects.equals(a.getThreadItemId(), b.getThreadItemId())
                 && a.getSource() == b.getSource()
                 && a.getRung() == b.getRung()
                 && a.isHoldIfReplied() == b.isHoldIfReplied()
                 && a.getLatenessPolicy() == b.getLatenessPolicy()
                 && a.getStatus() == b.getStatus()
                 && a.getHoldReason() == b.getHoldReason()
-                && eq(a.getLastError(), b.getLastError())
+                && Objects.equals(a.getLastError(), b.getLastError())
                 && a.getAttemptCount() == b.getAttemptCount()
-                && eq(a.getWatermark(), b.getWatermark())
-                && eq(a.getOriginalWatermark(), b.getOriginalWatermark())
+                && Objects.equals(a.getWatermark(), b.getWatermark())
+                && Objects.equals(a.getOriginalWatermark(), b.getOriginalWatermark())
                 && a.getRungReason() == b.getRungReason();
     }
 
@@ -355,9 +356,5 @@ public final class SendLaterRepository {
         List<String> out = new ArrayList<>(s.length);
         for (Status x : s) out.add(x.name());
         return Collections.unmodifiableList(out);
-    }
-
-    private static boolean eq(Object a, Object b) {
-        return a == null ? b == null : a.equals(b);
     }
 }

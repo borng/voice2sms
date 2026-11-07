@@ -52,13 +52,13 @@ public final class LiveConversationKeys {
             for (ScheduledMessage m : live) {
                 if (m == null || m.getStatus() == null || m.getStatus().isTerminal()) continue;
                 if (m.getRecipientE164() != null) e164s.add(m.getRecipientE164());
-                String nk = nameKey(m.getRecipientDisplayName());
+                String nk = ConversationRef.nameKey(m.getRecipientDisplayName());
                 if (nk != null) names.add(nk);
             }
             if (contactNames != null) {
                 for (String e164 : e164s) {
                     for (String name : ContactNames.safeNamesFor(contactNames, e164)) {
-                        String ck = nameKey(name);
+                        String ck = ConversationRef.nameKey(name);
                         if (ck != null) names.add(ck);
                     }
                 }
@@ -102,18 +102,12 @@ public final class LiveConversationKeys {
     public boolean mayMatch(ParsedEvent p) {
         if (p == null) return false;
         if (p.getNumber() != null) return e164s.contains(p.getNumber());
-        String nk = nameKey(p.getConversationTitle());
+        String nk = ConversationRef.nameKey(p.getConversationTitle());
         return nk != null && nameKeys.contains(nk);
     }
 
     public boolean isEmpty() {
         return e164s.isEmpty() && nameKeys.isEmpty();
-    }
-
-    /** ConversationRef's normalized name key, or null for a blank name (as the recorder does). */
-    static String nameKey(String name) {
-        if (name == null || name.trim().isEmpty()) return null;
-        return new ConversationRef(null, name).key();
     }
 
     @Override public String toString() {

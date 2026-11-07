@@ -97,6 +97,10 @@ public interface SendLaterDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void upsertDirectory(ThreadDirectoryEntity e);
 
+    /** All rows in one transaction (Room wraps a list insert); same rows as one-by-one REPLACE. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void upsertDirectoryAll(List<ThreadDirectoryEntity> es);
+
     @Query("SELECT DISTINCT e164 FROM thread_directory WHERE nameKey = :nameKey ORDER BY lastSeenMs DESC")
     List<String> directoryNumbers(String nameKey);
 

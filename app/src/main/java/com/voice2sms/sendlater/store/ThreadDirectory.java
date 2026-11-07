@@ -48,6 +48,17 @@ public final class ThreadDirectory {
         return true;
     }
 
+    /**
+     * {@link #upsert(String, String, long)} for every {@code {name, e164}} pair, in one
+     * transaction (same rows as one call per pair). Invalid pairs are skipped the same way.
+     * Returns how many rows were stored.
+     */
+    public int upsert(List<String[]> pairs, long nowMs) {
+        List<ThreadDirectoryEntity> rows = entries(pairs, nowMs);
+        if (!rows.isEmpty()) dao.upsertDirectoryAll(rows);
+        return rows.size();
+    }
+
     /** Distinct E.164 numbers seen under {@code name}, most recently seen first. Empty when unknown. */
     public List<String> candidatesFor(String name) {
         String key = normalizeName(name);
@@ -59,7 +70,8 @@ public final class ThreadDirectory {
 
     /** Same normalization as {@code ConversationRef.key()} without the {@code name:} prefix. */
     public static String normalizeName(String name) {
-        return new ConversationRef(null, name).key().substring(NAME_PREFIX.length());
+        String key = ConversationRef.nameKey(name);
+        return key == null ? "" : key.substring(NAME_PREFIX.length());
     }
 
     public static boolean isE164(String s) {
@@ -77,6 +89,18 @@ public final class ThreadDirectory {
         e.displayName = name.trim();
         e.lastSeenMs = nowMs;
         return e;
+    }
+
+    /** Rows for the valid pairs, in order; null pairs and invalid pairs are skipped. */
+    static List<ThreadDirectoryEntity> entries(List<String[]> pairs, long nowMs) {
+        List<ThreadDirectoryEntity> out = new ArrayList<>();
+        if (pairs == null) return out;
+        for (String[] p : pairs) {
+            if (p == null || p.length < 2) continue;
+            ThreadDirectoryEntity e = entry(p[0], p[1], nowMs);
+            if (e != null) out.add(e);
+        }
+        return out;
     }
 
     static List<String> distinct(List<String> numbers) {

@@ -19,6 +19,15 @@ public final class ConversationRef {
         return new ConversationRef(m.getRecipientE164(), m.getRecipientDisplayName());
     }
 
+    /**
+     * {@link #key()} of a number-less ref for {@code name} ({@code "name:" + normalized}), or null
+     * when the name is null or blank.
+     */
+    public static String nameKey(String name) {
+        if (name == null || name.trim().isEmpty()) return null;
+        return new ConversationRef(null, name).key();
+    }
+
     public String getE164() { return e164; }
     public String getDisplayName() { return displayName; }
 

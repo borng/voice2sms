@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat;
 import com.voice2sms.R;
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.domain.ChipLabel;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
@@ -25,12 +26,9 @@ import com.voice2sms.sendlater.store.SendLaterRepository;
 import com.voice2sms.sendlater.voice.logic.VoiceBubbleParser;
 import com.voice2sms.sendlater.voice.logic.VoiceScreenSignature;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
@@ -401,7 +399,9 @@ public final class VoiceOverlayController {
         // With candidates, the sheet's number must be one of them; with none, the sheet asked for it.
         if (!cands.isEmpty() && (e164 == null || !cands.contains(e164))) return;
         capture = null;
-        scheduled = new PendingScheduled(snap, id, labelOf(in), SendLaterSettings.clearDraft(app));
+        String label = ChipLabel.scheduledLabel(in.getStringExtra(SendLaterIntents.EXTRA_LABEL),
+                in.getLongExtra(SendLaterIntents.EXTRA_SCHEDULED_FOR, -1L), TimeZone.getDefault());
+        scheduled = new PendingScheduled(snap, id, label, SendLaterSettings.clearDraft(app));
         // The sheet is still in front: run once the Voice thread is back, or after the wait.
         main.removeCallbacks(scheduledTimeout);
         main.postDelayed(scheduledTimeout, SCHEDULED_WAIT_MS);
@@ -490,16 +490,6 @@ public final class VoiceOverlayController {
                 main.postDelayed(hideToastRunnable, windows.confirmTimeoutMs(CONFIRM_MS / 2, false));
             });
         });
-    }
-
-    private static String labelOf(Intent intent) {
-        String label = intent.getStringExtra(SendLaterIntents.EXTRA_LABEL);
-        if (label != null && !label.trim().isEmpty()) return label;
-        long at = intent.getLongExtra(SendLaterIntents.EXTRA_SCHEDULED_FOR, -1L);
-        if (at <= 0) return "later";
-        SimpleDateFormat f = new SimpleDateFormat("EEE h:mm a", Locale.getDefault());
-        f.setTimeZone(TimeZone.getDefault());
-        return f.format(new Date(at));
     }
 
     // ------------------------------------------------------------------ early hold (R33)
