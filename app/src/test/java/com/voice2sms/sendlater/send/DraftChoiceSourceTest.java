@@ -120,7 +120,8 @@ public class DraftChoiceSourceTest {
                 .contains("VISIBILITY_PRIVATE"));
         assertTrue(draft.contains("setPublicVersion(draftPublicVersion(c, DraftNotice.PUBLIC_TITLE))"));
         assertTrue(draft.contains("unlockedAction(c, \"Replace and send\", DraftNotice.ACTION_REPLACE, m.getId())"));
-        assertTrue(draft.contains("broadcast(c, DraftNotice.ACTION_KEEP, m.getId())"));
+        // Deliver sec-L1 (dlv-lockscreen-actions): Keep draft needs an unlock too.
+        assertTrue(draft.contains("lockedAction(c, \"Keep draft\", DraftNotice.ACTION_KEEP, m.getId())"));
         assertTrue(draft.contains("unlockedAction(c, \"Send both\", DraftNotice.ACTION_BOTH, m.getId())"));
         String pub = block(n, "private static Notification draftPublicVersion\\s*\\([^)]*\\)\\s*\\{");
         assertFalse(pub.contains("setContentText"));
