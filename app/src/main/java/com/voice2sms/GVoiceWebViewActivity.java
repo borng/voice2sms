@@ -40,6 +40,7 @@ import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.send.ForegroundUse;
+import com.voice2sms.sendlater.send.RegularSend;
 import com.voice2sms.sendlater.send.ScheduledSendController;
 import com.voice2sms.sendlater.send.ScheduledCompose;
 import com.voice2sms.sendlater.web.SendLaterWebHooks;
@@ -86,6 +87,12 @@ public class GVoiceWebViewActivity extends Activity {
     private WebView webView;
     private String recipient;
     private String body;
+    /**
+     * deliver M1 (F1): whether the current regular compose (recipient/body) asked for auto-send,
+     * read when its intent arrives. injectComposer reads this, not getIntent(): a scheduled launch
+     * that onNewIntent refused while this compose runs replaces getIntent() but not the compose.
+     */
+    private boolean regularAutoSend;
     private boolean injected = false;
     private ValueCallback<Uri[]> fileUploadCallback;
     private volatile boolean stickerInjectionActive;
@@ -107,6 +114,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         recipient = getIntent().getStringExtra("recipient");
         body = getIntent().getStringExtra("body");
+        regularAutoSend = wantsAutoSend(getIntent());
 
         Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
         webView = app.getOrCreateWebView();
@@ -133,12 +141,18 @@ public class GVoiceWebViewActivity extends Activity {
         webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
         scheduledSend = new ScheduledSendController(this, new ScheduledHost());
         boolean scheduledLaunch = scheduledSend.handle(getIntent(), savedInstanceState != null);
+        // deliver M1: a regular compose holds the WebView from its intent on (no scheduled
+        // launch loads a page over it until the script clicks Send, gives up or MAX_MS).
+        if (!scheduledLaunch && recipient != null) noteRegularCompose();
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
                 // I7: inject.js console lines carry recipient numbers. Relay them only in debug
                 // builds, and consume them in every build so Chromium does not log them itself.
                 if (cm.message() != null && cm.message().contains("[Voice2SMS]")) {
+                    // deliver M1: the regular compose's progress (Send clicked / gave up) ends
+                    // its hold on the WebView. Never logged here.
+                    RegularSend.onConsole(cm.message(), System.currentTimeMillis());
                     if (BuildConfig.DEBUG) Log.d(TAG, "JS: " + cm.message());
                     return true;
                 }
@@ -227,7 +241,10 @@ public class GVoiceWebViewActivity extends Activity {
 
         recipient = intent.getStringExtra("recipient");
         body = intent.getStringExtra("body");
+        regularAutoSend = wantsAutoSend(intent);
         injected = false;
+        // deliver M1: the regular compose holds the WebView from now on (bounded).
+        if (recipient != null && (scheduledSend == null || !scheduledSend.isActive())) noteRegularCompose();
 
         if (BuildConfig.DEBUG) Log.d(TAG, "onNewIntent: recipient=" + recipient
                 + ", body=" + (body != null ? "[present]" : "null"));
@@ -343,6 +360,8 @@ public class GVoiceWebViewActivity extends Activity {
                 Log.w(TAG, "Renderer gone! crashed=" + detail.didCrash());
                 Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
                 app.onRendererGone();
+                // deliver M1: the page running a regular compose is gone with the renderer.
+                RegularSend.clear();
                 webView = null; // prevent stale reference in onPause/onDestroy
                 recreate();
                 return true;
@@ -565,11 +584,25 @@ public class GVoiceWebViewActivity extends Activity {
         }
     }
 
+    /**
+     * deliver M1: a regular compose intent arrived; it holds the WebView until injectComposer
+     * re-marks it and the script reports Send clicked / gave up (RegularSend, bounded).
+     */
+    private void noteRegularCompose() {
+        RegularSend.begin(System.currentTimeMillis(), regularAutoSend);
+    }
+
+    /** The regular compose intent's auto-send request (Gemini, Wear, RESPOND_VIA_MESSAGE). */
+    private static boolean wantsAutoSend(Intent intent) {
+        return intent != null && intent.getBooleanExtra("force_auto_send", false);
+    }
+
     private void injectComposer() {
         injected = true;
 
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean autoSend = getIntent().getBooleanExtra("force_auto_send", false);
+        // deliver M1 (F1): the compose's own request, kept across a refused scheduled intent.
+        boolean autoSend = regularAutoSend;
         int autoSendDelay = prefs.getInt("auto_send_delay", 2) * 1000;
 
         // Global auto-send rate limit (single chokepoint for Gemini, Wear,
@@ -585,6 +618,9 @@ public class GVoiceWebViewActivity extends Activity {
                     android.widget.Toast.LENGTH_LONG).show();
             autoSend = false;
         }
+        // deliver M1: from here until the script clicks Send or gives up (bounded by
+        // RegularSend.MAX_MS) a due scheduled job waits instead of loading a page over it.
+        RegularSend.begin(System.currentTimeMillis(), autoSend);
 
         try {
             InputStream is = getAssets().open("inject.js");
