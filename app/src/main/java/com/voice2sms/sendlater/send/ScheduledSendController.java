@@ -163,6 +163,11 @@ public final class ScheduledSendController {
      */
     static final String DETAIL_DRAFT_PRESENT = "draft_present";
     /**
+     * deliver H1/L2: the script asked to tap Send on a page that is neither the job's thread nor a
+     * new-message view addressed to the job's number alone; the job stops unsent (could_not_send).
+     */
+    static final String DETAIL_WRONG_THREAD = "wrong_thread";
+    /**
      * Extra compose time after the one reload of the thread page (a second settle plus the load).
      * D35: the settle grew to 15 s; the load share is 4 s so the compose timeout plus this grace
      * stays inside {@link LockCoverPolicy#HARD_TIMEOUT_MS} (60 s).
@@ -207,6 +212,15 @@ public final class ScheduledSendController {
          * scheduled body); anything else is left alone. No-op when not alive.
          */
         void clearComposer(String text);
+
+        /**
+         * deliver L1, main thread: the scheduled job of {@code e164}/{@code text} ended (any
+         * outcome). The activity drops the recipient and body {@link #beginCompose} set when they
+         * are still these, so a later regular composer injection cannot type the scheduled text.
+         * Touches no WebView.
+         */
+        default void forgetCompose(String e164, String text) {
+        }
 
         /** GVoiceWebViewActivity.readThread. */
         void readThread(String e164, int limit, ThreadReadCallback cb);
@@ -272,6 +286,8 @@ public final class ScheduledSendController {
         NewConversationReads fallbackReads;
         /** LIVE-F10: the end-of-job clear of our text was sent once. */
         boolean composerCleared;
+        /** deliver L1: the activity was told once to forget this job's recipient and body. */
+        boolean composeForgotten;
         /** live-presend-failclosed: compose time added once by the thread-page reload. */
         long composeGraceMs;
         /** D32: what this job does with a draft in the box (ASK unless the user's tap chose). */
@@ -538,7 +554,7 @@ public final class ScheduledSendController {
         main.removeCallbacksAndMessages(null);
         Job job = current;
         if (job != null) {
-            // Typed -> SENT_UNVERIFIED (never re-sent unread, I5); not typed -> CANNOT_SHOW.
+            // A granted click -> SENT_UNVERIFIED (never re-sent unread, I5); else CANNOT_SHOW (M3).
             current = null;
             toEngine(job, failureOutcome(job), "timeout");
         }
@@ -625,14 +641,41 @@ public final class ScheduledSendController {
      * thread, an empty-conversation clearance is dropped first (WAIT) and the thread is read again.
      */
     public static String clickState(String token, String pageUrl) {
+        return clickState(token, pageUrl, -1, null);
+    }
+
+    /**
+     * deliver H1/L2, JavaBridge thread: as {@link #clickState(String, String)}, with the asking
+     * page's recipient chips ({@code chipCount}; {@code chipDigits}: the single chip's digit runs).
+     * NO in every mode, check on or off, unless the page is the job's own 1:1 thread or a
+     * new-message view whose single recipient chip is the job's number
+     * ({@link ScheduledCompose#pageAllowsClick}); such a refusal grants nothing and ends the job
+     * unsent ({@link #DETAIL_WRONG_THREAD}), so our text is never sent into another conversation.
+     */
+    public static String clickState(String token, String pageUrl, int chipCount, String chipDigits) {
         final ScheduledSendController c = live.get();
         ScheduledCompose sc = c == null ? null : c.liveCompose;
         if (sc == null) return ScheduledCompose.ClickState.NO.wire();
         String e164 = c.targetE164;
+        if (!ScheduledCompose.pageAllowsClick(pageUrl, c.host.mainFrameUrl(), e164, chipCount, chipDigits)) {
+            if (sc.isCurrent(token)) c.main.post(() -> c.onWrongThreadAsk(token));
+            return ScheduledCompose.ClickState.NO.wire();
+        }
         boolean onJobThread = ThreadUrl.isThreadOf(pageUrl, e164) || ThreadUrl.isThreadOf(c.host.mainFrameUrl(), e164);
         ScheduledCompose.ClickState state = sc.clickState(token, onJobThread);
         if (onJobThread && state == ScheduledCompose.ClickState.WAIT) c.main.post(c::recheckIfDue);
         return state.wire();
+    }
+
+    /**
+     * deliver H1/L2, main thread: the script asked to tap Send (for {@code token}) from a page that
+     * may not take our tap. Nothing was granted: the job ends unsent (CANNOT_SHOW, a reminder) and
+     * our text is cleared from that box.
+     */
+    private void onWrongThreadAsk(String token) {
+        Job job = current;
+        if (job == null || job.compose == null || !job.compose.isCurrent(token)) return;
+        stopUnsent(job, DETAIL_WRONG_THREAD);
     }
 
     /**
@@ -851,15 +894,18 @@ public final class ScheduledSendController {
         report(job, failureOutcome(job), reason);
     }
 
-    /** Typed -> SENT_UNVERIFIED (never re-sent unread, I5); not typed -> CANNOT_SHOW (G2). */
-    static SendOutcome failureOutcome(boolean typed) {
-        return typed ? SendOutcome.SENT_UNVERIFIED : SendOutcome.CANNOT_SHOW;
+    /**
+     * A click granted -> SENT_UNVERIFIED (never re-sent unread, I5); none -> CANNOT_SHOW (G2;
+     * deliver M3: typed text alone sent nothing).
+     */
+    static SendOutcome failureOutcome(boolean clickGranted) {
+        return clickGranted ? SendOutcome.SENT_UNVERIFIED : SendOutcome.CANNOT_SHOW;
     }
 
     /**
      * LIVE-F8: the failure outcome of {@code job} right now. Closes its Send gate first, so a
-     * CANNOT_SHOW can no longer turn into a send; typed (the page confirmed our body) or a granted
-     * click -> SENT_UNVERIFIED, else CANNOT_SHOW.
+     * CANNOT_SHOW can no longer turn into a send; a granted click -> SENT_UNVERIFIED, else
+     * CANNOT_SHOW, even when our body was typed (deliver M3).
      */
     private static SendOutcome failureOutcome(Job job) {
         if (job.compose == null) return failureOutcome(false);
@@ -1133,8 +1179,8 @@ public final class ScheduledSendController {
             }
         }
         if (now >= job.deadlineMs) {
-            // Typed -> SENT_UNVERIFIED; re-injected and not typed again -> per the gate (LIVE-F8).
-            report(job, job.injected ? SendOutcome.SENT_UNVERIFIED : failureOutcome(job), "no_match");
+            // deliver M3: SENT_UNVERIFIED only after a granted click; typed alone sent nothing.
+            report(job, failureOutcome(job), "no_match");
             return;
         }
         main.postDelayed(() -> readOnce(job),
@@ -1180,6 +1226,12 @@ public final class ScheduledSendController {
         if (unsent && !job.composerCleared && job.message != null && job.message.getText() != null) {
             job.composerCleared = true;
             if (host.isAlive()) host.clearComposer(job.message.getText());
+        }
+        // deliver L1: whatever the outcome, the activity forgets the recipient and body
+        // beginCompose gave it, so a later regular injection never types the scheduled text.
+        if (!job.composeForgotten) {
+            job.composeForgotten = true;
+            host.forgetCompose(job.e164, job.message != null ? job.message.getText() : null);
         }
         restoreSavedDraft(job);
     }
@@ -1367,7 +1419,7 @@ public final class ScheduledSendController {
         screenEvents = null;
     }
 
-    /** Ends the running and queued jobs: typed -> SENT_UNVERIFIED, untyped -> CANNOT_SHOW. */
+    /** Ends the running and queued jobs: a granted click -> SENT_UNVERIFIED, else CANNOT_SHOW (M3). */
     private void abandonAll(String detail) {
         Job job = current;
         current = null;

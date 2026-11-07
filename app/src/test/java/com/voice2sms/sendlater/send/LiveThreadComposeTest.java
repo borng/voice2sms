@@ -274,8 +274,10 @@ public class LiveThreadComposeTest {
         String fill = block(entry, "function fillThread\\s*\\(polls\\)\\s*\\{");
         assertTrue(fill.contains("V2SBridge.onScheduledNoThread(token)"));
         assertTrue("Angular-safe setter", fill.contains("_v2sScheduledSet(ta, body, true)"));
+        // deliver H1 (orchestrator ruling): the new-conversation flow is the scheduled one
+        // (_v2sScheduledNewMessage), no longer voice2sms(); still only outside thread mode.
         assertTrue("the new-conversation flow only outside thread mode",
-                entry.contains("if (threadMode) {") && entry.indexOf("voice2sms(phone, body, false, 0)") > entry.indexOf("} else {"));
+                entry.contains("if (threadMode) fillThread(MAX_POLLS);\n    else _v2sScheduledNewMessage(jobE164,"));
         assertFalse("never an SPA push to the thread", js.contains("history.pushState"));
     }
 

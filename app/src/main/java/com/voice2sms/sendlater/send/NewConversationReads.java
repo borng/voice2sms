@@ -36,7 +36,10 @@ public final class NewConversationReads {
         THREAD,
         /** The new-conversation draft for this job (typed, never seen the thread): empty conversation. */
         EMPTY,
-        /** Neither (the messages list before the recipient, or after the thread showed up): proves nothing. */
+        /**
+         * Neither (the messages list before the recipient, after the thread showed up, or another
+         * number's thread, deliver H1): proves nothing.
+         */
         NOT_YET
     }
 
@@ -79,6 +82,8 @@ public final class NewConversationReads {
     public Kind kindOf(String url, boolean typed) {
         if (onUrl(url)) return Kind.THREAD;
         if (sawThread || !typed) return Kind.NOT_YET;
+        // deliver H1: another person's 1:1 thread is never this job's empty conversation.
+        if (ThreadUrl.oneToOneE164(url) != null) return Kind.NOT_YET;
         return Kind.EMPTY;
     }
 
@@ -106,7 +111,8 @@ public final class NewConversationReads {
      */
     public boolean emptyStillHolds(String url) {
         boolean onThread = onUrl(url);
-        if (onThread || sawThread) {
+        // deliver H1: nor while the page is another number's thread.
+        if (onThread || sawThread || ThreadUrl.oneToOneE164(url) != null) {
             restart();
             return false;
         }

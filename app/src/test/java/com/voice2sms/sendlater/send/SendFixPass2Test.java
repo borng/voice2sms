@@ -135,8 +135,10 @@ public class SendFixPass2Test {
         assertTrue("settle gate in onThreadRead", settle >= 0);
         assertTrue("SENT_VERIFIED only after the settle gate", body.indexOf("SENT_VERIFIED") > settle);
         int deadline = body.indexOf("deadlineMs");
-        assertTrue("never settled before the deadline -> SENT_UNVERIFIED",
-                deadline >= 0 && body.indexOf("SENT_UNVERIFIED", deadline) > deadline);
+        // deliver M3 (orchestrator ruling): at the deadline the gate decides: SENT_UNVERIFIED only
+        // after a granted click (failureOutcome(job) -> closeForFailure), else CANNOT_SHOW.
+        assertTrue("never settled before the deadline -> the gate's failure outcome",
+                deadline >= 0 && body.indexOf("failureOutcome(job)", deadline) > deadline);
     }
 
     // ------------------------------------------------------------------ G3 no baseline
