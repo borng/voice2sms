@@ -9,16 +9,23 @@ import android.provider.ContactsContract;
 
 import androidx.core.content.ContextCompat;
 
+import com.voice2sms.sendlater.store.RecipientNames;
+
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
  * {@link ContactNames} over {@code ContactsContract.PhoneLookup} (LIVE-F12). Used only while
  * READ_CONTACTS is granted (never requested here); denial or any failure gives an empty set.
  * Synchronous: the listener calls it on its worker thread. Never logs names or numbers.
+ *
+ * <p>D33: also the {@link RecipientNames} the repository fills a missing display name from at
+ * save time (the first DISPLAY_NAME, see {@link ContactDisplayName}).
  */
-public final class AndroidContactNames implements ContactNames {
+public final class AndroidContactNames implements ContactNames, RecipientNames {
 
     /**
      * Set once a lookup with DISPLAY_NAME_ALTERNATIVE threw and the primary-only retry worked:
@@ -32,18 +39,27 @@ public final class AndroidContactNames implements ContactNames {
         this.app = context.getApplicationContext();
     }
 
+    /** D33: the first DISPLAY_NAME saved for {@code e164}; null on denial, no contact or failure. */
+    @Override public String displayNameFor(String e164) {
+        return ContactDisplayName.lookup(new ContactDisplayName.Resolver() {
+            @Override public boolean readContactsGranted() {
+                return granted();
+            }
+
+            @Override public List<String> displayNames(String number) {
+                Uri uri = lookupUri(number);
+                if (uri == null) return null;
+                Set<String> names = query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME});
+                return names == null ? null : new ArrayList<>(names);
+            }
+        }, e164);
+    }
+
     @Override public Set<String> namesFor(String e164) {
         if (e164 == null || e164.trim().isEmpty()) return Collections.emptySet();
-        if (ContextCompat.checkSelfPermission(app, Manifest.permission.READ_CONTACTS)
-                != PackageManager.PERMISSION_GRANTED) {
-            return Collections.emptySet();
-        }
-        Uri uri;
-        try {
-            uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(e164));
-        } catch (RuntimeException e) {
-            return Collections.emptySet();
-        }
+        if (!granted()) return Collections.emptySet();
+        Uri uri = lookupUri(e164);
+        if (uri == null) return Collections.emptySet();
         Set<String> out = alternativeUnsupported ? null
                 : query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME,
                         ContactsContract.Contacts.DISPLAY_NAME_ALTERNATIVE});
@@ -57,9 +73,25 @@ public final class AndroidContactNames implements ContactNames {
         return out != null ? out : Collections.<String>emptySet();
     }
 
-    /** Every non-blank value of {@code columns} for the lookup, or null when the query failed. */
+    private boolean granted() {
+        return ContextCompat.checkSelfPermission(app, Manifest.permission.READ_CONTACTS)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private static Uri lookupUri(String e164) {
+        try {
+            return Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(e164));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Every non-blank value of {@code columns} for the lookup in row order, or null when the
+     * query failed.
+     */
     private Set<String> query(Uri uri, String[] columns) {
-        Set<String> out = new HashSet<>();
+        Set<String> out = new LinkedHashSet<>();
         Cursor cur = null;
         try {
             cur = app.getContentResolver().query(uri, columns, null, null, null);

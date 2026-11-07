@@ -1,11 +1,15 @@
 package com.voice2sms.sendlater.listener;
 
+import android.Manifest;
 import android.app.Notification;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.database.ContentObserver;
 import android.os.Build;
+import android.provider.ContactsContract;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
@@ -19,8 +23,9 @@ import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 
 import java.util.List;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Reply detection (R32-R34, D14, D22): watches Google Voice notifications (primary) and voice2sms
@@ -33,6 +38,9 @@ import java.util.concurrent.Executors;
  * from connect to disconnect. A Voice notification no live key matches makes no database call.
  * LIVE-F12: the gate and the recorder also match a contact's name to a number-only message through
  * {@link AndroidContactNames} (READ_CONTACTS only if granted), on the worker thread only.
+ * D37: a contacts observer (registered from connect to disconnect once READ_CONTACTS is granted)
+ * rebuilds the gate, debounced on the worker; see {@link ContactsChangeWatcher}. A permission grant
+ * is picked up at the next connect or state broadcast (there is no grant broadcast).
  *
  * <p>Notification content never reaches a log (I7). Room work runs on one background thread.
  * Voice suppresses notifications for the thread open in native Voice; the on-screen reader covers
@@ -45,7 +53,7 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
     /** Purge at most this often while notifications arrive. */
     private static final long PURGE_INTERVAL_MS = 60 * 60_000L;
 
-    private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
+    private static final ScheduledExecutorService WORKER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "sendlater-listener");
         t.setDaemon(true);
         return t;
@@ -55,12 +63,25 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
 
     private boolean receiverRegistered;
 
+    /** D37: contacts observer + debounced gate rebuild; created on first connect. */
+    private ContactsChangeWatcher contactsWatcher;
+
+    private final ContentObserver contactsObserver = new ContentObserver(null) {
+        @Override public void onChange(boolean selfChange) {
+            ContactsChangeWatcher w = contactsWatcher;
+            if (w != null) w.onContactsChanged();
+        }
+    };
+
     /** Rebuilds the live-key gate whenever a Send Later message is scheduled or changes state. */
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             String action = intent == null ? null : intent.getAction();
             if (!SendLaterIntents.ACTION_STATE_CHANGED.equals(action)
                     && !SendLaterIntents.ACTION_SCHEDULED.equals(action)) return;
+            // D37: READ_CONTACTS may have been granted since connect.
+            ContactsChangeWatcher w = contactsWatcher;
+            if (w != null) w.ensureRegistered();
             scheduleRebuild(context.getApplicationContext(), false);
         }
     };
@@ -70,12 +91,14 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
         final Context app = getApplicationContext();
         SendLaterListenerStatus.markConnected(app, System.currentTimeMillis());
         registerStateReceiver();
+        contactsWatcher().start();
         // Queued before any notification of this connection, so recording sees the fresh gate.
         scheduleRebuild(app, true);
     }
 
     @Override public void onListenerDisconnected() {
         unregisterStateReceiver();
+        stopContactsWatcher();
         // No broadcasts reach us while disconnected: forget the gate so a reconnect rebuilds it.
         LiveConversationKeys.invalidate();
         SendLaterListenerStatus.markDisconnected(getApplicationContext(), System.currentTimeMillis());
@@ -84,7 +107,49 @@ public final class SendLaterNotificationListener extends NotificationListenerSer
 
     @Override public void onDestroy() {
         unregisterStateReceiver();
+        stopContactsWatcher();
         super.onDestroy();
+    }
+
+    private ContactsChangeWatcher contactsWatcher() {
+        if (contactsWatcher == null) {
+            final Context app = getApplicationContext();
+            contactsWatcher = new ContactsChangeWatcher(new ContactsChangeWatcher.Host() {
+                @Override public boolean readContactsGranted() {
+                    return ContextCompat.checkSelfPermission(app, Manifest.permission.READ_CONTACTS)
+                            == PackageManager.PERMISSION_GRANTED;
+                }
+
+                @Override public boolean register() {
+                    try {
+                        app.getContentResolver().registerContentObserver(
+                                ContactsContract.Contacts.CONTENT_URI, true, contactsObserver);
+                        return true;
+                    } catch (RuntimeException e) {
+                        Log.w(TAG, "contacts observer registration failed: " + e.getClass().getSimpleName());
+                        return false;
+                    }
+                }
+
+                @Override public void unregister() {
+                    app.getContentResolver().unregisterContentObserver(contactsObserver);
+                }
+
+                @Override public void schedule(Runnable task, long delayMs) {
+                    WORKER.schedule(task, delayMs, TimeUnit.MILLISECONDS);
+                }
+
+                @Override public void rebuildGate() {
+                    SendLaterNotificationListener.rebuildGate(app, false);
+                }
+            });
+        }
+        return contactsWatcher;
+    }
+
+    private void stopContactsWatcher() {
+        ContactsChangeWatcher w = contactsWatcher;
+        if (w != null) w.stop();
     }
 
     private void registerStateReceiver() {
