@@ -173,8 +173,11 @@ public class LiveActionsTest {
 
     @Test public void snoozeAndCancelStayBroadcasts() throws IOException {
         String n = code(ENGINE.resolve("SendLaterNotifications.java"));
-        assertTrue(Pattern.compile("broadcast\\s*\\(\\s*c\\s*,\\s*SendLaterIntents\\.ACTION_SNOOZE").matcher(n).find());
-        assertTrue(Pattern.compile("broadcast\\s*\\(\\s*c\\s*,\\s*SendLaterIntents\\.ACTION_CANCEL").matcher(n).find());
+        // Deliver sec-L1 (dlv-lockscreen-actions): Snooze / Cancel are broadcasts on API 31+ only
+        // (authentication-required); below 31 they go through SendLaterUnlockActivity.
+        assertTrue(Pattern.compile("lockedAction\\s*\\(\\s*c\\s*,[^;]*SendLaterIntents\\.ACTION_SNOOZE").matcher(n).find());
+        assertTrue(Pattern.compile("lockedAction\\s*\\(\\s*c\\s*,[^;]*SendLaterIntents\\.ACTION_CANCEL").matcher(n).find());
+        assertTrue(method(n, "NotificationCompat\\.Action\\s+lockedAction\\s*\\(").contains("broadcast(c, action, id)"));
         String b = method(n, "private static PendingIntent broadcast\\s*\\(");
         assertTrue(b.contains("PendingIntent.getBroadcast(c, requestCode(action, id)"));
         assertTrue(b.contains("PendingIntent.FLAG_IMMUTABLE"));

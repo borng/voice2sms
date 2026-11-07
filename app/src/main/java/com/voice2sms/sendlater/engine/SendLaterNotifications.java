@@ -67,7 +67,7 @@ public final class SendLaterNotifications {
                 .setTimeoutAfter(Math.max(60_000L, m.getScheduledFor() - now + 60_000L))
                 .setOnlyAlertOnce(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
+                .addAction(lockedAction(c, "Cancel", SendLaterIntents.ACTION_CANCEL, m.getId()));
         PendingIntent edit = editActivity(c, m.getId());
         if (edit != null) b.addAction(0, "Edit", edit).setContentIntent(edit);
         b.addAction(unlockedAction(c, "Send now", SendLaterIntents.ACTION_SEND_NOW, m.getId()));
@@ -130,8 +130,8 @@ public final class SendLaterNotifications {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setOnlyAlertOnce(true)
                 .addAction(unlockedAction(c, sendAnywayLabel(m, nowMs), SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
-                .addAction(0, "Snooze 1 h", broadcast(c, SendLaterIntents.ACTION_SNOOZE, m.getId()))
-                .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
+                .addAction(lockedAction(c, "Snooze 1 h", SendLaterIntents.ACTION_SNOOZE, m.getId()))
+                .addAction(lockedAction(c, "Cancel", SendLaterIntents.ACTION_CANCEL, m.getId()));
         PendingIntent edit = editActivity(c, m.getId());
         b.setContentIntent(edit != null ? edit : reviewMode(c, m, true));
         post(c, m.getId(), b.build(), "hold:" + reason);
@@ -191,7 +191,7 @@ public final class SendLaterNotifications {
                 .setPublicVersion(draftPublicVersion(c, DraftNotice.PUBLIC_TITLE))
                 .setContentIntent(reviewMode(c, m, false))
                 .addAction(unlockedAction(c, "Replace and send", DraftNotice.ACTION_REPLACE, m.getId()))
-                .addAction(0, "Keep draft", broadcast(c, DraftNotice.ACTION_KEEP, m.getId()))
+                .addAction(lockedAction(c, "Keep draft", DraftNotice.ACTION_KEEP, m.getId()))
                 .addAction(unlockedAction(c, "Send both", DraftNotice.ACTION_BOTH, m.getId()));
         post(c, m.getId(), b.build(), "draft");
     }
@@ -288,7 +288,7 @@ public final class SendLaterNotifications {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(reviewMode(c, m, false))
                 .addAction(unlockedAction(c, sendAnyway, SendLaterIntents.ACTION_SEND_ANYWAY, m.getId()))
-                .addAction(0, "Cancel", broadcast(c, SendLaterIntents.ACTION_CANCEL, m.getId()));
+                .addAction(lockedAction(c, "Cancel", SendLaterIntents.ACTION_CANCEL, m.getId()));
         post(c, m.getId(), b.build(), "mayHaveSent");
     }
 
@@ -575,6 +575,32 @@ public final class SendLaterNotifications {
                 new NotificationCompat.Action.Builder(0, label, SendLaterUnlockActivity.pendingIntent(c, action, id));
         if (usesAuthenticatedBroadcast(Build.VERSION.SDK_INT)) b.setAuthenticationRequired(true);
         return b.build();
+    }
+
+    /**
+     * Deliver sec-L1: Cancel, Snooze 1 h and Keep draft change what happens to a message, so they
+     * need an unlock too (they matter when the lock screen shows all content). API 31+: the
+     * receiver broadcast, marked authentication-required, so Android asks for the unlock first.
+     * Below 31 (no such flag): {@link SendLaterUnlockActivity}, which acts only once unlocked and
+     * grants no foreground send for these.
+     */
+    private static NotificationCompat.Action lockedAction(Context c, String label, String action, long id) {
+        if (lockedActionUsesActivity(Build.VERSION.SDK_INT)) {
+            return new NotificationCompat.Action.Builder(0, label,
+                    SendLaterUnlockActivity.pendingIntent(c, action, id)).build();
+        }
+        return new NotificationCompat.Action.Builder(0, label, broadcast(c, action, id))
+                .setAuthenticationRequired(true)
+                .build();
+    }
+
+    /**
+     * Deliver sec-L1: whether Cancel / Snooze 1 h / Keep draft go through
+     * {@link SendLaterUnlockActivity} on this API level (below 31, where no action can be marked
+     * authentication-required); on 31+ they stay authentication-required broadcasts.
+     */
+    static boolean lockedActionUsesActivity(int sdkInt) {
+        return !usesAuthenticatedBroadcast(sdkInt);
     }
 
     private static PendingIntent broadcast(Context c, String action, long id) {
