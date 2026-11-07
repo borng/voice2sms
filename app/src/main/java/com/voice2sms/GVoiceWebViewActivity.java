@@ -87,6 +87,12 @@ public class GVoiceWebViewActivity extends Activity {
     private WebView webView;
     private String recipient;
     private String body;
+    /**
+     * deliver M1 (F1): whether the current regular compose (recipient/body) asked for auto-send,
+     * read when its intent arrives. injectComposer reads this, not getIntent(): a scheduled launch
+     * that onNewIntent refused while this compose runs replaces getIntent() but not the compose.
+     */
+    private boolean regularAutoSend;
     private boolean injected = false;
     private ValueCallback<Uri[]> fileUploadCallback;
     private volatile boolean stickerInjectionActive;
@@ -108,6 +114,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         recipient = getIntent().getStringExtra("recipient");
         body = getIntent().getStringExtra("body");
+        regularAutoSend = wantsAutoSend(getIntent());
 
         Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
         webView = app.getOrCreateWebView();
@@ -234,6 +241,7 @@ public class GVoiceWebViewActivity extends Activity {
 
         recipient = intent.getStringExtra("recipient");
         body = intent.getStringExtra("body");
+        regularAutoSend = wantsAutoSend(intent);
         injected = false;
         // deliver M1: the regular compose holds the WebView from now on (bounded).
         if (recipient != null && (scheduledSend == null || !scheduledSend.isActive())) noteRegularCompose();
@@ -581,15 +589,20 @@ public class GVoiceWebViewActivity extends Activity {
      * re-marks it and the script reports Send clicked / gave up (RegularSend, bounded).
      */
     private void noteRegularCompose() {
-        boolean auto = getIntent() != null && getIntent().getBooleanExtra("force_auto_send", false);
-        RegularSend.begin(System.currentTimeMillis(), auto);
+        RegularSend.begin(System.currentTimeMillis(), regularAutoSend);
+    }
+
+    /** The regular compose intent's auto-send request (Gemini, Wear, RESPOND_VIA_MESSAGE). */
+    private static boolean wantsAutoSend(Intent intent) {
+        return intent != null && intent.getBooleanExtra("force_auto_send", false);
     }
 
     private void injectComposer() {
         injected = true;
 
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean autoSend = getIntent().getBooleanExtra("force_auto_send", false);
+        // deliver M1 (F1): the compose's own request, kept across a refused scheduled intent.
+        boolean autoSend = regularAutoSend;
         int autoSendDelay = prefs.getInt("auto_send_delay", 2) * 1000;
 
         // Global auto-send rate limit (single chokepoint for Gemini, Wear,

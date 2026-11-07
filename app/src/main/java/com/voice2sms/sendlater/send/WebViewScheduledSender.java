@@ -34,6 +34,8 @@ import com.voice2sms.sendlater.store.ScheduledSendQueue;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -72,6 +74,13 @@ public final class WebViewScheduledSender implements ScheduledSender {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     /** Row reloads before a launch (Room is never read on the main thread). */
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
+    /**
+     * deliver M1 (F2): per launch token, the {@link SystemClock#uptimeMillis} (the main Handler's
+     * clock) at which an unclaimed launch times out. Each launch() pass re-arms it to
+     * {@link #CLAIM_TIMEOUT_MS} from then, so neither the row reload nor a bounded wait for a
+     * regular send ({@link RegularSend#MAX_LAUNCH_WAIT_MS}) eats the activity's claim window.
+     */
+    private static final Map<String, Long> CLAIM_DEADLINES = new ConcurrentHashMap<>();
 
     /** D30: the controller reads the thread before it taps Send ({@link PreSendRead}). */
     @Override
@@ -170,6 +179,8 @@ public final class WebViewScheduledSender implements ScheduledSender {
         boolean waiting = false;
         try {
             if (!LaunchClaims.INSTANCE.isPending(id)) return;
+            // deliver M1 (F2): the claim window counts from this pass, not from start().
+            rearmClaim(token);
             if (ScheduledSendController.offer(id, token, checkTime, 0L)) return;
             if (ForegroundUse.isUserBusy(System.currentTimeMillis())) {
                 // OD23: the user started using the WebView during the queue delay.
@@ -366,12 +377,31 @@ public final class WebViewScheduledSender implements ScheduledSender {
 
     /** Nobody took the launch in time: nothing was typed, so CANNOT_SHOW ("Couldn't send automatically"). */
     private static void watchClaim(final Context app, final long id, final String token, long delayMs) {
-        MAIN.postDelayed(() -> {
-            if (!LaunchClaims.INSTANCE.take(id, token)) return;
-            cancelLaunchNotification(app, id);
-            SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
-                    SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "launch_timeout"));
-        }, delayMs + CLAIM_TIMEOUT_MS);
+        CLAIM_DEADLINES.put(token, SystemClock.uptimeMillis() + delayMs + CLAIM_TIMEOUT_MS);
+        MAIN.postDelayed(() -> checkClaim(app, id, token), delayMs + CLAIM_TIMEOUT_MS);
+    }
+
+    /** The watchdog: re-posts itself while a later launch() pass pushed the deadline out (M1, F2). */
+    private static void checkClaim(final Context app, final long id, final String token) {
+        long left = ClaimWindow.timeLeft(CLAIM_DEADLINES.get(token), SystemClock.uptimeMillis());
+        if (left > 0) {
+            MAIN.postDelayed(() -> checkClaim(app, id, token), left);
+            return;
+        }
+        CLAIM_DEADLINES.remove(token);
+        if (!LaunchClaims.INSTANCE.take(id, token)) return;
+        cancelLaunchNotification(app, id);
+        SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                SendDetails.forEngine(SendOutcome.CANNOT_SHOW, "launch_timeout"));
+    }
+
+    /** M1 (F2): this launch's claim window restarts now (never shortened). */
+    private static void rearmClaim(String token) {
+        if (token == null) return;
+        Long deadline = CLAIM_DEADLINES.get(token);
+        if (deadline != null) {
+            CLAIM_DEADLINES.put(token, ClaimWindow.rearmed(deadline, SystemClock.uptimeMillis(), CLAIM_TIMEOUT_MS));
+        }
     }
 
     // ================================================================== device state

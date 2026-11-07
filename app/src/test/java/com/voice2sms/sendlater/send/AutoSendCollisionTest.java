@@ -147,6 +147,60 @@ public class AutoSendCollisionTest {
         assertTrue(RegularSend.LAUNCH_WAIT_POLL_MS > 0);
     }
 
+    // ================================================================== the claim window (F2)
+
+    @Test public void aLongWaitStillLeavesTheActivityTheFullClaimWindow() {
+        long claim = WebViewScheduledSender.CLAIM_TIMEOUT_MS;
+        long start = T0;                                  // start(): no queue delay
+        long deadline = start + claim;                    // watchClaim's first deadline
+        // Each launch() pass while waiting re-arms it; the last pass decides the launch.
+        long decided = start + 2_000L /* row reload */ + RegularSend.MAX_LAUNCH_WAIT_MS
+                + RegularSend.LAUNCH_WAIT_POLL_MS;
+        for (long pass = start + 2_000L; pass <= decided; pass += RegularSend.LAUNCH_WAIT_POLL_MS) {
+            deadline = ClaimWindow.rearmed(deadline, pass, claim);
+        }
+        assertEquals("the activity gets the whole window from the decision", decided + claim, deadline);
+        // The first watchdog post fires at start + claim and finds time left: it re-posts.
+        long left = ClaimWindow.timeLeft(deadline, start + claim);
+        assertEquals(decided - start, left);
+        assertTrue(left > 0);
+        assertEquals(0L, ClaimWindow.timeLeft(deadline, decided + claim));
+        assertEquals(0L, ClaimWindow.timeLeft(deadline, decided + claim + 5L));
+    }
+
+    @Test public void aRearmNeverShortensTheDeadline() {
+        long queued = T0 + 90_000L;                       // a launch queued behind earlier ones
+        assertEquals(queued, ClaimWindow.rearmed(queued, T0, WebViewScheduledSender.CLAIM_TIMEOUT_MS));
+        assertEquals(T0 + 1 + WebViewScheduledSender.CLAIM_TIMEOUT_MS,
+                ClaimWindow.rearmed(T0, T0 + 1, WebViewScheduledSender.CLAIM_TIMEOUT_MS));
+    }
+
+    @Test public void anUnrecordedDeadlineFiresAtOnce() {
+        assertEquals(0L, ClaimWindow.timeLeft(null, T0));
+    }
+
+    @Test public void theWatchdogHonoursARearmedDeadline() throws IOException {
+        String s = code(SENDER);
+        String launch = block(s, "private static void launch\\(final Context app, final long id, final String token, "
+                + "final long checkTime,\\s*final long waitStart\\)\\s*\\{");
+        int pending = launch.indexOf("LaunchClaims.INSTANCE.isPending(id)");
+        int rearm = launch.indexOf("rearmClaim(token);");
+        int wait = launch.indexOf("RegularSend.launchWait(");
+        assertTrue("every launch() pass re-arms the claim window, before it waits or plans",
+                pending >= 0 && rearm > pending && rearm < wait);
+        String watch = block(s, "private static void watchClaim\\(");
+        assertTrue(watch.contains("CLAIM_DEADLINES.put(token,"));
+        String check = block(s, "private static void checkClaim\\(");
+        int left = check.indexOf("ClaimWindow.timeLeft(CLAIM_DEADLINES.get(token)");
+        int repost = check.indexOf("MAIN.postDelayed(() -> checkClaim(app, id, token), left)");
+        int take = check.indexOf("LaunchClaims.INSTANCE.take(id, token)");
+        int remove = check.indexOf("CLAIM_DEADLINES.remove(token)");
+        assertTrue("a pushed-out deadline re-posts the watchdog before it takes the claim",
+                left >= 0 && repost > left && take > repost);
+        assertTrue("the deadline is dropped once the watchdog is done", remove > repost && remove < take);
+        assertTrue(check.contains("\"launch_timeout\""));
+    }
+
     // ================================================================== wiring (source)
 
     @Test public void injectComposerMarksTheRegularSendBeforeTheScriptRuns() throws IOException {
@@ -173,6 +227,35 @@ public class AutoSendCollisionTest {
                 a.contains("RegularSend.onConsole(cm.message(), System.currentTimeMillis());"));
         String gone = block(a, "public boolean onRenderProcessGone\\(");
         assertTrue("the renderer took the script with it", gone.contains("RegularSend.clear();"));
+    }
+
+    @Test public void aRefusedScheduledIntentKeepsTheRegularComposesAutoSend() throws IOException {
+        String a = code(ACTIVITY);
+        // F1: injectComposer reads the compose's own request, never the current intent, which a
+        // refused scheduled launch (onNewIntent's setIntent before handle()) may have replaced.
+        String inject = block(a, "private void injectComposer\\(\\)\\s*\\{");
+        assertFalse("injectComposer must not read getIntent()", inject.contains("getIntent()"));
+        assertTrue(inject.contains("boolean autoSend = regularAutoSend;"));
+        String note = block(a, "private void noteRegularCompose\\(\\)\\s*\\{");
+        assertFalse(note.contains("getIntent()"));
+        assertTrue(note.contains("RegularSend.begin(System.currentTimeMillis(), regularAutoSend)"));
+        // The field changes only when a regular compose arrives: after handle() declined the intent.
+        String newIntent = block(a, "protected void onNewIntent\\(Intent intent\\)\\s*\\{");
+        int handle = newIntent.indexOf("scheduledSend.handle(intent, false)) return;");
+        int set = newIntent.indexOf("regularAutoSend = wantsAutoSend(intent);");
+        int recipient = newIntent.indexOf("recipient = intent.getStringExtra(\"recipient\");");
+        assertTrue(handle >= 0 && set > handle && recipient > handle);
+        assertEquals("one assignment in onNewIntent", newIntent.indexOf("regularAutoSend ="),
+                newIntent.lastIndexOf("regularAutoSend ="));
+        String create = block(a, "protected void onCreate\\(Bundle savedInstanceState\\)\\s*\\{");
+        assertTrue(create.contains("regularAutoSend = wantsAutoSend(getIntent());"));
+        // Nowhere else: the scheduled branch never sets it.
+        Matcher m = Pattern.compile("\\bregularAutoSend\\s*=[^=]").matcher(a);
+        int assignments = 0;
+        while (m.find()) assignments++;
+        assertEquals("regularAutoSend is set only from a regular intent (onCreate, onNewIntent)", 2, assignments);
+        String wants = block(a, "private static boolean wantsAutoSend\\(Intent intent\\)\\s*\\{");
+        assertTrue(wants.contains("intent.getBooleanExtra(\"force_auto_send\", false)"));
     }
 
     @Test public void theLaunchWaitsForARegularSendAndNeverConsumesTheTapGrantWhileWaiting() throws IOException {
