@@ -39,7 +39,7 @@ android {
         // versionCode and versionName are set dynamically from git tags in CI,
         // or fall back to defaults for local builds
         versionCode project.hasProperty('VERSION_CODE') ? project.property('VERSION_CODE').toInteger() : 1
-        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "1.2.0"
+        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "2.0.0"
         // Build stamp surfaced in SettingsActivity for bug-report triage.
         buildConfigField 'String', 'GIT_SHA', "\"${computeGitSha()}\""
         buildConfigField 'String', 'BUILD_DATE', "\"${computeBuildDate()}\""

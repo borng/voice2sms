@@ -14,7 +14,7 @@ ADB="${ANDROID_HOME:-/opt/android-sdk}/platform-tools/adb"
 PKG="com.voice2sms"
 ITERATIONS="${ITERATIONS:-3}"
 WAIT_SECS="${WAIT_SECS:-5}"
-RECIPIENT="${RECIPIENT:-+15551234567}"
+RECIPIENT="${RECIPIENT:-+12025550123}"
 BODY="${BODY:-smoke-test}"
 
 if ! command -v "$ADB" >/dev/null 2>&1; then

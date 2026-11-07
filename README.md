@@ -2,6 +2,31 @@
 
 Route all Android SMS through Google Voice — from any app, Gemini, or your Wear OS watch — and schedule texts to send later.
 
+## New in 2.0
+
+- **Send Later.** Schedule a text from the Google Voice app or from Voice2SMS's
+  Google Voice screen, and it goes out through Google Voice at the time you pick.
+  It holds the text if they reply first, and it never sends late without asking.
+  See [Send Later](#send-later).
+- **A draft in the way.** If the conversation already holds a draft you typed when a
+  scheduled text is due, nothing is typed over it. A notification asks you:
+  **Replace and send**, **Keep draft** or **Send both**.
+- **Names and numbers.** When you schedule from a number, the name is filled in
+  from your contacts (with the Contacts permission). A number without a name
+  is shown formatted, like (202) 555-0123.
+- **A restored phone starts with Send Later off.** The Send Later switch is kept
+  out of Android backup and device transfer, so a phone restored from backup
+  never starts sending texts by itself.
+- **Lock-screen actions need an unlock.** On the lock screen, every Send Later
+  notification action (Send now, Send anyway, Cancel, Snooze 1 h, Keep draft,
+  Replace and send, Send both) asks you to unlock first.
+- **Auto-send only from Voice2SMS's own paths.** Gemini, the Wear companion and
+  quick reply from a call (RESPOND_VIA_MESSAGE) still auto-send. Any other app that
+  asks for an auto-send gets review mode: the message opens filled in, and
+  nothing is sent until you tap Send.
+
+See [CHANGELOG.md](CHANGELOG.md) for every release.
+
 ## The Problem
 
 If you use Google Voice as your primary number, texting is broken on Android. Tapping a phone number, sharing text, asking Gemini to "send a text," or using Google Assistant on your watch — all fire standard SMS intents that go to your carrier number, not Google Voice. There's no way to set Google Voice as the default SMS handler.
@@ -16,8 +41,12 @@ Voice2SMS registers as the default SMS app and intercepts all SMS intents. Inste
 - **Share > SMS** from any app
 - **"Hey Google, text Rachel"** from Gemini on your phone
 - **"Hey Google, text Rachel"** from Google Assistant on your watch (via Wear OS companion)
-- **Quick-reply from notifications**
+- **Quick-reply text when you decline a call** (`RESPOND_VIA_MESSAGE`)
 - **Gemini's Send button and voice confirmations** (with optional AccessibilityService)
+
+Gemini (with **Auto-send Gemini messages** on), the watch and call quick-reply
+send on their own. Every other app's message opens in review mode, filled in,
+and waits for you to tap Send — even if that app asks for an automatic send.
 
 ### What it handles inbound
 
@@ -120,16 +149,21 @@ The ADB commands persist across reboots.
 
 ## Settings
 
-- **Gemini auto-send** — Automatically send intercepted Gemini SMS (vs. opening for review)
+- **Set as default SMS app**, **Switch Google account**
+- **Enable Gemini interception** — opens Accessibility settings
+- **Auto-send Gemini messages** — Automatically send intercepted Gemini SMS (vs. opening for review). Default on.
+- **Run setup wizard** — reopen the first-install guide
 - **Auto-send confirmation** — Show a "Sent via Google Voice" notification on auto-sends
-- **Send Later** — On/off switch, slot times, hold defaults and permission rows. See [Send Later](#send-later).
 - **Incoming SMS notifications** — Show a heads-up notification for every received SMS (default on; useful for 2FA codes). Toggling off leaves the inbox-persistence path intact — only the live notification is suppressed.
+- **Send Later** category — the on/off switch, **Upcoming**, the **Morning / Afternoon / Evening / Night time** slots, **If I text them first** (Still send or Hold and ask), **Hold if they text first** (the default for new messages), **Clear draft after scheduling**, and live permission rows. See [Send Later](#send-later).
 
 ## Send Later
 
 Schedule a text from where you already write it, and Voice2SMS sends it through
-Google Voice at the time you pick. Send Later is **on by default**; you can
-turn it off in Settings → Send Later.
+Google Voice at the time you pick. Send Later is **on by default** on a new
+install; you can turn it off in Settings → Send Later. The switch is not
+included in Android backup or device transfer, so a phone set up from a backup
+of a phone that used Voice2SMS starts with Send Later **off** until you turn it on.
 
 ### Scheduling a message
 
@@ -214,8 +248,23 @@ open App info for Voice2SMS, tap ⋮ and choose **Allow restricted settings**.
   the whole send, locked or not. On a locked phone, the screen turns on and the
   cover shows over the lock screen; the phone stays locked. On an unlocked
   phone, the cover has a **Stop** button. A send is given at most one minute.
+- **Only that conversation.** The message is typed only into the conversation
+  with the number you scheduled for. If Google Voice shows any other
+  conversation, nothing is typed and you get a reminder instead.
+- **A draft in the way.** If that conversation's message box already holds a
+  draft you typed, nothing is typed over it. A notification shows your draft and
+  the scheduled text and asks: **Replace and send** (clear the draft and send the
+  scheduled text), **Keep draft** (send nothing; the message waits in Upcoming
+  for you) or **Send both** (send the scheduled text, then put your draft back).
+  A draft that matches the scheduled text is treated as the scheduled text.
+- **Your own sends come first.** If Voice2SMS is in the middle of another
+  send (Gemini, the watch, call quick-reply or a message you are reviewing), the
+  scheduled send waits up to about 20 seconds, then gives you a reminder instead
+  of taking over the screen.
 - **Sent** is shown only when Voice2SMS sees the new message in the
-  conversation during that send.
+  conversation during that send, and Google Voice no longer shows it as sending.
+  If Google Voice marks it "Not sent" within the next half minute, the message
+  is moved back to "may have already sent" (below).
 - **Hold if they text first.** If they texted or called since you scheduled,
   the message is **held**, not sent, and a notification asks you: **Send
   anyway**, **Snooze 1 h** or **Cancel** (tap the notification to edit). With notification access, this
@@ -237,11 +286,19 @@ open App info for Voice2SMS, tap ⋮ and choose **Allow restricted settings**.
   sends it again only if you tap it.
 - A held or reminded message that you leave for 24 hours expires and stays
   listed under Recent.
-- **Send now** and **Send anyway** need the phone unlocked.
+- **Every action needs the phone unlocked.** On the lock screen, Send now,
+  Send anyway, Cancel, Snooze 1 h, Keep draft, Replace and send and Send both
+  ask you to unlock first. Send Later notifications are marked private, so the
+  lock screen hides their text, names and numbers unless Android is set to show
+  all notification content there.
+- **Names and numbers.** Notifications, the sheet and Upcoming show the
+  person's name. If you scheduled from a number and Contacts is allowed, the
+  name is filled in from your contacts. A number without a name is shown
+  formatted, like (202) 555-0123.
 
 ### Permissions
 
-v1.6.0 adds these permissions, all for Send Later:
+2.0.0 adds these permissions, all for Send Later:
 
 | Permission | Why |
 |---|---|
@@ -263,8 +320,10 @@ Notification access is granted in system settings, not as a permission.
   deleted after 90 days unseen.
 - From notifications, Send Later keeps only a fingerprint (hash) and time of
   each message, only for conversations with a scheduled message, for 7 days.
-- The Send Later database and settings are excluded from Android backup and
-  device transfer.
+- The Send Later database and the Send Later switch are excluded from Android
+  backup and device transfer, so a restored phone starts with Send Later off.
+  The other Send Later preferences (slot times, hold defaults) are backed up
+  with the rest of the app's settings.
 - Release builds log no message text, names or numbers.
 
 ## Tested On
@@ -298,8 +357,8 @@ Notification access is granted in system settings, not as a permission.
 Pushing a `v*` tag triggers GitHub Actions to build, sign, and publish both APKs as a GitHub Release:
 
 ```bash
-git tag -a v1.5.0 -m "Wear OS companion + auto-send notification"
-git push origin v1.5.0
+git tag -a v2.0.0 -m "Send Later"
+git push origin v2.0.0
 ```
 
 See `.github/workflows/release.yml` for details. Requires four repository secrets for APK signing (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`).
@@ -322,9 +381,12 @@ MIT License. See [LICENSE](LICENSE).
 
 ## Version History
 
-### v1.6.0
+The full list is in [CHANGELOG.md](CHANGELOG.md).
 
-Send Later: schedule a text and have it sent through Google Voice.
+### v2.0.0
+
+Send Later: schedule a text and have it sent through Google Voice. (Send Later
+was developed as v1.6.0; it ships as 2.0.0.)
 
 - Schedule from the Google Voice app (accessibility overlay tab) or from the
   Voice2SMS Google Voice screen; one sheet with rolling time slots, "Hold if
@@ -339,7 +401,16 @@ Send Later: schedule a text and have it sent through Google Voice.
 - Optional notification access for reply detection; battery health row and warning
 - On by default; switching it off cancels alarms and keeps your messages
 - Setup wizard steps for Send Later and Battery, with a battery indicator
-- Local-only storage with 30-day deletion, excluded from backup
+- Local-only storage with 30-day deletion, excluded from backup; the Send Later
+  switch is excluded too, so a restored phone starts with it off
+- A draft already in the conversation is never typed over: Replace and send,
+  Keep draft or Send both
+- Names filled from contacts; numbers without a name shown formatted
+- Typed only into the scheduled conversation; never takes over a running
+  Gemini, Wear or quick-reply send
+- Every Send Later notification action needs an unlock on the lock screen
+- Auto-send now only from Voice2SMS's own paths (Gemini, Wear,
+  RESPOND_VIA_MESSAGE); another app's auto-send request opens review mode
 - New permissions: `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`,
   `ACCESS_NETWORK_STATE`, `READ_CONTACTS` (optional), `USE_FULL_SCREEN_INTENT`,
   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`

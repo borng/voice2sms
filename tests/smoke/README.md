@@ -27,7 +27,7 @@ Environment variables:
 |--------------|------------------|------------------------------------------|
 | `ITERATIONS` | 3                | how many cold-start intent cycles to run |
 | `WAIT_SECS`  | 5                | time to wait for crash to appear         |
-| `RECIPIENT`  | `+15551234567`   | destination number (not sent, just URI)  |
+| `RECIPIENT`  | `+12025550123`   | destination number (not sent, just URI)  |
 | `BODY`       | `smoke-test`     | body text (URL-encoded automatically)    |
 
 ### `sendlater-smoke.sh` (Send Later, debug build only)
@@ -97,7 +97,7 @@ only) and mask numbers to the last 4 digits.
 | `DEBUG_INBOUND` | `--es e164`, `--es text` | records a fake inbound SMS event and calls `SendLaterEngine.onInboundEvent` |
 | `DEBUG_LAST_CALL` | `--el id` | `SendLaterEngine.onLastCall` (the T-5 alarm) |
 | `DEBUG_CANCEL` | `--el id` | `SendLaterEngine.onCancel` |
-| `DEBUG_ENABLE` | `--ez on true\|false` | writes the `sendlater_enabled` preference and calls `SendLaterEngine.applySwitch` (off: alarms and network waiters cancelled, records kept; on: expiry sweep and re-arm), then broadcasts `ACTION_STATE_CHANGED`; result `enabled=B previous=B`. Without `--ez on` it changes nothing (`error=no_on`) |
+| `DEBUG_ENABLE` | `--ez on true\|false` | writes the master switch (`sendlater_enabled` in the non-backed-up `sendlater_switch` prefs file) and calls `SendLaterEngine.applySwitch` (off: alarms and network waiters cancelled, records kept; on: expiry sweep and re-arm), then broadcasts `ACTION_STATE_CHANGED`; result `enabled=B previous=B`. Without `--ez on` it changes nothing (`error=no_on`) |
 
 #### Device setup checklist (Samsung One UI, e.g. Galaxy S22)
 
@@ -118,8 +118,8 @@ only) and mask numbers to the last 4 digits.
 
 `./gradlew test` runs `SourceSafetyTest` which enforces source-level guards
 (e.g., "`prefetchUrlAsync` never reappears in `Voice2SmsApplication`",
-"every `V2SBridge.runOnUiThread` checks `isActivityAlive()`"). These run in
-~2 seconds, no device needed, and catch most regressions at compile time.
+"every `V2SBridge.runOnUiThread` checks `isActivityAlive()`"). The whole JVM
+suite needs no device (under a minute) and catches most regressions before a build reaches a phone.
 
 Send Later adds two more guard classes: `SendLaterSourceSafetyTest` (no Wear/Gemini auto-send
 extra or `AutoSendRateLimiter` in the scheduled path, guarded WebView access, Voice id allowlist,
