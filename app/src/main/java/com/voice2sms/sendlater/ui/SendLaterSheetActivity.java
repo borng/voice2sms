@@ -37,6 +37,7 @@ import com.google.android.material.timepicker.TimeFormat;
 import com.voice2sms.R;
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.domain.ChipLabel;
 import com.voice2sms.sendlater.domain.LatenessPolicy;
 import com.voice2sms.sendlater.domain.PresetSlots;
 import com.voice2sms.sendlater.domain.RemindReason;
@@ -350,7 +351,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                     RadioButton rb = (RadioButton) inf.inflate(R.layout.sendlater_choice_row, recipientChoices, false);
                     rb.setId(View.generateViewId());
                     rb.setTag(number);
-                    rb.setText(number);
+                    rb.setText(ChipLabel.formatNumber(number));
                     recipientChoices.addView(rb);
                 }
             }
@@ -418,7 +419,8 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         if (logic == null) return;
         binding = true;
         try {
-            String number = logic.getE164();
+            // D39: numbers are shown formatted; logic keeps the E.164 itself.
+            String number = logic.getE164() != null ? ChipLabel.formatNumber(logic.getE164()) : null;
             boolean hasName = displayName != null && !displayName.trim().isEmpty();
             if (hasName && number != null) {
                 cardRecipient.setText(getString(R.string.sendlater_sheet_card_name_number, displayName, number));

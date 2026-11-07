@@ -22,6 +22,7 @@ import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.a11y.A11yHealth;
 import com.voice2sms.sendlater.a11y.A11yWarning;
+import com.voice2sms.sendlater.domain.ChipLabel;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ScheduledMessage.Status;
@@ -268,11 +269,9 @@ public class UpcomingActivity extends AppCompatActivity {
     }
 
     private String nameOf(ScheduledMessage m) {
-        String n = m.getRecipientDisplayName();
-        if (n != null && !n.trim().isEmpty()) return n.trim();
-        String e = m.getRecipientE164();
-        if (e != null && !e.isEmpty()) return e;
-        return getString(R.string.sendlater_upcoming_unknown_recipient);
+        // D39: a number without a name is shown formatted, as everywhere else.
+        return ChipLabel.recipient(m.getRecipientDisplayName(), m.getRecipientE164(),
+                getString(R.string.sendlater_upcoming_unknown_recipient));
     }
 
     private String formatTime(long ms) {

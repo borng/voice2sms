@@ -9,6 +9,28 @@ public final class PhoneNumbers {
 
     private PhoneNumbers() {}
 
+    /** Longest E.164 number: 15 digits after the "+" (ITU-T E.164). */
+    public static final int E164_MAX_DIGITS = 15;
+    /** Shortest number accepted anywhere in the app: 7 digits after the "+". */
+    public static final int E164_MIN_DIGITS = 7;
+
+    /**
+     * The one E.164 rule (D38): "+", then a digit 1-9, then digits only, 7-15 digits in all.
+     * No spaces, no separators, no "+0..." (no country code starts with 0). Every capture, URL and
+     * directory path uses this; {@code ThreadDirectory.isE164} delegates here. inject.js mirrors it.
+     */
+    public static boolean isE164(String s) {
+        if (s == null) return false;
+        int n = s.length() - 1;
+        if (n < E164_MIN_DIGITS || n > E164_MAX_DIGITS || s.charAt(0) != '+') return false;
+        if (s.charAt(1) < '1' || s.charAt(1) > '9') return false;
+        for (int i = 2; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
     /**
      * @param raw    text such as "(xxx) xxx-xxxx", "xxx-xxx-xxxx", "1 xxx xxx xxxx", "+1xxxxxxxxxx"
      * @param region default region for numbers without "+"; only "US" (or null, meaning US) is

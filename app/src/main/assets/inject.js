@@ -1322,12 +1322,14 @@ window.v2sReadThread = function(e164, limit) {
 
 // ── Send Later helpers ────────────────────────────────────────────────────
 
-/** E.164 of a GV item id when it is a 1:1 thread id ("t.+<digits>"), else null. */
+/** E.164 of a GV item id when it is a 1:1 thread id ("t.+<1-9><digits>", 7-15 digits), else null. */
 function _v2sSlE164FromItemId(id) {
     if (typeof id !== 'string' || !id) return null;
     // A literal '+' in the query decodes to a space; read it back as the E.164 plus.
     id = id.replace(/^t\. /, 't.+');
     if (!/^t\.\+\d{7,15}$/.test(id)) return null;
+    // D38: the one E.164 rule (PhoneNumbers.isE164): no country code starts with 0.
+    if (id.charAt(3) === '0') return null;
     return id.substring(2);
 }
 
