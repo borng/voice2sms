@@ -462,7 +462,8 @@ public final class SendLaterWebHooks {
 
     /**
      * Main thread: registers {@code cb} and returns the JS that asks the page for the newest
-     * {@code limit} bubbles. The callback gets null after {@link #THREAD_READ_TIMEOUT_MS}.
+     * {@code limit} bubbles. The callback gets null after {@link #THREAD_READ_TIMEOUT_MS}, also
+     * when the page has no reader.
      */
     public String beginThreadRead(String e164, int limit, ThreadReadCallback cb) {
         final PendingRead r = new PendingRead(e164, cb);
@@ -478,9 +479,9 @@ public final class SendLaterWebHooks {
         }, THREAD_READ_TIMEOUT_MS);
         String q = JSONObject.quote(e164);
         int n = Math.max(1, Math.min(limit, ThreadBubble.MAX_BUBBLES));
-        return "if (window.v2sReadThread) { window.v2sReadThread(" + q + ", " + n + "); }"
-                + " else if (window.V2SBridge) { V2SBridge.onThreadRead(JSON.stringify({e164: " + q
-                + ", bubbles: null})); }";
+        // No page reader: nothing to answer from here (the bridge needs the page nonce); the
+        // timeout above answers null.
+        return "if (window.v2sReadThread) { window.v2sReadThread(" + q + ", " + n + "); }";
     }
 
     /** Binder thread: delivers a page answer to every waiting reader of that thread. */

@@ -143,6 +143,47 @@ public class BridgeNonceSourceTest {
         }
     }
 
+    /**
+     * Java-built JS (evaluateJavascript strings) must not drift from the bridge signatures: a
+     * nonce-gated method called from a Java string literal passes {@code _v2sBridgeNonce} first,
+     * or a wrong-arity call throws in the page and the answer never arrives.
+     */
+    @Test
+    public void javaBuiltScriptsNeverCallANonceGatedMethodWithoutTheNonce() throws IOException {
+        java.util.List<Path> sources = new java.util.ArrayList<>();
+        try (java.util.stream.Stream<Path> walk = Files.walk(MAIN)) {
+            walk.filter(p -> p.toString().endsWith(".java")).forEach(sources::add);
+        }
+        assertTrue("main sources found", sources.size() > 10);
+        Pattern literal = Pattern.compile("\"((?:[^\"\\\\\\n]|\\\\.)*)\"");
+        for (Path p : sources) {
+            String src = read(p);
+            Matcher lit = literal.matcher(src);
+            while (lit.find()) {
+                String s = lit.group(1);
+                for (String m : NONCE_METHODS) {
+                    Matcher call = Pattern.compile("V2SBridge\\." + m + "\\(([^,)]*)").matcher(s);
+                    while (call.find()) {
+                        assertTrue(p.getFileName() + ": V2SBridge." + m
+                                        + " in a Java-built script must pass _v2sBridgeNonce first",
+                                call.group(1).trim().equals("_v2sBridgeNonce"));
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void threadReadScriptLeavesTheMissingReaderToTheTimeout() throws IOException {
+        String hooks = read(HOOKS);
+        String begin = body(hooks, "public\\s+String\\s+beginThreadRead\\s*\\([^)]*\\)\\s*\\{");
+        assertNotNull(begin);
+        assertTrue("asks the page reader", begin.contains("window.v2sReadThread"));
+        assertFalse("no Java-built bridge answer (the timeout answers null)",
+                begin.contains("V2SBridge."));
+        assertTrue("the timeout still answers null", begin.contains("r.cb.onThreadRead(null)"));
+    }
+
     @Test
     public void onPageFinishedUsesOriginGuardNotAPrefix() throws IOException {
         String a = read(ACTIVITY);
