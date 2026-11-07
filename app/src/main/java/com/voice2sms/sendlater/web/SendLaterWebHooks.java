@@ -59,6 +59,12 @@ public final class SendLaterWebHooks {
         /** Current WebView URL; main thread only; null when the activity is gone. */
         String currentUrl();
 
+        /**
+         * deliver sec-M1: the bridge nonce issued for the current document (BridgeNonce), or null
+         * when none is (the page is not a finished trusted GV page). Never logged.
+         */
+        String bridgeNonce();
+
         /** {@code GVoiceWebViewActivity.readThread}. */
         void readThread(String e164, int limit, ThreadReadCallback cb);
 
@@ -153,7 +159,9 @@ public final class SendLaterWebHooks {
             }
         }
         moduleOnPage = true;
-        return moduleScript + "\n;if (typeof v2sSendLaterInit === 'function') v2sSendLaterInit();";
+        // deliver sec-M1: the module's bridge calls carry this document's nonce.
+        return moduleScript + BridgeNonce.pageStatement(host.bridgeNonce())
+                + "\n;if (typeof v2sSendLaterInit === 'function') v2sSendLaterInit();";
     }
 
     /**

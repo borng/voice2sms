@@ -12,10 +12,10 @@ import java.util.Locale;
  * {@code scheme://authority} prefix is parsed (by {@link URI}), so path or query characters never
  * matter; anything the parser refuses is untrusted (fail closed).
  *
- * <p>Residual: a {@code @JavascriptInterface} is visible to every frame of the page, so this
- * main-frame check does not stop a cross-origin iframe inside a voice.google.com page from calling
- * the bridge. The structural fix is {@code WebViewCompat.addWebMessageListener} with the allowed
- * origin {@code https://voice.google.com}.
+ * <p>A {@code @JavascriptInterface} is visible to every frame of the page and the main-frame URL
+ * can lag behind the committed document, so this check alone does not stop another document or a
+ * cross-origin iframe from calling the bridge. deliver sec-M1 adds {@link BridgeNonce}: the Send
+ * Later bridge methods also need a per-document secret that only a trusted GV top frame is given.
  *
  * <p>{@link #isAllowedNavigation} is the {@code shouldOverrideUrlLoading} allowlist: https only,
  * host google.com, googleapis.com or gstatic.com or a subdomain of one of them, or exactly

@@ -195,7 +195,7 @@ public class DraftChoiceSourceTest {
         assertTrue(draftBranch.contains("var step = draftStep(current);"));
         assertTrue(draftBranch.contains("if (step !== 'replace' && step !== 'both') {"));
         String step = block(entry, "function draftStep\\s*\\(text\\)\\s*\\{");
-        assertTrue(step.contains("V2SBridge.scheduledDraftStep(token, String(text))"));
+        assertTrue(step.contains("V2SBridge.scheduledDraftStep(_v2sBridgeNonce, token, String(text))"));
         String restore = block(js, "(?m)^function v2sScheduledRestoreDraft\\s*\\(draft, text\\)\\s*\\{");
         assertTrue("never over other text",
                 restore.indexOf("!_v2sScheduledHolds(el, text)") < restore.indexOf("_v2sScheduledSet(el, draft, false)"));

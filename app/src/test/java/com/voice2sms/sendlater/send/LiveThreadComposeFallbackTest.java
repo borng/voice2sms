@@ -311,7 +311,7 @@ public class LiveThreadComposeFallbackTest {
         String js = code(INJECT);
         String entry = block(js, "(?m)^function v2sScheduledCompose\\s*\\(phone, body, autoSendDelay, token\\)\\s*\\{");
         String ask = block(entry, "function askClick\\s*\\(\\s*\\)\\s*\\{");
-        int at = ask.indexOf("V2SBridge.scheduledClickStateAt(token, String(location.href))");
-        assertTrue(at >= 0 && at < ask.indexOf("V2SBridge.scheduledClickState(token)"));
+        int at = ask.indexOf("V2SBridge.scheduledClickStateAt(_v2sBridgeNonce, token, String(location.href))");
+        assertTrue(at >= 0 && at < ask.indexOf("V2SBridge.scheduledClickState(_v2sBridgeNonce, token)"));
     }
 }

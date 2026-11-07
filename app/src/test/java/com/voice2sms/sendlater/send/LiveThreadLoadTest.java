@@ -217,7 +217,7 @@ public class LiveThreadLoadTest {
         assertTrue("the extra load extends the compose timeout", r.contains("job.composeGraceMs = RELOAD_COMPOSE_GRACE_MS;"));
 
         String a = code(ACTIVITY);
-        String b = block(a, "@JavascriptInterface\\s+public\\s+void\\s+onScheduledWrongPage\\s*\\(String token\\)\\s*\\{");
+        String b = block(a, "@JavascriptInterface\\s+public\\s+void\\s+onScheduledWrongPage\\s*\\(String nonce, String token\\)\\s*\\{");
         int origin = b.indexOf("OriginGuard.isTrustedGvUrl(mainFrameUrl)");
         int ui = b.indexOf("runOnUiThread(");
         int alive = b.indexOf("isActivityAlive()");
@@ -233,7 +233,7 @@ public class LiveThreadLoadTest {
         assertTrue(state.indexOf("'fallback'") > state.indexOf("gv-message-list"));
         String fill = block(entry, "function fillThread\\s*\\(polls\\)\\s*\\{");
         String wrong = block(fill, "if \\(state === 'wrong'\\)\\s*\\{");
-        assertTrue(wrong.contains("V2SBridge.onScheduledWrongPage(token)"));
+        assertTrue(wrong.contains("V2SBridge.onScheduledWrongPage(_v2sBridgeNonce, token)"));
         assertTrue("once per run", wrong.contains("if (!wrongPageReported) {") && wrong.contains("wrongPageReported = true;"));
         assertTrue("then waits", wrong.contains("state = 'wait';"));
         assertFalse(wrong.contains("onScheduledNoThread"));

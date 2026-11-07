@@ -38,6 +38,7 @@ import com.voice2sms.sendlater.engine.GvSession;
 import com.voice2sms.sendlater.web.AssetScripts;
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
+import com.voice2sms.sendlater.web.BridgeNonce;
 import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.send.ForegroundUse;
 import com.voice2sms.sendlater.send.RegularSend;
@@ -104,6 +105,13 @@ public class GVoiceWebViewActivity extends Activity {
      * which serve nothing unless OriginGuard.isTrustedGvUrl accepts it.
      */
     private volatile String mainFrameUrl;
+    /**
+     * deliver sec-M1: the per-document nonce every Send Later / scheduled V2SBridge call must
+     * pass. Static because the WebView is a process singleton that outlives this Activity:
+     * issued in onPageFinished only on a trusted GV page, dropped in onPageStarted and when the
+     * renderer is gone. See BridgeNonce.
+     */
+    private static final BridgeNonce BRIDGE_NONCE = new BridgeNonce();
     /** Send Later due-time send (R30/R31, OD11): the scheduled branch; see ScheduledSendController. */
     private ScheduledSendController scheduledSend;
 
@@ -292,6 +300,9 @@ public class GVoiceWebViewActivity extends Activity {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
+                // deliver sec-M1: the next document gets no bridge nonce until it is a finished
+                // trusted GV page (onPageFinished).
+                BRIDGE_NONCE.invalidate();
                 mainFrameUrl = url;
                 // Always inject fingerprint mask (includes dark mode CSS).
                 // Must run early before page renders to avoid flash of light mode.
@@ -303,26 +314,31 @@ public class GVoiceWebViewActivity extends Activity {
                 super.onPageFinished(view, url);
                 mainFrameUrl = url;
                 Log.d(TAG, "onPageFinished: " + withoutQuery(url));
+                // deliver sec-L2: one OriginGuard decision for this callback (was startsWith).
+                final boolean trustedGv = OriginGuard.isTrustedGvUrl(url);
+                // The nonce is issued only when the WebView's own URL is trusted too.
+                if (trustedGv) BRIDGE_NONCE.issueFor(view.getUrl());
+                else BRIDGE_NONCE.invalidate();
 
                 CookieManager.getInstance().flush();
                 // LIVE-F2: signed out, GV bounces to its marketing/about page. Show Google's
                 // sign-in instead; the user signs in in the WebView (never automated).
                 if (isSignedOutLanding(url) && redirectToSignIn()) return;
                 // Send Later module (v2sSendLaterInit), once per page load.
-                if (url.startsWith("https://voice.google.com") && sendLaterHooks != null) installSendLater();
+                if (trustedGv && sendLaterHooks != null) installSendLater();
                 // R44: Enter inserts a newline in the composer, once per page load.
-                if (url.startsWith("https://voice.google.com")) installEnterNewline();
+                if (trustedGv) installEnterNewline();
                 // LIVE-F6: a later main-frame load during a scheduled compose (a cold WebView's
                 // post-load reloads) wiped the script; let the dispatch below inject it again.
                 if (injected && scheduledSend != null && scheduledSend.wantsReinject(url)) injected = false;
 
-                if (url.startsWith("https://voice.google.com") && !injected && recipient != null) {
+                if (trustedGv && !injected && recipient != null) {
                     // Mark SPA as loaded for future warm starts
                     Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
                     app.setSpaLoaded(true);
                     if (scheduledSend == null || !scheduledSend.isActive()) injectComposer();
                     else if (scheduledSend.isComposing()) injectScheduledComposer();
-                } else if (url.startsWith("https://voice.google.com") && !injected) {
+                } else if (trustedGv && !injected) {
                     // No recipient but page loaded — mark SPA ready
                     Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
                     app.setSpaLoaded(true);
@@ -360,6 +376,8 @@ public class GVoiceWebViewActivity extends Activity {
                 Log.w(TAG, "Renderer gone! crashed=" + detail.didCrash());
                 Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
                 app.onRendererGone();
+                // deliver sec-M1: the document holding the nonce is gone.
+                BRIDGE_NONCE.invalidate();
                 // deliver M1: the page running a regular compose is gone with the renderer.
                 RegularSend.clear();
                 webView = null; // prevent stale reference in onPause/onDestroy
@@ -680,6 +698,8 @@ public class GVoiceWebViewActivity extends Activity {
                 + ", settleMs: " + ScheduledCompose.THREAD_SETTLE_MS
                 + ", pollMs: " + ScheduledCompose.CLICK_POLL_MS
                 + ", waitMs: " + ScheduledSendController.clickWaitMs() + "};";
+        // deliver sec-M1: the scheduled script's bridge calls carry this document's nonce.
+        script += BridgeNonce.pageStatement(BRIDGE_NONCE.current());
         script += "\nv2sScheduledCompose(" + jsonEncode(recipient) + ", " + jsonEncode(body != null ? body : "")
                 + ", " + delayMs + ", " + jsonEncode(token) + ");";
         webView.evaluateJavascript(script, null);
@@ -735,6 +755,8 @@ public class GVoiceWebViewActivity extends Activity {
         public void evaluate(String js) {
             runOnUiThread(() -> {
                 if (!isActivityAlive()) return;
+                // deliver sec-L2: Send Later script runs only on a trusted GV page.
+                if (!OriginGuard.isTrustedGvUrl(webView.getUrl())) return;
                 webView.evaluateJavascript(js, null);
             });
         }
@@ -742,6 +764,11 @@ public class GVoiceWebViewActivity extends Activity {
         @Override
         public String currentUrl() {
             return isActivityAlive() ? webView.getUrl() : null;
+        }
+
+        @Override
+        public String bridgeNonce() {
+            return BRIDGE_NONCE.current();
         }
 
         @Override
@@ -989,8 +1016,8 @@ public class GVoiceWebViewActivity extends Activity {
         // ---- Send Later (R10/R11/R17/R18); binder thread, logic in SendLaterWebHooks ----
 
         @JavascriptInterface
-        public void requestSendLater(String json) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+        public void requestSendLater(String nonce, String json) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             final CapturePayload payload =
                     sendLaterHooks != null ? sendLaterHooks.bridgeAcceptCapture(json) : null;
             if (payload == null) return;
@@ -1001,9 +1028,9 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         @JavascriptInterface
-        public String sendLaterChipState(String e164) {
+        public String sendLaterChipState(String nonce, String e164) {
             final String url = mainFrameUrl;
-            if (!OriginGuard.isTrustedGvUrl(url)) return ChipState.disabled();
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(url)) return ChipState.disabled();
             if (sendLaterHooks == null) {
                 return ChipState.disabled();
             }
@@ -1011,9 +1038,9 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void requestSendLaterChipTap(String e164) {
+        public void requestSendLaterChipTap(String nonce, String e164) {
             final String url = mainFrameUrl;
-            if (!OriginGuard.isTrustedGvUrl(url)) return;
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(url)) return;
             if (sendLaterHooks == null) {
                 return;
             }
@@ -1021,8 +1048,8 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         @JavascriptInterface
-        public boolean requestSendLaterUndo(long messageId) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return false;
+        public boolean requestSendLaterUndo(String nonce, long messageId) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return false;
             if (sendLaterHooks == null) {
                 return false;
             }
@@ -1030,8 +1057,8 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void onThreadRead(String json) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+        public void onThreadRead(String nonce, String json) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             if (sendLaterHooks == null) {
                 return;
             }
@@ -1042,8 +1069,8 @@ public class GVoiceWebViewActivity extends Activity {
 
         /** inject.js v2sScheduledCompose: our body is in the message box for {@code token}. */
         @JavascriptInterface
-        public void onScheduledTyped(String token) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+        public void onScheduledTyped(String nonce, String token) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             runOnUiThread(() -> {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onComposerInjected(token);
@@ -1055,8 +1082,8 @@ public class GVoiceWebViewActivity extends Activity {
          * job), "wait" (the pre-send check is pending: ask again) or "no".
          */
         @JavascriptInterface
-        public String scheduledClickState(String token) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
+        public String scheduledClickState(String nonce, String token) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
             return ScheduledSendController.clickState(token);
         }
 
@@ -1065,8 +1092,8 @@ public class GVoiceWebViewActivity extends Activity {
          * 1:1 thread an empty-conversation clearance is dropped (WAIT) and the thread read again.
          */
         @JavascriptInterface
-        public String scheduledClickStateAt(String token, String pageUrl) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
+        public String scheduledClickStateAt(String nonce, String token, String pageUrl) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
             return ScheduledSendController.clickState(token, pageUrl);
         }
 
@@ -1077,15 +1104,15 @@ public class GVoiceWebViewActivity extends Activity {
          * the job's number.
          */
         @JavascriptInterface
-        public String scheduledClickStateIn(String token, String pageUrl, int chipCount, String chipDigits) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
+        public String scheduledClickStateIn(String nonce, String token, String pageUrl, int chipCount, String chipDigits) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
             return ScheduledSendController.clickState(token, pageUrl, chipCount, chipDigits);
         }
 
         /** LIVE-F10: the job's thread page settled without the conversation (new-conversation flow next). */
         @JavascriptInterface
-        public void onScheduledNoThread(String token) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+        public void onScheduledNoThread(String nonce, String token) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             runOnUiThread(() -> {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onNoThread(token);
@@ -1094,8 +1121,8 @@ public class GVoiceWebViewActivity extends Activity {
 
         /** LIVE-F11: the scheduled script found the page is not the job's thread (load it again, bounded). */
         @JavascriptInterface
-        public void onScheduledWrongPage(String token) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+        public void onScheduledWrongPage(String nonce, String token) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             runOnUiThread(() -> {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onWrongPage(token);
@@ -1107,8 +1134,8 @@ public class GVoiceWebViewActivity extends Activity {
          * the job stops unsent and the draft is left alone.
          */
         @JavascriptInterface
-        public void onScheduledDraftPresent(String token) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+        public void onScheduledDraftPresent(String nonce, String token) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             runOnUiThread(() -> {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onDraftPresent(token);
@@ -1122,8 +1149,8 @@ public class GVoiceWebViewActivity extends Activity {
          * this job. The draft is never logged.
          */
         @JavascriptInterface
-        public String scheduledDraftStep(String token, String boxText) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "stop";
+        public String scheduledDraftStep(String nonce, String token, String boxText) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "stop";
             final String step = ScheduledSendController.draftStep(token, boxText);
             if ("stop".equals(step) || "both".equals(step)) {
                 runOnUiThread(() -> {
@@ -1135,8 +1162,8 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void onThreadDirectory(String json) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
+        public void onThreadDirectory(String nonce, String json) {
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(mainFrameUrl)) return;
             if (sendLaterHooks == null) {
                 return;
             }

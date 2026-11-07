@@ -251,7 +251,7 @@ public class LiveThreadComposeTest {
     @Test public void scheduledScriptPollsOnWaitAndClicksOnlyOnYes() throws IOException {
         String js = code(INJECT);
         String entry = block(js, "(?m)^function v2sScheduledCompose\\s*\\(phone, body, autoSendDelay, token\\)\\s*\\{");
-        assertTrue("asks the tri-state gate", entry.contains("V2SBridge.scheduledClickState(token)"));
+        assertTrue("asks the tri-state gate", entry.contains("V2SBridge.scheduledClickState(_v2sBridgeNonce, token)"));
         String click = block(entry, "function clickWhenGranted\\s*\\(retries, waitUntil\\)\\s*\\{");
         int recheck = click.indexOf("holdsBody(composer())");
         int ask = click.indexOf("askClick()");
@@ -272,7 +272,7 @@ public class LiveThreadComposeTest {
         String state = block(entry, "function threadPageState\\s*\\(\\s*\\)\\s*\\{");
         assertTrue(state.contains("_v2sSlThreadE164()") && state.contains("gv-message-list") && state.contains("SETTLE_MS"));
         String fill = block(entry, "function fillThread\\s*\\(polls\\)\\s*\\{");
-        assertTrue(fill.contains("V2SBridge.onScheduledNoThread(token)"));
+        assertTrue(fill.contains("V2SBridge.onScheduledNoThread(_v2sBridgeNonce, token)"));
         assertTrue("Angular-safe setter", fill.contains("_v2sScheduledSet(ta, body, true)"));
         // deliver H1 (orchestrator ruling): the new-conversation flow is the scheduled one
         // (_v2sScheduledNewMessage), no longer voice2sms(); still only outside thread mode.
