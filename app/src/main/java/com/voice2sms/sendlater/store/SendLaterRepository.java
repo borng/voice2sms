@@ -10,6 +10,7 @@ import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.ScheduledMessage.Status;
 import com.voice2sms.sendlater.domain.ThreadEvent;
 import com.voice2sms.sendlater.domain.Watermark;
+import com.voice2sms.sendlater.listener.AndroidContactNames;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -52,11 +53,18 @@ public final class SendLaterRepository {
     private final SendLaterDatabase db;
     private final SendLaterDao dao;
     private final Clock clock;
+    /** D33: fills a missing display name at save time; null = never. */
+    private final RecipientNames names;
 
     SendLaterRepository(SendLaterDatabase db, Clock clock) {
+        this(db, clock, null);
+    }
+
+    SendLaterRepository(SendLaterDatabase db, Clock clock, RecipientNames names) {
         this.db = db;
         this.dao = db.dao();
         this.clock = clock;
+        this.names = names;
     }
 
     public static SendLaterRepository get(Context context) {
@@ -65,7 +73,8 @@ public final class SendLaterRepository {
             synchronized (SendLaterRepository.class) {
                 r = instance;
                 if (r == null) {
-                    r = new SendLaterRepository(SendLaterDatabase.get(context), System::currentTimeMillis);
+                    r = new SendLaterRepository(SendLaterDatabase.get(context), System::currentTimeMillis,
+                            new AndroidContactNames(context));
                     instance = r;
                 }
             }
@@ -84,11 +93,16 @@ public final class SendLaterRepository {
      * <p>UI M2: when a live (SCHEDULED, HELD, IN_FLIGHT) row with the same e164, text and source
      * was created within {@link #DEDUPE_WINDOW_MS}, nothing is inserted and that row's id is
      * returned. The caller can tell by its createdAt, which is then not {@code message}'s.
+     *
+     * <p>D33: every capture surface saves through here, so a message without a display name gets
+     * the first device-contact name for its E.164 (only while READ_CONTACTS is granted; blank on
+     * denial or failure), looked up before the transaction. A supplied name is never replaced.
      */
     public long schedule(ScheduledMessage message, Watermark watermark) throws PersistException {
         if (message == null) throw new PersistException("message is null");
         final Watermark wm = watermark != null ? watermark : message.getWatermark();
-        final ScheduledMessage toInsert = message.toBuilder().id(0).watermark(wm).build();
+        final ScheduledMessage named = RecipientNames.fill(message, names);
+        final ScheduledMessage toInsert = named.toBuilder().id(0).watermark(wm).build();
         try {
             return db.runInTransaction(() -> {
                 long now = clock.nowMs();
