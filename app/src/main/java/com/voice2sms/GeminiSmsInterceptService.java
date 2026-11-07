@@ -342,7 +342,12 @@ public class GeminiSmsInterceptService extends AccessibilityService {
 
         Intent sendIntent = new Intent(Intent.ACTION_SENDTO);
         sendIntent.setData(Uri.parse(uriStr.toString()));
-        sendIntent.putExtra("force_auto_send", autoSend);
+        // Package-scoped: the auto-send token must never reach another SENDTO handler.
+        sendIntent.setPackage(getPackageName());
+        if (autoSend) {
+            sendIntent.putExtra("force_auto_send", true);
+            AutoSendAuth.attach(sendIntent);
+        }
         sendIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(sendIntent);
 

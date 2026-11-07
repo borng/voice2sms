@@ -71,10 +71,12 @@ public class VoiceOverlaySourceTest {
     // Baseline hashes (main @ 7fa8184 == feature/send-later @ c6024c5), whitespace-collapsed SHA-256.
     // Re-pinned by privacy-logging (I7, F1): the NOTIFICATION and Click Log.d calls are now
     // under if (BuildConfig.DEBUG); no other change in either block.
+    // GEMINI_PATH_SHA re-pinned by dlv-autosend-auth (sec-main-high): fireSendIntent now scopes the
+    // SENDTO to this package and attaches the AutoSendAuth token when auto-send is on; nothing else.
     private static final String NOTIFICATION_BLOCK_SHA =
             "9ff11f8be278f41d89f057a0c3c5f79f650fdba2708b6f93cc3d2a5c56a2b221";
     private static final String GEMINI_PATH_SHA =
-            "fcc02479f14b2376a80225a7a810a7d51d0e188cfc354da7b0a177f8e5c40191";
+            "ca9158e46560c84c11853d14b2a0b7c9ddaa7cf851f2edbe993408d01317b51a";
     private static final String SERVICE_INFO_SHA =
             "6e08862e86ec26f86a34f3c7b65799bc8a64b68b36d3db87a46cf704bc1bd483";
     private static final String CONFIG_XML_SHA =
