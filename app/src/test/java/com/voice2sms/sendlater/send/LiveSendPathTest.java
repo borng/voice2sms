@@ -124,12 +124,20 @@ public class LiveSendPathTest {
         assertTrue(c.isClosed());
     }
 
-    @Test public void failureAfterTheBodyIsConfirmedIsSentUnverified() {
-        assertEquals(SendOutcome.SENT_UNVERIFIED, ScheduledCompose.outcomeOnFailure(true, false));
+    // deliver M3 (orchestrator ruling): this test pinned "typed -> SENT_UNVERIFIED", the exact
+    // behaviour M3 changes. Typed without a granted click is now CANNOT_SHOW; a grant still is
+    // SENT_UNVERIFIED.
+    @Test public void failureAfterTheBodyIsConfirmedIsSentUnverifiedOnlyAfterAGrantedClick() {
+        assertEquals(SendOutcome.CANNOT_SHOW, ScheduledCompose.outcomeOnFailure(true, false));
         assertEquals(SendOutcome.SENT_UNVERIFIED, ScheduledCompose.outcomeOnFailure(false, true));
         ScheduledCompose c = new ScheduledCompose(6L);
         assertTrue(c.onTyped(c.nextInjection()));
-        assertEquals(SendOutcome.SENT_UNVERIFIED, c.closeForFailure());
+        assertEquals(SendOutcome.CANNOT_SHOW, c.closeForFailure());
+        ScheduledCompose g = new ScheduledCompose(9L);
+        String t = g.nextInjection();
+        assertTrue(g.onTyped(t));
+        assertTrue(g.grantClick(t));
+        assertEquals(SendOutcome.SENT_UNVERIFIED, g.closeForFailure());
     }
 
     @Test public void reinjectedAndNotRetypedIsCannotShowAgain() {
@@ -225,8 +233,10 @@ public class LiveSendPathTest {
     @Test public void injectJsScheduledEntryTypesWithoutAutoSendAndClicksOnlyWhenGranted() throws IOException {
         String js = new String(Files.readAllBytes(INJECT), StandardCharsets.UTF_8);
         String entry = block(js, "(?m)^function v2sScheduledCompose\\s*\\(phone, body, autoSendDelay, token\\)\\s*\\{");
-        assertTrue("runs the unchanged compose flow without its auto-send",
-                entry.contains("voice2sms(phone, body, false, 0)"));
+        // deliver H1 (orchestrator ruling): this pinned "mode 'new' runs voice2sms()", whose text
+        // match H1 removes from the scheduled path; the scheduled new-message flow has no auto-send.
+        assertTrue("runs the scheduled new-message flow, never voice2sms()",
+                entry.contains("_v2sScheduledNewMessage(jobE164,") && !entry.contains("voice2sms(phone"));
         assertTrue("reports typed only after checking the box", entry.contains("V2SBridge.onScheduledTyped(token)")
                 && entry.indexOf("holdsBody(") < entry.indexOf("V2SBridge.onScheduledTyped(token)"));
         int click = entry.indexOf("sendBtn.click()");

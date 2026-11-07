@@ -20,7 +20,7 @@ import java.util.UUID;
  *       older token are ignored.</li>
  *   <li><b>Typed (LIVE-F8).</b> "Typed" means the page confirmed that our body is in the message
  *       box ({@link #onTyped}). Before that every failure is CANNOT_SHOW; after it
- *       SENT_UNVERIFIED ({@link #outcomeOnFailure}). A re-injection (the document that held the
+ *       CANNOT_SHOW too unless a click was granted (deliver M3, {@link #outcomeOnFailure}). A re-injection (the document that held the
  *       text is gone, no click was granted) starts over as not typed.</li>
  *   <li><b>Click gate.</b> The scheduled script never taps Send on its own: it asks
  *       {@link #grantClick}, which says yes at most once per job, only for the current token and
@@ -244,9 +244,55 @@ public final class ScheduledCompose {
         return threadReloaded;
     }
 
-    /** LIVE-F8: typed (or a click granted) -> SENT_UNVERIFIED; nothing typed -> CANNOT_SHOW. */
+    /**
+     * deliver M3 (was LIVE-F8's typed rule): SENT_UNVERIFIED only after the gate granted a click;
+     * without one nothing can have been sent, whatever was typed: CANNOT_SHOW (the reminder).
+     * {@code typed} no longer changes the outcome (the scheduled script taps Send only on a grant).
+     */
     public static SendOutcome outcomeOnFailure(boolean typed, boolean clickGranted) {
-        return typed || clickGranted ? SendOutcome.SENT_UNVERIFIED : SendOutcome.CANNOT_SHOW;
+        return clickGranted ? SendOutcome.SENT_UNVERIFIED : SendOutcome.CANNOT_SHOW;
+    }
+
+    /**
+     * deliver H1/L2: the page a Send tap is asked from may take our tap only when it is the job's
+     * own 1:1 thread, or a new-message view whose single recipient chip is the job's number. Any
+     * other page (another person's thread, the messages list, a group, a view with no chip or
+     * several, a chip that shows no number) answers NO, in every mode, check on or off.
+     *
+     * @param pageUrl      the asking page's own location (null: use {@code mainFrameUrl})
+     * @param mainFrameUrl the activity's last main-frame URL; another number's thread there refuses
+     * @param jobE164      the job's number (E.164)
+     * @param chipCount    recipient chips on the page (negative: not reported)
+     * @param chipDigits   the single chip's digit runs (text, aria-label, title), comma separated
+     */
+    public static boolean pageAllowsClick(String pageUrl, String mainFrameUrl, String jobE164,
+                                          int chipCount, String chipDigits) {
+        if (jobE164 == null) return false;
+        String page = pageUrl != null ? pageUrl : mainFrameUrl;
+        if (!OriginGuard.isTrustedGvUrl(page)) return false;
+        String mainThread = ThreadUrl.oneToOneE164(mainFrameUrl);
+        if (mainThread != null && !mainThread.equals(jobE164)) return false;
+        if (ThreadUrl.isThreadOf(page, jobE164)) return true;
+        if (ThreadUrl.oneToOneE164(page) != null) return false;   // another person's thread
+        return chipCount == 1 && chipNamesNumber(chipDigits, jobE164);
+    }
+
+    /**
+     * deliver H1: one of the single chip's digit runs ({@code chipDigits}, comma separated) is the
+     * job's number: the full E.164 digits, or its national part (at least 10 digits, the job's
+     * number minus a 1-3 digit country code), as GV formats a chip like "(555) 555-0123".
+     */
+    static boolean chipNamesNumber(String chipDigits, String jobE164) {
+        if (chipDigits == null || jobE164 == null || !jobE164.startsWith("+")) return false;
+        String job = jobE164.substring(1);
+        for (String c : chipDigits.split(",", -1)) {
+            String d = c.replaceAll("\\D", "");
+            if (d.isEmpty()) continue;
+            if (d.equals(job)) return true;
+            int cc = job.length() - d.length();
+            if (d.length() >= 10 && cc >= 1 && cc <= 3 && job.endsWith(d)) return true;
+        }
+        return false;
     }
 
     /** A first or further injection may run now. */
@@ -363,8 +409,7 @@ public final class ScheduledCompose {
      */
     public synchronized SendOutcome closeForFailure() {
         closed = true;
-        // D30: while the pre-send check is pending no click can have been granted: nothing sent.
-        if (preSendRequired && !preSendCleared && !clickGranted) return SendOutcome.CANNOT_SHOW;
+        // D30, deliver M3: without a granted click nothing can have been sent: CANNOT_SHOW.
         return outcomeOnFailure(typed, clickGranted);
     }
 

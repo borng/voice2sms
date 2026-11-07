@@ -283,10 +283,11 @@ public class LivePresendTest {
         String token = c.nextInjection();
         assertTrue(c.onTyped(token));
         assertEquals(SendOutcome.CANNOT_SHOW, c.closeForFailure());
-        // Without a check the typed rule is unchanged (LIVE-F8).
+        // deliver M3 (orchestrator ruling; was LIVE-F8's typed rule): without a check, typed but
+        // never granted a click is CANNOT_SHOW too; only a granted click is SENT_UNVERIFIED.
         ScheduledCompose plain = new ScheduledCompose(6L);
         assertTrue(plain.onTyped(plain.nextInjection()));
-        assertEquals(SendOutcome.SENT_UNVERIFIED, plain.closeForFailure());
+        assertEquals(SendOutcome.CANNOT_SHOW, plain.closeForFailure());
     }
 
     @Test public void theCheckOnlyEverAddsHoldsNeverSendsForAHold() {

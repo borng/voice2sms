@@ -778,7 +778,10 @@ function v2sScheduledRestoreDraft(draft, text) {
  * bounded) while the script waits; when the thread shows no conversation within settleMs, Java is
  * told (V2SBridge.onScheduledNoThread), which reloads the thread page once (full load, one more
  * settle) and only then loads the messages list for mode 'new'.
- * mode 'new': runs the unchanged voice2sms() flow WITHOUT its auto-send (new conversation).
+ * mode 'new' (deliver H1): the scheduled new-conversation flow (_v2sScheduledNewMessage): the job's
+ * conversation is opened only by its own thread id, else a new message gets the job's number as
+ * its recipient chip; the D32 draft step runs before typing into a box that holds text. Never
+ * voice2sms() (its list match on text can open another person's conversation), never its auto-send.
  *
  * Either way it reports "typed" only once the box really holds our text
  * (V2SBridge.onScheduledTyped) and taps Send only when Java says yes: the tri-state ask
@@ -797,12 +800,10 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     var CLICK_POLL_MS = opts.pollMs > 0 ? opts.pollMs : 500;
     var WAIT_MS = opts.waitMs > 0 ? opts.waitMs : 30000;
     var jobE164 = String(phone || '').replace(/[^\d+]/g, '');
-    if (threadMode) {
-        // As voice2sms() does: a newer run cancels an older one in this document.
-        window._v2sGeneration = (window._v2sGeneration || 0) + 1;
-    } else {
-        voice2sms(phone, body, false, 0);
-    }
+    // As voice2sms() does: a newer run cancels an older one in this document. deliver H1: the
+    // new-conversation flow is the scheduled one (_v2sScheduledNewMessage), never voice2sms(),
+    // whose list match on text can open another person's conversation.
+    window._v2sGeneration = (window._v2sGeneration || 0) + 1;
     var myGeneration = window._v2sGeneration;
     var POLL_MS = 250;
     var MAX_POLLS = 160;   // 40 s, the Java compose timeout
@@ -906,9 +907,76 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
         setTimeout(function() { clickWhenGranted(10, 0); }, jittered);
     }
 
+    /**
+     * deliver H1: the D32 draft step of fillThread for the new-conversation flow: true when our
+     * body may go into box ta. A box with text that is not our body asks Java ('stop': the user
+     * gets the choice notification with the draft; 'replace': it is our text after all, or the
+     * user chose Replace and send; 'both': the user chose Send both, Java keeps the draft and puts
+     * it back). Never touches or logs the draft.
+     */
+    function draftGate(ta) {
+        if (cancelled() || !ta) return false;
+        if (holdsBody(ta)) return true;
+        var current = ta.isContentEditable ? ta.textContent : ta.value;
+        if (typeof current !== 'string' || current.trim().length === 0) return true;
+        var step = draftStep(current);
+        if (step !== 'replace' && step !== 'both') {
+            console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
+            // An older bridge without the D32 step: the OD34 report (generic reminder).
+            if (step === null && typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
+                V2SBridge.onScheduledDraftPresent(token);
+            }
+            return false;
+        }
+        console.log('[Voice2SMS] Scheduled send: replacing the draft in the message box');
+        return true;
+    }
+
+    function expired() {
+        return (Date.now() - startedAt) >= MAX_POLLS * POLL_MS;
+    }
+
+    /** The draft step, then our body into the box (Angular-safe), then the typed check. */
+    function fillNew() {
+        if (cancelled() || expired()) return;
+        var ta = composer();
+        if (!ta) {
+            setTimeout(fillNew, 100);
+            return;
+        }
+        if (!holdsBody(ta)) {
+            if (!draftGate(ta)) return;
+            _v2sScheduledSet(ta, body, true);
+        }
+        waitTyped(MAX_POLLS);
+    }
+
+    /**
+     * deliver H1/L2: the recipient chips of a new-message view, for the Java gate: their count and
+     * the single chip's digit runs (text, aria-label, title; digits only, never a name).
+     */
+    function recipientChips() {
+        var input = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
+        var scope = (input && input.closest && input.closest('mat-chip-grid, mat-chip-list, mat-form-field')) || document;
+        var chips = scope.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR);
+        var digits = '';
+        if (chips.length === 1) {
+            var c = chips[0];
+            digits = [c.textContent || '', c.getAttribute('aria-label') || '', c.getAttribute('title') || '']
+                .map(function(v) { return String(v).replace(/\D/g, ''); }).join(',');
+        }
+        return { count: chips.length, digits: digits };
+    }
+
     /** The Java Send gate: 'yes' | 'wait' | 'no'. */
     function askClick() {
         if (typeof V2SBridge === 'undefined') return 'no';
+        // deliver H1/L2: with this page's location and recipient chips; Java says 'no' unless
+        // this is the job's own thread or a new message addressed to the job's number alone.
+        if (V2SBridge.scheduledClickStateIn) {
+            var chips = recipientChips();
+            return String(V2SBridge.scheduledClickStateIn(token, String(location.href), chips.count, chips.digits));
+        }
         // LIVE-F10 F1: with this page's location, so a clearance given on an empty (new)
         // conversation is dropped once GV shows the number's thread here.
         if (V2SBridge.scheduledClickStateAt) return String(V2SBridge.scheduledClickStateAt(token, String(location.href)));
@@ -950,7 +1018,133 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     }
 
     if (threadMode) fillThread(MAX_POLLS);
-    else waitTyped(MAX_POLLS);
+    else _v2sScheduledNewMessage(jobE164, function() { return cancelled() || expired(); }, fillNew);
+}
+
+var V2S_SCHEDULED_RECIPIENT_SELECTOR = 'input[placeholder="Type a name or phone number"], ' +
+    'input[placeholder*="name or phone"], ' +
+    'input[placeholder*="number"], ' +
+    'input[aria-label*="To"], ' +
+    'input[aria-label*="recipient"]';
+var V2S_SCHEDULED_CHIP_SELECTOR = 'mat-chip-row, .mdc-evolution-chip';
+
+/**
+ * deliver H1, scheduled mode 'new' only: the list item whose OWN thread id (itemId t.+E.164) is
+ * e164, else null. Never a text match: a preview or a name holding the digits is someone else's.
+ */
+function _v2sScheduledOwnThreadItem(e164) {
+    var items = document.querySelectorAll(
+        'ol[gv-test-id="list"] li.list-item, gv-message-thread-list-item, gv-thread-list-item');
+    for (var i = 0; i < items.length; i++) {
+        if (_v2sSlItemE164(items[i]) === e164) {
+            return items[i].querySelector('div[role="button"]') || items[i];
+        }
+    }
+    return null;
+}
+
+/**
+ * deliver H1, scheduled mode 'new' only: on the messages list, opens e164's conversation only by
+ * its own thread id, else starts a new message with e164 as its recipient chip (voice2sms()'s
+ * selectors and direct matChipInputTokenEnd call); then calls ready() (the draft step and our
+ * body). stop() true ends it. No chip: nothing typed (fail closed, Java's compose timeout). Types
+ * nothing into the message box and never taps Send; voice2sms() itself is unchanged for every
+ * regular send. Never logs the number.
+ */
+function _v2sScheduledNewMessage(e164, stop, ready) {
+    var POLL_MS = 250;
+
+    function dismissBackdrop() {
+        var backdrop = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+        if (backdrop) backdrop.click();
+    }
+
+    function open() {
+        if (stop()) return;
+        var rendered = document.querySelector('gv-side-nav, gv-thread-list, [gv-test-id="sidenav"]');
+        var fab = document.querySelector('button[aria-label*="new"]');
+        if (!rendered || !fab) {
+            setTimeout(open, POLL_MS);
+            return;
+        }
+        dismissBackdrop();
+        var own = _v2sScheduledOwnThreadItem(e164);
+        if (own) {
+            console.log('[Voice2SMS] Scheduled send: opening the conversation by its thread id');
+            own.click();
+            setTimeout(ready, 100);
+            return;
+        }
+        var btn = document.querySelector('button[aria-label*="new"]')
+            || document.querySelector('[aria-label="Send new message"]')
+            || document.querySelector('button[aria-label*="compose"]');
+        if (!btn) {
+            setTimeout(open, POLL_MS);
+            return;
+        }
+        btn.click();
+        setTimeout(addRecipient, 500);
+    }
+
+    function addRecipient() {
+        if (stop()) return;
+        var inp = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
+        if (!inp) {
+            setTimeout(addRecipient, 100);
+            return;
+        }
+        var before = document.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR).length;
+        if (!makeChip(inp)) {
+            console.log('[Voice2SMS] Scheduled send: could not add the recipient, not typing');
+            return;
+        }
+        waitChip(before, 15);
+    }
+
+    function makeChip(inp) {
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+        function setValue(v) {
+            if (setter && setter.set) setter.set.call(inp, v);
+            else inp.value = v;
+        }
+        var listeners = inp['__zone_symbol__matChipInputTokenEndfalse'];
+        var task = listeners && listeners.length ? listeners[0] : null;
+        if (!task || typeof task.callback !== 'function') return false;
+        setValue(e164);
+        inp.focus();
+        var zone = _v2sGetZoneFromTask(task);
+        if (!zone || zone.name === '<root>') {
+            var elZone = _v2sGetAngularZone(inp);
+            if (elZone && elZone.name !== '<root>') zone = elZone;
+        }
+        if (!zone || zone.name === '<root>') zone = _v2sFindAngularZoneGlobal() || zone;
+        var ev = {
+            value: e164,
+            chipInput: { inputElement: inp, clear: function() { setValue(''); }, focused: true },
+            preventDefault: function() {}
+        };
+        if (zone) zone.run(function() { task.callback(ev); });
+        else task.callback(ev);
+        setValue('');
+        inp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+        return true;
+    }
+
+    function waitChip(before, tries) {
+        if (stop()) return;
+        if (document.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR).length > before) {
+            dismissBackdrop();
+            ready();
+            return;
+        }
+        if (tries <= 0) {
+            console.log('[Voice2SMS] Scheduled send: no recipient chip, not typing');
+            return;
+        }
+        setTimeout(function() { waitChip(before, tries - 1); }, 50);
+    }
+
+    open();
 }
 
 // ── Sticker/Image Bridge ──────────────────────────────────────────────────

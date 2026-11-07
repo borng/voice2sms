@@ -291,7 +291,9 @@ public class LiveThreadComposeFallbackTest {
         String recheck = block(c, "private void recheckIfDue\\s*\\(\\s*\\)\\s*\\{");
         assertTrue(recheck.contains("takeRecheckDue()") && recheck.contains("PRESEND_TIMEOUT_MS")
                 && recheck.contains("preSendReadOnce(job)"));
-        String ask = block(c, "public static String clickState\\s*\\(String token, String pageUrl\\)\\s*\\{");
+        // deliver H1 (orchestrator ruling): the located ask now also carries the page's chips and
+        // refuses any other page first; the F1 revoke wiring moved with it.
+        String ask = block(c, "public static String clickState\\s*\\(String token, String pageUrl, int chipCount, String chipDigits\\)\\s*\\{");
         assertTrue(ask.contains("sc.clickState(token, onJobThread)"));
         assertTrue(ask.contains("main.post("));
     }

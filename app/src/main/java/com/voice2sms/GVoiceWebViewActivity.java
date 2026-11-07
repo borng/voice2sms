@@ -765,6 +765,16 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         @Override
+        public void forgetCompose(String e164, String text) {
+            // deliver L1 (main thread): a later injectComposer must never retype the scheduled
+            // text. Only the values beginCompose set are dropped; a newer intent's are kept.
+            if (e164 == null || !e164.equals(recipient)) return;
+            if (text != null && body != null && !text.equals(body)) return;
+            recipient = null;
+            body = null;
+        }
+
+        @Override
         public boolean loadMessagesList() {
             if (!isActivityAlive()) return false;
             injected = false;
@@ -1022,6 +1032,18 @@ public class GVoiceWebViewActivity extends Activity {
         public String scheduledClickStateAt(String token, String pageUrl) {
             if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
             return ScheduledSendController.clickState(token, pageUrl);
+        }
+
+        /**
+         * deliver H1/L2: as {@link #scheduledClickStateAt}, with the page's recipient chips
+         * ({@code chipCount}; {@code chipDigits}: the single chip's digit runs, never a name).
+         * "no" unless the page is the job's own thread or a new-message view whose single chip is
+         * the job's number.
+         */
+        @JavascriptInterface
+        public String scheduledClickStateIn(String token, String pageUrl, int chipCount, String chipDigits) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "no";
+            return ScheduledSendController.clickState(token, pageUrl, chipCount, chipDigits);
         }
 
         /** LIVE-F10: the job's thread page settled without the conversation (new-conversation flow next). */
