@@ -174,12 +174,17 @@ public class SmsHandlerActivity extends Activity {
             webIntent.putExtra("body", body);
         }
         Intent src = getIntent();
-        if (src.hasExtra("force_auto_send")) {
-            boolean autoSend = src.getBooleanExtra("force_auto_send", false);
-            webIntent.putExtra("force_auto_send", autoSend);
+        // This activity is exported: force_auto_send counts only with this process's
+        // AutoSendAuth token (Gemini, Wear, RESPOND_VIA_MESSAGE). Any other caller's flag is
+        // dropped and the compose opens in review mode.
+        boolean autoSend = AutoSendAuth.isAuthorized(src);
+        AutoSendAuth.strip(src);
+        if (autoSend) {
+            webIntent.putExtra(EXTRA_FORCE_AUTO_SEND, true);
+            AutoSendAuth.attach(webIntent);
             // Post "Sent" confirmation for non-Wear auto-sends (Gemini, RESPOND_VIA_MESSAGE).
             // Wear-originated sends already get a notification from WearSmsListenerService.
-            if (autoSend && !src.hasExtra("wear_request_id")) {
+            if (!src.hasExtra("wear_request_id")) {
                 AutoSendNotifier.show(this, recipient, body);
             }
         }

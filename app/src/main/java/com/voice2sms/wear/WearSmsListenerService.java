@@ -32,6 +32,7 @@ import com.google.android.gms.wearable.MessageEvent;
 import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.WearableListenerService;
 
+import com.voice2sms.AutoSendAuth;
 import com.voice2sms.BuildConfig;
 import com.voice2sms.SmsHandlerActivity;
 
@@ -185,6 +186,7 @@ public class WearSmsListenerService extends WearableListenerService {
         i.putExtra(Intent.EXTRA_TEXT, req.body);
         i.putExtra(EXTRA_WEAR_REQUEST_ID, req.requestId);
         i.putExtra(SmsHandlerActivity.EXTRA_FORCE_AUTO_SEND, true);
+        AutoSendAuth.attach(i);
         i.setClass(this, SmsHandlerActivity.class);
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         return i;

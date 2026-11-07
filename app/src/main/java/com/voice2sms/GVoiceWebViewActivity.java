@@ -123,6 +123,7 @@ public class GVoiceWebViewActivity extends Activity {
         recipient = getIntent().getStringExtra("recipient");
         body = getIntent().getStringExtra("body");
         regularAutoSend = wantsAutoSend(getIntent());
+        AutoSendAuth.strip(getIntent());
 
         Voice2SmsApplication app = (Voice2SmsApplication) getApplication();
         webView = app.getOrCreateWebView();
@@ -250,6 +251,7 @@ public class GVoiceWebViewActivity extends Activity {
         recipient = intent.getStringExtra("recipient");
         body = intent.getStringExtra("body");
         regularAutoSend = wantsAutoSend(intent);
+        AutoSendAuth.strip(intent);
         injected = false;
         // deliver M1: the regular compose holds the WebView from now on (bounded).
         if (recipient != null && (scheduledSend == null || !scheduledSend.isActive())) noteRegularCompose();
@@ -612,7 +614,10 @@ public class GVoiceWebViewActivity extends Activity {
 
     /** The regular compose intent's auto-send request (Gemini, Wear, RESPOND_VIA_MESSAGE). */
     private static boolean wantsAutoSend(Intent intent) {
-        return intent != null && intent.getBooleanExtra("force_auto_send", false);
+        // Not exported, but gated the same way as SmsHandlerActivity: the flag counts only with
+        // this process's AutoSendAuth token.
+        return intent != null && intent.getBooleanExtra("force_auto_send", false)
+                && AutoSendAuth.isAuthorized(intent);
     }
 
     private void injectComposer() {
