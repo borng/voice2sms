@@ -29,6 +29,10 @@ public interface SendLaterDao {
     @Query("SELECT * FROM watermark WHERE messageId = :id")
     WatermarkEntity watermark(long id);
 
+    /** Watermarks of {@code ids} (any order; ids with no watermark row are simply absent). */
+    @Query("SELECT * FROM watermark WHERE messageId IN (:ids)")
+    List<WatermarkEntity> watermarks(List<Long> ids);
+
     @Query("SELECT * FROM scheduled_message WHERE status = :status AND recipientE164 = :e164 ORDER BY scheduledFor, id")
     List<ScheduledMessageEntity> byStatusForThread(String status, String e164);
 

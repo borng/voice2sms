@@ -20,6 +20,12 @@ import java.util.Set;
  */
 public final class AndroidContactNames implements ContactNames {
 
+    /**
+     * Set once a lookup with DISPLAY_NAME_ALTERNATIVE threw and the primary-only retry worked:
+     * later lookups then make one query, not two. Process-wide (the provider does not change).
+     */
+    private static volatile boolean alternativeUnsupported;
+
     private final Context app;
 
     public AndroidContactNames(Context context) {
@@ -38,10 +44,16 @@ public final class AndroidContactNames implements ContactNames {
         } catch (RuntimeException e) {
             return Collections.emptySet();
         }
-        Set<String> out = query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME,
-                ContactsContract.Contacts.DISPLAY_NAME_ALTERNATIVE});
-        // A provider without the alternative-name column: retry with the primary name only.
-        if (out == null) out = query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME});
+        Set<String> out = alternativeUnsupported ? null
+                : query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME,
+                        ContactsContract.Contacts.DISPLAY_NAME_ALTERNATIVE});
+        if (out == null) {
+            // A provider without the alternative-name column: the primary name only.
+            out = query(uri, new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME});
+            // Remember it only when the primary-only query then worked, so a transient failure of
+            // both does not drop alternative names for the rest of the process.
+            if (out != null) alternativeUnsupported = true;
+        }
         return out != null ? out : Collections.<String>emptySet();
     }
 
