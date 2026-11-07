@@ -118,7 +118,9 @@ public class SendLaterSheetSourceTest {
         assertTrue("calls repository.schedule(...)", persist >= 0);
         assertTrue("broadcasts ACTION_SCHEDULED", broadcast >= 0);
         assertTrue("SendLaterRepository used", a.contains("SendLaterRepository"));
-        assertTrue("SendLaterScheduler used", a.contains("SendLaterScheduler"));
+        // Deliver M2: alarms are armed through the engine (under its lock), not the scheduler.
+        assertTrue("SendLaterEngine arms the alarms", a.contains("SendLaterEngine.registerAlarms("));
+        assertFalse("no direct SendLaterScheduler use", a.contains("SendLaterScheduler"));
         assertTrue("persist before the ACTION_SCHEDULED broadcast (I1)", persist < broadcast);
         String after = a.substring(persist);
         assertTrue("registerAlarms after schedule()", indexOf(after, "registerAlarms\\s*\\(") >= 0);
@@ -208,11 +210,11 @@ public class SendLaterSheetSourceTest {
         String a = activityCode();
         assertTrue("re-checks SendLaterEngine.isEditable(id)", a.contains("isEditable("));
         assertTrue("SendLaterEngine used", a.contains("SendLaterEngine"));
-        int resched = indexOf(a, "\\.reschedule\\s*\\(");
-        assertTrue("Update calls repository.reschedule", resched >= 0);
-        assertTrue("registerAlarms after reschedule", indexOf(a.substring(resched), "registerAlarms\\s*\\(") >= 0);
-        assertTrue("SendLaterNotifications.dismiss(id) when rescheduling",
-                Pattern.compile("SendLaterNotifications\\s*\\.\\s*dismiss\\s*\\(").matcher(a).find());
+        // Deliver M2: Update is one engine call under its lock; the re-arm and the notification
+        // dismiss happen inside it (EditUnderEngineLockTest pins the order there).
+        int resched = indexOf(a, "SendLaterEngine\\s*\\.\\s*reschedule\\s*\\(");
+        assertTrue("Update calls SendLaterEngine.reschedule", resched >= 0);
+        assertFalse("no repository reschedule from the sheet", a.contains("repo.reschedule("));
         assertTrue("Cancel message goes through the engine or repository cancel",
                 Pattern.compile("\\.\\s*(onCancel|cancel)\\s*\\(").matcher(a).find());
     }

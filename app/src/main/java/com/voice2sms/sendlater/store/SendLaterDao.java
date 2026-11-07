@@ -51,6 +51,12 @@ public interface SendLaterDao {
             + "WHERE id = :id AND status IN (:from)")
     int toInFlight(long id, String to, String bodyHash, List<String> from, long now);
 
+    /** As {@link #toInFlight}, only while the row still has the evaluated scheduledFor/updatedAt (deliver M2). */
+    @Query("UPDATE scheduled_message SET status = :to, inFlightBodyHash = :bodyHash, updatedAt = :now "
+            + "WHERE id = :id AND status IN (:from) AND scheduledFor = :scheduledFor AND updatedAt = :updatedAt")
+    int toInFlightIfUnchanged(long id, String to, String bodyHash, List<String> from,
+                              long scheduledFor, long updatedAt, long now);
+
     @Query("UPDATE scheduled_message SET status = :to, holdReason = COALESCE(:holdReason, holdReason), updatedAt = :now "
             + "WHERE id = :id AND status IN (:from)")
     int transition(long id, String to, String holdReason, List<String> from, long now);

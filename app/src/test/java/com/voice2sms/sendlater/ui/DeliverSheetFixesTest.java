@@ -121,7 +121,8 @@ public class DeliverSheetFixesTest {
         String c = activity();
         int persist = c.indexOf("private void persistArmAndAnnounce(");
         int dupe = c.indexOf("isExistingCapture(app, id, msg)", persist);
-        int arm = c.indexOf("registerAlarms(stored)", persist);
+        // Deliver M2: armed through the engine lock.
+        int arm = c.indexOf("SendLaterEngine.registerAlarms(app, stored)", persist);
         int bcast = c.indexOf("new Intent(SendLaterIntents.ACTION_SCHEDULED)", persist);
         assertTrue("duplicate check before arming and announcing", dupe > persist && dupe < arm && arm < bcast);
         String between = c.substring(dupe, arm);
@@ -211,8 +212,9 @@ public class DeliverSheetFixesTest {
         String u = c.substring(onUpdate, body);
         assertTrue(u, u.contains("updateArmAndAnnounce(id, when, hold, policy, SheetViewModelLogic.editBaseline(now))"));
         String w = c.substring(body);
+        // Deliver M2: the reschedule goes through the engine lock.
         assertTrue("reschedule takes the baseline, never null",
-                w.contains("repo.reschedule(id, when, hold, policy, baseline)"));
+                w.contains("SendLaterEngine.reschedule(app, id, when, hold, policy, baseline)"));
         assertFalse(w.substring(0, w.indexOf("\n    }\n")).contains("policy, null)"));
     }
 

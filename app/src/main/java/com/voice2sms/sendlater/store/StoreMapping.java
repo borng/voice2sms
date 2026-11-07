@@ -124,6 +124,7 @@ public final class StoreMapping {
                 .watermark(toDomain(wm))
                 .originalWatermark(originalOf(wm))
                 .rungReason(e.rungReason == null ? null : RemindReason.valueOf(e.rungReason))
+                .updatedAt(e.updatedAt)
                 .build();
     }
 
