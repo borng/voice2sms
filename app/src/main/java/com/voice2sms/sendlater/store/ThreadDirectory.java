@@ -3,11 +3,11 @@ package com.voice2sms.sendlater.store;
 import android.content.Context;
 
 import com.voice2sms.sendlater.domain.ConversationRef;
+import com.voice2sms.sendlater.voice.logic.PhoneNumbers;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * Display name -&gt; numbers seen in the GV web thread list (R4b). Names are normalized exactly as
@@ -18,7 +18,6 @@ import java.util.regex.Pattern;
 public final class ThreadDirectory {
 
     private static final String NAME_PREFIX = "name:";
-    private static final Pattern E164 = Pattern.compile("\\+[1-9][0-9]{6,14}");
 
     private static volatile ThreadDirectory instance;
 
@@ -74,8 +73,9 @@ public final class ThreadDirectory {
         return key == null ? "" : key.substring(NAME_PREFIX.length());
     }
 
+    /** The one E.164 rule (D38); delegates to {@link PhoneNumbers#isE164}. */
     public static boolean isE164(String s) {
-        return s != null && E164.matcher(s).matches();
+        return PhoneNumbers.isE164(s);
     }
 
     /** Row for the pair, or null when the name is blank or the number is not E.164. */

@@ -1,12 +1,13 @@
 package com.voice2sms.sendlater.web;
 
+import com.voice2sms.sendlater.voice.logic.PhoneNumbers;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * Thread-list scrape sent by inject.js to {@code V2SBridge.onThreadDirectory}:
@@ -16,7 +17,6 @@ import java.util.regex.Pattern;
 public final class DirectoryReport {
 
     public static final int MAX_ENTRIES = 300;
-    private static final Pattern E164 = Pattern.compile("^\\+[1-9]\\d{6,14}$");
 
     private DirectoryReport() {}
 
@@ -49,7 +49,7 @@ public final class DirectoryReport {
             if (!(n instanceof String) || !(e instanceof String)) continue;
             String name = ((String) n).trim();
             String num = (String) e;
-            if (name.isEmpty() || !E164.matcher(num).matches()) continue;
+            if (name.isEmpty() || !PhoneNumbers.isE164(num)) continue;
             out.add(new Entry(name, num));
         }
         return out;

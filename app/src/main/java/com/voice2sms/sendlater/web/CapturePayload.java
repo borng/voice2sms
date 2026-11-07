@@ -1,12 +1,12 @@
 package com.voice2sms.sendlater.web;
 
 import com.voice2sms.sendlater.domain.Watermark;
+import com.voice2sms.sendlater.voice.logic.PhoneNumbers;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.TimeZone;
-import java.util.regex.Pattern;
 
 /**
  * The JSON inject.js hands to {@code V2SBridge.requestSendLater} (R10):
@@ -23,8 +23,6 @@ import java.util.regex.Pattern;
  * never EXACT (there is no id). The label holds message text and is not kept.
  */
 public final class CapturePayload {
-
-    private static final Pattern E164 = Pattern.compile("^\\+\\d{7,15}$");
 
     private final String e164;
     private final String displayName;
@@ -58,7 +56,7 @@ public final class CapturePayload {
             return null;
         }
         String e164 = string(o, "e164");
-        if (e164 == null || !E164.matcher(e164).matches()) return null;
+        if (!PhoneNumbers.isE164(e164)) return null;
         String draft = string(o, "draftText");
         if (draft == null || draft.isEmpty()) return null;
         String name = string(o, "displayName");
