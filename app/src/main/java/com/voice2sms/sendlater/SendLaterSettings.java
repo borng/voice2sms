@@ -6,13 +6,15 @@ import android.content.SharedPreferences;
 import androidx.preference.PreferenceManager;
 
 import com.voice2sms.sendlater.domain.OutboundPolicy;
+import com.voice2sms.sendlater.store.SendLaterDatabase;
 
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Send Later preferences (R36), read from the default SharedPreferences. Keys and defaults are
+ * Send Later preferences (R36), read from the default SharedPreferences (the master switch from
+ * its own non-backed-up file, D36: {@link #SWITCH_PREFS}). Keys and defaults are
  * pinned; the {@link Parse} layer is pure and JVM-tested. Values may be stored as their natural
  * type or as strings (ListPreference/EditTextPreference); anything unreadable falls back to the
  * default.
@@ -45,8 +47,45 @@ public final class SendLaterSettings {
     static final int[] DEFAULT_SLOTS = {
             DEFAULT_SLOT_MORNING, DEFAULT_SLOT_AFTERNOON, DEFAULT_SLOT_EVENING, DEFAULT_SLOT_NIGHT};
 
+    /**
+     * D36: the master switch lives in its own prefs file, excluded from cloud backup and device
+     * transfer like every sendlater_* file (res/xml/sendlater_*_rules.xml), so a restored or
+     * transferred phone never inherits it. The other Send Later preferences stay in the default
+     * prefs and are backed up as before.
+     */
+    public static final String SWITCH_PREFS = "sendlater_switch";
+    /**
+     * Written to the default (backed-up) prefs once the switch has been set up on a phone. Seen
+     * without a local switch value, it means the default prefs came back from a backup or device
+     * transfer: Send Later starts off there (D36). A fresh install has neither and starts on (D26).
+     */
+    public static final String SWITCH_SEEN_MARKER = "sendlater_switch_seen";
+
+    private static final Object SWITCH_LOCK = new Object();
+
     public static boolean isEnabled(Context c) {
-        return Parse.enabled(Read.one(KEY_ENABLED, Read.bool(prefs(c), KEY_ENABLED, DEFAULT_ENABLED)));
+        SharedPreferences local = switchPrefs(c);
+        Object v = Read.bool(local, KEY_ENABLED, DEFAULT_ENABLED);
+        if (v == null) {
+            synchronized (SWITCH_LOCK) {
+                v = Read.bool(local, KEY_ENABLED, DEFAULT_ENABLED);
+                if (v == null) {
+                    v = Switch.migrate(prefs(c), local,
+                            c.getDatabasePath(SendLaterDatabase.NAME).exists());
+                }
+            }
+        }
+        return Parse.enabled(Read.one(KEY_ENABLED, v));
+    }
+
+    /** Stores the master switch (D36: in {@link #SWITCH_PREFS}, never in the backed-up prefs). */
+    public static void setEnabled(Context c, boolean on) {
+        switchPrefs(c).edit().putBoolean(KEY_ENABLED, on).apply();
+    }
+
+    /** The non-backed-up prefs file that holds the master switch (D36). */
+    public static SharedPreferences switchPrefs(Context c) {
+        return c.getSharedPreferences(SWITCH_PREFS, Context.MODE_PRIVATE);
     }
     /** Minutes of day, Morning..Night order. */
     public static int[] slotMinutes(Context c) { return Parse.slotMinutes(Read.slots(prefs(c))); }
@@ -122,6 +161,43 @@ public final class SendLaterSettings {
             } catch (ClassCastException notString) {
                 return null;
             }
+        }
+    }
+
+    /**
+     * D36 one-time set-up of the local switch, the first time it is read on this phone. Pure
+     * over the two prefs so it is JVM-tested:
+     * <ul>
+     *   <li>{@link #SWITCH_SEEN_MARKER} in the default prefs: they were restored or transferred from
+     *       another phone, so Send Later starts <b>off</b>.</li>
+     *   <li>The old {@link #KEY_ENABLED} in the default prefs (builds before D36): an upgrade on
+     *       this phone keeps its value, but only when Send Later's database exists here
+     *       ({@code localData}, never backed up); without it the value came from a backup of an
+     *       older build and Send Later starts <b>off</b>.</li>
+     *   <li>Neither: a fresh install, {@link #DEFAULT_ENABLED} (on, D26).</li>
+     * </ul>
+     * Writes the result to {@code local}, removes the old key from the default prefs (so it is
+     * no longer backed up) and marks them with {@link #SWITCH_SEEN_MARKER}. Returns the value.
+     */
+    static final class Switch {
+        private Switch() {}
+
+        static boolean initial(SharedPreferences defaults, boolean localData) {
+            if (defaults != null && defaults.contains(SWITCH_SEEN_MARKER)) return false;
+            Object legacy = Read.bool(defaults, KEY_ENABLED, DEFAULT_ENABLED);
+            if (legacy != null) {
+                return localData && Parse.enabled(Read.one(KEY_ENABLED, legacy));
+            }
+            return DEFAULT_ENABLED;
+        }
+
+        static boolean migrate(SharedPreferences defaults, SharedPreferences local, boolean localData) {
+            boolean on = initial(defaults, localData);
+            local.edit().putBoolean(KEY_ENABLED, on).apply();
+            if (defaults != null) {
+                defaults.edit().remove(KEY_ENABLED).putBoolean(SWITCH_SEEN_MARKER, true).apply();
+            }
+            return on;
         }
     }
 

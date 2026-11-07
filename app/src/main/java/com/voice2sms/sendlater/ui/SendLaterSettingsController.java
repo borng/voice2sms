@@ -83,11 +83,15 @@ public final class SendLaterSettingsController {
     private void bind() {
         SwitchPreferenceCompat enabled = fragment.findPreference(SendLaterSettings.KEY_ENABLED);
         if (enabled != null) {
+            // D36: the switch is not persisted by the preference framework (that would put it
+            // in the backed-up default prefs); it shows and writes SendLaterSettings' own file.
+            enabled.setChecked(SendLaterSettings.isEnabled(ctx()));
             enabled.setOnPreferenceChangeListener((pref, newValue) -> {
                 final boolean on = Boolean.TRUE.equals(newValue);
                 final Context app = ctx().getApplicationContext();
-                // Runs after the switch has persisted its new value, so every receiver of the
-                // broadcast reads the new state.
+                SendLaterSettings.setEnabled(app, on);
+                // Runs after the new value is stored, so every receiver of the broadcast reads
+                // the new state.
                 new Handler(Looper.getMainLooper()).post(() -> applyEnabled(app, on));
                 Toast.makeText(ctx(), on ? R.string.sendlater_settings_enabled_toast
                         : R.string.sendlater_settings_disabled_toast, Toast.LENGTH_SHORT).show();
@@ -129,6 +133,9 @@ public final class SendLaterSettingsController {
     public void refresh() {
         if (fragment.getContext() == null) return;
         Context c = ctx();
+
+        SwitchPreferenceCompat enabled = fragment.findPreference(SendLaterSettings.KEY_ENABLED);
+        if (enabled != null) enabled.setChecked(SendLaterSettings.isEnabled(c));
 
         int[] slots = SendLaterSettings.slotMinutes(c);
         for (int i = 0; i < SendLaterSettings.SLOT_KEYS.length && i < slots.length; i++) {

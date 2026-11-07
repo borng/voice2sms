@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- sendlater:dl-privacy (OD31): Android 11 and older (android:fullBackupContent). Send Later's
      database (message texts, thread directory) and its sendlater_* prefs files stay on this
-     phone: never in Google backup. Everything else in the app is backed up as before. -->
+     phone: never in Google backup. D36: that includes the master switch (sendlater_switch), so a
+     restored phone starts with Send Later off. Everything else in the app is backed up as before. -->
 <full-backup-content>
     <exclude domain="database" path="sendlater.db" />
     <exclude domain="database" path="sendlater.db-wal" />
@@ -14,4 +15,5 @@
     <exclude domain="sharedpref" path="sendlater_settings_asked.xml" />
     <exclude domain="sharedpref" path="sendlater_retention.xml" />
     <exclude domain="sharedpref" path="sendlater_a11y.xml" />
+    <exclude domain="sharedpref" path="sendlater_switch.xml" />
 </full-backup-content>

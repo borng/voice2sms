@@ -9,7 +9,6 @@ import android.net.NetworkCapabilities;
 import android.util.Log;
 
 import androidx.core.app.NotificationManagerCompat;
-import androidx.preference.PreferenceManager;
 
 import com.voice2sms.BuildConfig;
 import com.voice2sms.sendlater.SendLaterIntents;
@@ -265,7 +264,7 @@ public final class SendLaterDebugReceiver extends BroadcastReceiver {
         }
 
         @Override public void setSendLaterEnabled(boolean on) {
-            PreferenceManager.getDefaultSharedPreferences(app).edit()
+            SendLaterSettings.switchPrefs(app).edit()
                     .putBoolean(SendLaterSettings.KEY_ENABLED, on).commit();
         }
 
