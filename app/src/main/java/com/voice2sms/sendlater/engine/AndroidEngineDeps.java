@@ -190,6 +190,9 @@ final class AndroidEngineDeps {
         @Override public void remindCannotSend(ScheduledMessage m, RemindCause cause) {
             SendLaterNotifications.remindCannotSend(app, m, cause);
         }
+        @Override public void draftInTheWay(ScheduledMessage m, String draft) {
+            SendLaterNotifications.draftInTheWay(app, m, draft);
+        }
         @Override public void sent(ScheduledMessage m) { SendLaterNotifications.sent(app, m); }
         @Override public void repliedDuringSend(ScheduledMessage m) { SendLaterNotifications.repliedDuringSend(app, m); }
         @Override public void selfPreempted(ScheduledMessage m) { SendLaterNotifications.selfPreempted(app, m); }

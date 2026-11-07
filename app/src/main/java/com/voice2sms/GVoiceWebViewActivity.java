@@ -806,6 +806,25 @@ public class GVoiceWebViewActivity extends Activity {
         }
 
         @Override
+        public void restoreDraft(String draft, String text, ScheduledSendController.ComposerProbe cb) {
+            final String script = draft == null ? null : readAssetScript("inject.js");
+            if (script == null) {
+                cb.onProbe(null);
+                return;
+            }
+            runOnUiThread(() -> {
+                // D32 Send both: the user's draft goes back only into a GV page; never logged.
+                if (!isActivityAlive() || !OriginGuard.isTrustedGvUrl(webView.getUrl())) {
+                    cb.onProbe(null);
+                    return;
+                }
+                webView.evaluateJavascript(script + "\nv2sScheduledRestoreDraft(" + jsonEncode(draft) + ", "
+                                + jsonEncode(text != null ? text : "") + ");",
+                        value -> cb.onProbe("true".equals(value) ? Boolean.TRUE : Boolean.FALSE));
+            });
+        }
+
+        @Override
         public void finish() {
             GVoiceWebViewActivity.this.finish();
         }
@@ -1036,6 +1055,25 @@ public class GVoiceWebViewActivity extends Activity {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onDraftPresent(token);
             });
+        }
+
+        /**
+         * D32: thread mode found a draft (text that is not our body) in the thread's box before
+         * typing. Answers "replace", "both" or "stop" (ScheduledSendController.draftStep); "stop"
+         * ends the job unsent with the choice notification, "both" keeps the draft in memory for
+         * this job. The draft is never logged.
+         */
+        @JavascriptInterface
+        public String scheduledDraftStep(String token, String boxText) {
+            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return "stop";
+            final String step = ScheduledSendController.draftStep(token, boxText);
+            if ("stop".equals(step) || "both".equals(step)) {
+                runOnUiThread(() -> {
+                    if (!isActivityAlive() || scheduledSend == null) return;
+                    scheduledSend.onDraftStep(token, step, boxText);
+                });
+            }
+            return step;
         }
 
         @JavascriptInterface

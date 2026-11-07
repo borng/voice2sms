@@ -56,9 +56,10 @@ public final class SendLaterUnlockActivity extends Activity {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
-    /** Only Send now / Send anyway are accepted here. */
+    /** Only Send now / Send anyway and the draft notice's Replace and send / Send both (D32). */
     static boolean isUnlockAction(String action) {
-        return SendLaterIntents.ACTION_SEND_NOW.equals(action) || SendLaterIntents.ACTION_SEND_ANYWAY.equals(action);
+        return SendLaterIntents.ACTION_SEND_NOW.equals(action) || SendLaterIntents.ACTION_SEND_ANYWAY.equals(action)
+                || DraftNotice.ACTION_REPLACE.equals(action) || DraftNotice.ACTION_BOTH.equals(action);
     }
 
     @Override protected void onCreate(Bundle savedInstanceState) {

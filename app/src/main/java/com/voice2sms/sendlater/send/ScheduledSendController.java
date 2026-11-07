@@ -18,12 +18,15 @@ import androidx.core.content.ContextCompat;
 
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.domain.Classification;
+import com.voice2sms.sendlater.domain.DraftChoice;
 import com.voice2sms.sendlater.domain.OutboundPolicy;
 import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.SendOutcome;
 import com.voice2sms.sendlater.domain.ThreadEvent;
+import com.voice2sms.sendlater.engine.DraftStash;
 import com.voice2sms.sendlater.engine.RemindCause;
+import com.voice2sms.sendlater.engine.SendLaterNotifications;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 import com.voice2sms.sendlater.web.ThreadBubble;
@@ -159,8 +162,12 @@ public final class ScheduledSendController {
      * job stops unsent (CANNOT_SHOW -> reminder) and the user's draft is left as it was.
      */
     static final String DETAIL_DRAFT_PRESENT = "draft_present";
-    /** Extra compose time after the one reload of the thread page (a second settle plus the load). */
-    static final long RELOAD_COMPOSE_GRACE_MS = ScheduledCompose.THREAD_SETTLE_MS + 5_000L;
+    /**
+     * Extra compose time after the one reload of the thread page (a second settle plus the load).
+     * D35: the settle grew to 15 s; the load share is 4 s so the compose timeout plus this grace
+     * stays inside {@link LockCoverPolicy#HARD_TIMEOUT_MS} (60 s).
+     */
+    static final long RELOAD_COMPOSE_GRACE_MS = ScheduledCompose.THREAD_SETTLE_MS + 4_000L;
     /**
      * Upper bound on staying covered after the last outcome (12 s, kept from send-hardening; OD27
      * accepts it). The activity normally finishes on the engine's state broadcast, well before
@@ -210,6 +217,16 @@ public final class ScheduledSendController {
          */
         void probeComposer(ComposerProbe cb);
 
+        /**
+         * D32 Send both: puts {@code draft} back into the message box when it is empty or still
+         * holds exactly {@code text} (our body); anything else is left alone. The callback gets
+         * TRUE when the box then holds the draft, FALSE or null otherwise (not alive, not a GV
+         * page, the box held other text). Never logs either text.
+         */
+        default void restoreDraft(String draft, String text, ComposerProbe cb) {
+            cb.onProbe(null);
+        }
+
         /** Activity.finish(). */
         void finish();
 
@@ -257,6 +274,13 @@ public final class ScheduledSendController {
         boolean composerCleared;
         /** live-presend-failclosed: compose time added once by the thread-page reload. */
         long composeGraceMs;
+        /** D32: what this job does with a draft in the box (ASK unless the user's tap chose). */
+        DraftChoice.Mode draftMode = DraftChoice.Mode.ASK;
+        /**
+         * D32 Send both: the user's draft, taken from the box before ours was typed; in memory
+         * only, put back (or shown in a notification) when the job ends. Never logged or stored.
+         */
+        String savedDraft;
 
         Job(long id, long checkTimeMs, long claimedAtMs) {
             this.id = id;
@@ -268,6 +292,8 @@ public final class ScheduledSendController {
     private static volatile WeakReference<ScheduledSendController> live = new WeakReference<>(null);
     /** D30: the pre-send check the engine asked for, per message id, until its job loads. */
     private static final Map<Long, PreSendCheck> preSendChecks = new ConcurrentHashMap<>();
+    /** D32: the draft mode the engine started each message's job with, until its job loads. */
+    private static final Map<Long, DraftChoice.Mode> draftModes = new ConcurrentHashMap<>();
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
 
     private final Activity activity;
@@ -278,6 +304,9 @@ public final class ScheduledSendController {
     private Job current;
     /** Compose state of the running job, read by the JavaBridge thread ({@link #clickState}). */
     private volatile ScheduledCompose liveCompose;
+    /** D32: the running job's draft mode and body, read by the JavaBridge thread ({@link #draftStep}). */
+    private volatile DraftChoice.Mode liveDraftMode = DraftChoice.Mode.ASK;
+    private volatile String liveBody;
     private volatile boolean busy;
     /**
      * The keyguard is locked or the screen is dark, as last re-read (resume, pause, focus change,
@@ -366,6 +395,20 @@ public final class ScheduledSendController {
     static PreSendCheck takePreSendCheck(long id) {
         PreSendCheck c = preSendChecks.remove(id);
         return c != null ? c : defaultPreSendCheck();
+    }
+
+    /**
+     * D32: records the draft mode for the launch of {@code id} ({@link WebViewScheduledSender}
+     * calls it for every start, so a Replace and send / Send both mode applies to that one job).
+     */
+    static void noteDraftMode(long id, DraftChoice.Mode mode) {
+        draftModes.put(id, mode != null ? mode : DraftChoice.Mode.ASK);
+    }
+
+    /** The draft mode for {@code id}'s job, removed; ASK when none was recorded. */
+    static DraftChoice.Mode takeDraftMode(long id) {
+        DraftChoice.Mode m = draftModes.remove(id);
+        return m != null ? m : DraftChoice.Mode.ASK;
     }
 
     /** Fail safe when nothing was recorded (never expected): the read is the evidence. */
@@ -737,6 +780,43 @@ public final class ScheduledSendController {
         stopUnsent(job, DETAIL_DRAFT_PRESENT);
     }
 
+    /**
+     * D32, JavaBridge thread: thread mode found {@code boxText} (non-blank, not exactly our body)
+     * in the thread's box before typing, for {@code token}. Answers the step's wire string
+     * ({@link DraftChoice#onBox}): "replace" (our text after all, or the user chose Replace and
+     * send), "both" (the user chose Send both) or "stop" (ask the user). No side effect here: the
+     * bridge hands "stop" and "both" to {@link #onDraftStep} on the main thread. A stale token,
+     * or no running job, is "stop".
+     */
+    public static String draftStep(String token, String boxText) {
+        final ScheduledSendController c = live.get();
+        ScheduledCompose sc = c == null ? null : c.liveCompose;
+        if (sc == null || !sc.isCurrent(token)) return DraftChoice.Step.STOP.wire();
+        return DraftChoice.onBox(c.liveDraftMode, boxText, c.liveBody).wire();
+    }
+
+    /**
+     * D32, main thread: the step {@link #draftStep} answered for {@code token}. "stop": the draft
+     * goes to the engine in memory ({@link DraftStash}) and the job ends unsent; the engine posts
+     * the choice notification (draft, our text, Replace and send / Keep draft / Send both).
+     * "both": the draft is kept in memory for this job and put back when it ends. The draft is
+     * never logged or stored.
+     */
+    public void onDraftStep(String token, String step, String draft) {
+        Job job = current;
+        if (job == null || job.compose == null || !job.compose.isCurrent(token)) return;
+        if (DraftChoice.Step.BOTH.wire().equals(step)) {
+            if (job.draftMode == DraftChoice.Mode.BOTH && draft != null && !draft.trim().isEmpty()) {
+                job.savedDraft = draft;
+            }
+            return;
+        }
+        if (!DraftChoice.Step.STOP.wire().equals(step)) return;
+        DraftStash.put(job.id, draft);
+        stopUnsent(job, DETAIL_DRAFT_PRESENT);
+        if (current == job) DraftStash.drop(job.id);   // a click was granted: no outcome yet
+    }
+
     /** inject.js auto-send delay for a scheduled send: the user's setting, at least the minimum. */
     public static long sendDelayMs(long preferredMs) {
         return Math.max(MIN_SEND_DELAY_MS, preferredMs);
@@ -879,6 +959,9 @@ public final class ScheduledSendController {
         job.bodyHash = ThreadEvent.hashOf(m.getText());
         job.message = m;
         job.check = takePreSendCheck(job.id);
+        job.draftMode = takeDraftMode(job.id);
+        liveDraftMode = job.draftMode;
+        liveBody = m.getText();
         targetE164 = job.e164;
         cover.setRecipient(job.e164);
         job.compose = new ScheduledCompose(job.id);
@@ -1089,11 +1172,37 @@ public final class ScheduledSendController {
     private void closeCompose(Job job) {
         if (job.compose == null) return;
         boolean unsent = job.compose.close();
-        if (liveCompose == job.compose) liveCompose = null;
+        if (liveCompose == job.compose) {
+            liveCompose = null;
+            liveDraftMode = DraftChoice.Mode.ASK;
+            liveBody = null;
+        }
         if (unsent && !job.composerCleared && job.message != null && job.message.getText() != null) {
             job.composerCleared = true;
             if (host.isAlive()) host.clearComposer(job.message.getText());
         }
+        restoreSavedDraft(job);
+    }
+
+    /**
+     * D32 Send both: the job is over (sent, unverified or unsent): the user's draft goes back into
+     * the box (after our text was cleared, when unsent). When that cannot be done (the page is
+     * gone, the box holds other text) the draft is shown in a notification so it is not lost.
+     * Once per job; the draft is dropped from memory either way.
+     */
+    private void restoreSavedDraft(Job job) {
+        final String draft = job.savedDraft;
+        if (draft == null) return;
+        job.savedDraft = null;
+        final ScheduledMessage m = job.message;
+        final String body = m != null ? m.getText() : null;
+        if (!host.isAlive()) {
+            SendLaterNotifications.draftNotRestored(app, m, draft);
+            return;
+        }
+        host.restoreDraft(draft, body, ok -> {
+            if (!Boolean.TRUE.equals(ok)) SendLaterNotifications.draftNotRestored(app, m, draft);
+        });
     }
 
     private void afterOutcome() {
