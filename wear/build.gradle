@@ -39,7 +39,7 @@ android {
         minSdk 30
         targetSdk 34
         versionCode project.hasProperty('VERSION_CODE') ? project.property('VERSION_CODE').toInteger() : 1
-        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "1.5.0"
+        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "2.0.0"
         buildConfigField 'String', 'GIT_SHA', "\"${computeGitSha()}\""
         buildConfigField 'String', 'BUILD_DATE', "\"${computeBuildDate()}\""
     }
