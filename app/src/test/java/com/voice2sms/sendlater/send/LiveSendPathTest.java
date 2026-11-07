@@ -213,11 +213,11 @@ public class LiveSendPathTest {
         assertTrue(inject.contains("v2sScheduledCompose("));
         assertFalse("the scheduled path never runs voice2sms' own auto-send",
                 Pattern.compile("voice2sms\\(").matcher(inject).find());
-        for (String m : new String[]{"onScheduledTyped", "scheduledMayClick"}) {
+        for (String m : new String[]{"onScheduledTyped", "scheduledClickStateAt"}) {
             String b = block(a, "@JavascriptInterface\\s+public\\s+\\w+\\s+" + m + "\\s*\\([^)]*\\)\\s*\\{");
             int guard = b.indexOf("OriginGuard.isTrustedGvUrl(mainFrameUrl)");
             assertTrue(m + " checks the origin first", guard >= 0);
-            int act = Math.max(b.indexOf("runOnUiThread"), b.indexOf("ScheduledSendController.mayClick"));
+            int act = Math.max(b.indexOf("runOnUiThread"), b.indexOf("ScheduledSendController.clickState"));
             assertTrue(m + " origin before acting", act > guard);
         }
     }
@@ -230,7 +230,7 @@ public class LiveSendPathTest {
         assertTrue("reports typed only after checking the box", entry.contains("V2SBridge.onScheduledTyped(token)")
                 && entry.indexOf("holdsBody(") < entry.indexOf("V2SBridge.onScheduledTyped(token)"));
         int click = entry.indexOf("sendBtn.click()");
-        int gate = entry.indexOf("V2SBridge.scheduledMayClick(token)");
+        int gate = entry.indexOf("V2SBridge.scheduledClickStateAt(token, String(location.href))");
         assertTrue("one click, after the Java gate", click > 0 && gate > 0 && gate < click
                 && entry.indexOf(".click()") == click + "sendBtn".length()
                 && entry.lastIndexOf(".click()") == click + "sendBtn".length());

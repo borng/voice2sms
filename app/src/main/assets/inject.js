@@ -715,13 +715,6 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
 
 // ── Scheduled send entry (Send Later R30; LIVE-F6, LIVE-F8, LIVE-F10) ──────
 
-/** Message box selectors of the scheduled path (fillBody's). */
-var _V2S_SCHEDULED_COMPOSER = 'textarea[placeholder="Type a message"], ' +
-    'textarea[placeholder*="message"], ' +
-    'textarea[placeholder*="text"], ' +
-    'textarea[aria-label*="message"], ' +
-    '[contenteditable="true"][aria-label*="message"]';
-
 /** The box holds our scheduled text (surrounding whitespace aside). */
 function _v2sScheduledHolds(el, text) {
     if (!el || typeof text !== 'string' || !text) return false;
@@ -746,7 +739,7 @@ function _v2sScheduledSet(el, value, focus) {
  * by hand by mistake; any other text is left alone. Never logs the text.
  */
 function v2sScheduledClear(text) {
-    var el = document.querySelector(_V2S_SCHEDULED_COMPOSER);
+    var el = document.querySelector(V2S_COMPOSER_SELECTOR);
     if (!_v2sScheduledHolds(el, text)) return false;
     _v2sScheduledSet(el, '', false);
     console.log('[Voice2SMS] Scheduled send: cleared the message box');
@@ -799,7 +792,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     }
 
     function composer() {
-        return document.querySelector(_V2S_SCHEDULED_COMPOSER);
+        return document.querySelector(V2S_COMPOSER_SELECTOR);
     }
 
     function holdsBody(el) {
@@ -882,8 +875,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
         // conversation is dropped once GV shows the number's thread here.
         if (V2SBridge.scheduledClickStateAt) return String(V2SBridge.scheduledClickStateAt(token, String(location.href)));
         if (V2SBridge.scheduledClickState) return String(V2SBridge.scheduledClickState(token));
-        // A bridge without the tri-state ask: its one-shot boolean answer.
-        return (V2SBridge.scheduledMayClick && V2SBridge.scheduledMayClick(token)) ? 'yes' : 'no';
+        return 'no';
     }
 
     function clickWhenGranted(retries, waitUntil) {
@@ -1202,6 +1194,8 @@ var V2S_SL_Z = 2147483000;
 // (SPA navigation, state changes, resume); this timer runs only while Send Later is on
 // and a 1:1 thread is open (it keeps the tab/chip placed and the chip fresh).
 var V2S_SL_TICK_MS = 2000;
+/** Page events (input, resize) coalesce into one trailing tick this long after the first. */
+var V2S_SL_COALESCE_MS = 250;
 
 function v2sSendLaterInit() {
     if (typeof V2SBridge === 'undefined') return;
@@ -1222,10 +1216,11 @@ function v2sSendLaterInit() {
         pairs: {},           // e164 -> confirmed header title
         directorySig: '',
         timer: null,         // V2S_SL_TICK_MS interval, only while on and a 1:1 thread is open
-        followUps: []        // bounded one-shot ticks after a forced tick (thread list renders late)
+        followUps: [],       // bounded one-shot ticks after a forced tick (thread list renders late)
+        tickSoon: null       // pending coalesced tick of page events (_v2sSlTickSoon)
     };
-    document.addEventListener('input', function() { _v2sSlTick(false); }, true);
-    window.addEventListener('resize', function() { _v2sSlTick(false); });
+    document.addEventListener('input', _v2sSlTickSoon, true);
+    window.addEventListener('resize', _v2sSlTickSoon);
     _v2sSlTick(true);
 }
 
@@ -1374,6 +1369,20 @@ function _v2sSlTick(force) {
     }
     _v2sSlLayout(st);
     if (force) _v2sSlFollowUp(st);
+}
+
+/**
+ * Page events (typing, resize): one trailing tick per V2S_SL_COALESCE_MS burst instead of a
+ * full tick per keystroke. Nothing is scheduled while Send Later is off or the page is hidden
+ * (the tick would return at once). Forced ticks and the interval are unaffected.
+ */
+function _v2sSlTickSoon() {
+    var st = window._v2sSl;
+    if (!st || st.tickSoon || !st.enabled || document.hidden) return;
+    st.tickSoon = setTimeout(function() {
+        st.tickSoon = null;
+        _v2sSlTick(false);
+    }, V2S_SL_COALESCE_MS);
 }
 
 /**

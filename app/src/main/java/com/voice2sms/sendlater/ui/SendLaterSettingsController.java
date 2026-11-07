@@ -1,7 +1,6 @@
 package com.voice2sms.sendlater.ui;
 
 import android.Manifest;
-import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.AlarmManager;
 import android.app.TimePickerDialog;
 import android.content.ActivityNotFoundException;
@@ -15,7 +14,6 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.text.format.DateFormat;
 import android.util.Log;
-import android.view.accessibility.AccessibilityManager;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -148,7 +146,8 @@ public final class SendLaterSettingsController {
 
         Preference a11y = fragment.findPreference(KEY_ACCESSIBILITY_ROW);
         if (a11y != null) {
-            boolean a11yOn = isAccessibilityServiceEnabled(c);
+            // The warning's own test (A11yWarning), fail-closed: an unreadable setting shows "off".
+            boolean a11yOn = A11yWarning.isServiceEnabled(c, false);
             a11y.setSummary(c.getString(a11yOn
                     ? R.string.sendlater_settings_accessibility_on
                     : R.string.sendlater_settings_accessibility_off)
@@ -327,21 +326,6 @@ public final class SendLaterSettingsController {
             return false;
         }
         return NotificationManagerCompat.from(c).areNotificationsEnabled();
-    }
-
-    static boolean isAccessibilityServiceEnabled(Context c) {
-        AccessibilityManager am = (AccessibilityManager) c.getSystemService(Context.ACCESSIBILITY_SERVICE);
-        if (am == null) return false;
-        List<AccessibilityServiceInfo> enabled =
-                am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
-        String targetId = c.getPackageName() + "/.GeminiSmsInterceptService";
-        String fullId = c.getPackageName() + "/com.voice2sms.GeminiSmsInterceptService";
-        if (enabled == null) return false;
-        for (AccessibilityServiceInfo info : enabled) {
-            String id = info.getId();
-            if (targetId.equals(id) || fullId.equals(id)) return true;
-        }
-        return false;
     }
 
     private boolean open(Intent i) {

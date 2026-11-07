@@ -1,6 +1,7 @@
 package com.voice2sms.sendlater.send;
 
 import com.voice2sms.sendlater.domain.SendOutcome;
+import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.web.ThreadUrl;
 
 import java.util.UUID;
@@ -62,9 +63,6 @@ public final class ScheduledCompose {
     public static final long THREAD_SETTLE_MS = 10_000L;
     /** The script stops polling WAIT this long after the pre-send deadline (Java decides by then). */
     public static final long CLICK_WAIT_MARGIN_MS = 5_000L;
-
-    // Split so no "//" sits inside a literal (the source-scanning tests strip // to end of line).
-    private static final String GV_PREFIX = "https:/" + "/voice.google.com/";
 
     /** Answer of {@link #clickState}; {@link #wire()} is what inject.js sees. */
     public enum ClickState {
@@ -150,7 +148,7 @@ public final class ScheduledCompose {
      * no Send click was granted, the gate is open and the bound is not reached.
      */
     public static boolean shouldReinject(String url, int injections, boolean clickGranted, boolean closed) {
-        if (url == null || !url.startsWith(GV_PREFIX)) return false;
+        if (!OriginGuard.isTrustedGvUrl(url)) return false;
         if (url.contains("itemId=")) return false;   // a thread page: our own run navigated there
         return injections > 0 && injections < MAX_INJECTIONS && !clickGranted && !closed;
     }
@@ -162,7 +160,7 @@ public final class ScheduledCompose {
      */
     public static boolean shouldReinject(String url, String e164, int injections, boolean clickGranted,
                                          boolean closed) {
-        if (url == null || !url.startsWith(GV_PREFIX)) return false;
+        if (!OriginGuard.isTrustedGvUrl(url)) return false;
         if (url.contains("itemId=") && !ThreadUrl.isThreadOf(url, e164)) return false;
         return injections > 0 && injections < MAX_INJECTIONS && !clickGranted && !closed;
     }
@@ -236,11 +234,8 @@ public final class ScheduledCompose {
      */
     public synchronized NoThread onNoThread(String t, boolean pageIsJobThread) {
         if (closed || clickGranted || t == null || !t.equals(token)) return NoThread.IGNORE;
-        if (pageIsJobThread && !threadReloaded && injections < MAX_INJECTIONS) {
-            threadReloaded = true;
-            return NoThread.RELOAD;
-        }
-        return NoThread.FALLBACK;
+        // The same single reload budget as a wrong page; a page that is not the job's thread falls back.
+        return pageIsJobThread ? onWrongPage() : NoThread.FALLBACK;
     }
 
     /** The job's thread page was reloaded once after a settle without the conversation. */
