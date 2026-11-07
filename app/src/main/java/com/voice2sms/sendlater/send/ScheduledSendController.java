@@ -1180,10 +1180,12 @@ public final class ScheduledSendController {
         if (r != null) {
             if (r == SendVerifier.Result.VERIFIED) {
                 report(job, SendOutcome.SENT_VERIFIED, null);
+                startFollowUp(job, now);
                 return;
             }
             if (r == SendVerifier.Result.VERIFIED_WITH_LATE_REPLY) {
                 report(job, SendOutcome.SENT_VERIFIED, DETAIL_LATE_REPLY);
+                startFollowUp(job, now);
                 return;
             }
         }
@@ -1194,6 +1196,40 @@ public final class ScheduledSendController {
         }
         main.postDelayed(() -> readOnce(job),
                 job.watch.baseline() == null ? BASELINE_POLL_MS : READ_INTERVAL_MS);
+    }
+
+    // ================================================================== after SENT_VERIFIED (deliver M4)
+
+    /**
+     * Deliver M4: keeps reading the job's thread for {@link SentFollowUp#WATCH_MS} after its
+     * SENT_VERIFIED, while the activity is alive and the page stays on that thread. When GV turns
+     * the verified bubble into "Not sent", the engine downgrades the row
+     * ({@link SendLaterEngine#onSentNotDelivered}). Reads only; never touches the composer or the
+     * outcome already reported, and stops on its own (window, page left, activity gone).
+     */
+    private void startFollowUp(Job job, long nowMs) {
+        if (job.watch == null || job.e164 == null) return;
+        final SentFollowUp follow = job.watch.followUp(nowMs);
+        final long id = job.id;
+        final String e164 = job.e164;
+        main.postDelayed(() -> followUpOnce(id, e164, follow), READ_INTERVAL_MS);
+    }
+
+    private void followUpOnce(final long id, final String e164, final SentFollowUp follow) {
+        if (follow.isOver() || !host.isAlive()) return;
+        host.readThread(e164, READ_LIMIT, bubbles -> {
+            if (follow.isOver() || !host.isAlive()) return;
+            boolean onThread = ThreadUrl.isThreadOf(host.mainFrameUrl(), e164);
+            SentFollowUp.Step step = follow.onRead(bubbles, onThread, System.currentTimeMillis());
+            if (step == SentFollowUp.Step.FAILED) {
+                Log.w(TAG, "verified send now shows not sent, id " + id);
+                SendLaterEngine.onSentNotDelivered(app, id);
+                return;
+            }
+            if (step == SentFollowUp.Step.KEEP) {
+                main.postDelayed(() -> followUpOnce(id, e164, follow), READ_INTERVAL_MS);
+            }
+        });
     }
 
     /** Hands the outcome to the engine (the only status writer), then the next job or settle. */

@@ -14,7 +14,7 @@ import java.util.TimeZone;
 /**
  * One message bubble read from the open GV web thread by {@code window.v2sReadThread}
  * ({@code {direction: "IN"|"OUT", timeMs: number|null, text: string, id: string|null,
- * label?: string|null, failed?: boolean}}).
+ * label?: string|null, failed?: boolean, sending?: boolean}}).
  * Carries raw text: never log or persist it beyond what the store allows.
  *
  * <p>LIVE-F9: the real GV web page gives no time or id; when {@code timeMs} is absent the
@@ -22,6 +22,10 @@ import java.util.TimeZone;
  * {@link #isTimeFromLabel()}: the page draws that label on an optimistic bubble too, so it dates
  * the bubble but does not prove the server took it. A {@code failed} bubble ("Not sent") never
  * verifies a send (OD28 L1). The label is not kept.
+ *
+ * <p>Deliver M4: a {@code sending} bubble (GV still shows it as pending / sending) has not been
+ * taken by the server yet, so it never settles a verification. A bubble that is both failed and
+ * sending counts as failed only.
  */
 public final class ThreadBubble {
 
@@ -34,6 +38,7 @@ public final class ThreadBubble {
     private final String id;
     private final boolean timeFromLabel;
     private final boolean failed;
+    private final boolean sending;
 
     public ThreadBubble(ThreadEvent.Direction direction, Long timeMs, String text, String id) {
         this(direction, timeMs, text, id, false, false);
@@ -41,12 +46,19 @@ public final class ThreadBubble {
 
     public ThreadBubble(ThreadEvent.Direction direction, Long timeMs, String text, String id,
                         boolean timeFromLabel, boolean failed) {
+        this(direction, timeMs, text, id, timeFromLabel, failed, false);
+    }
+
+    /** Deliver M4: {@code sending} = the page still shows this bubble as pending / sending. */
+    public ThreadBubble(ThreadEvent.Direction direction, Long timeMs, String text, String id,
+                        boolean timeFromLabel, boolean failed, boolean sending) {
         this.direction = direction;
         this.timeMs = timeMs;
         this.text = text;
         this.id = id;
         this.timeFromLabel = timeMs != null && timeFromLabel;
         this.failed = failed;
+        this.sending = sending && !failed;
     }
 
     public ThreadEvent.Direction getDirection() { return direction; }
@@ -57,6 +69,8 @@ public final class ThreadBubble {
     public boolean isTimeFromLabel() { return timeFromLabel; }
     /** The page marks this bubble as failed / not sent: it never verifies a send. */
     public boolean isFailed() { return failed; }
+    /** Deliver M4: the page still shows this bubble as pending / sending (never also failed). */
+    public boolean isSending() { return sending; }
 
     /** SMS ThreadEvent with textHash set via ThreadEvent.hashOf, or null when the time is unknown. */
     public ThreadEvent toThreadEvent() {
@@ -68,7 +82,7 @@ public final class ThreadBubble {
     public String toString() {
         return "ThreadBubble{" + direction + ", timeKnown=" + (timeMs != null)
                 + ", idKnown=" + (id != null) + (timeFromLabel ? ", labelTime" : "")
-                + (failed ? ", failed" : "") + "}";
+                + (failed ? ", failed" : "") + (sending ? ", sending" : "") + "}";
     }
 
     /** What the page answered for one v2sReadThread request. */
@@ -140,7 +154,8 @@ public final class ThreadBubble {
                 }
             }
             boolean failed = Boolean.TRUE.equals(x.opt("failed"));
-            out.add(new ThreadBubble(dir, time, (String) t, id, fromLabel, failed));
+            boolean sending = Boolean.TRUE.equals(x.opt("sending"));
+            out.add(new ThreadBubble(dir, time, (String) t, id, fromLabel, failed, sending));
         }
         return Collections.unmodifiableList(out);
     }

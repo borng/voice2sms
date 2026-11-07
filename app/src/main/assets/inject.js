@@ -2008,7 +2008,7 @@ function _v2sSlItemE164(item) {
 
 /**
  * Newest bubbles of the open thread, oldest first:
- * [{direction, timeMs|null, text, label|null, id|null, failed}] (LIVE-F9).
+ * [{direction, timeMs|null, text, label|null, id|null, failed, sending}] (LIVE-F9, deliver M4).
  *
  * Real GV web DOM (S22, 2026-11-05): gv-message-list > ... > li > gv-message-item >
  * div.container > div.full-container.incoming|.outgoing > [div.cdk-visually-hidden (the
@@ -2042,7 +2042,8 @@ function _v2sSlReadBubbles(limit) {
             text: text,
             label: label || null,
             id: n.getAttribute('data-message-id') || n.getAttribute('data-id') || null,
-            failed: _v2sSlBubbleFailed(n, full)
+            failed: _v2sSlBubbleFailed(n, full),
+            sending: _v2sSlBubbleSending(n, full)
         });
     }
     if (!out.length) return (list && !nodes.length) ? [] : null;
@@ -2069,7 +2070,50 @@ function _v2sSlBubbleDirection(n, full) {
 
 /** OD28 L1: GV marks a bubble that did not go out; such a bubble never verifies a send. */
 function _v2sSlBubbleFailed(n, full) {
-    return /fail|error|not-sent/i.test(_v2sSlClassWords(full) + ' ' + _v2sSlClassWords(n));
+    if (/fail|error|not-sent/i.test(_v2sSlClassWords(full) + ' ' + _v2sSlClassWords(n))) return true;
+    // deliver M4: a short status line outside the message text ("Not sent", "Failed").
+    return /^(not sent|failed|couldn.t send|could not send|message not sent)\b/i.test(_v2sSlBubbleStatus(n));
+}
+
+/**
+ * Deliver M4: GV still shows the bubble as on its way (sending / pending class, aria-busy, a
+ * progress spinner, or a "Sending" status line): the server has not taken it, so it never
+ * settles a verification. Never logs.
+ */
+function _v2sSlBubbleSending(n, full) {
+    var words = _v2sSlClassWords(full) + ' ' + _v2sSlClassWords(n);
+    if (/(^|[\s_-])(sending|pending|in-progress|queued)([\s_-]|$)/i.test(words)) return true;
+    if ((full && full.getAttribute('aria-busy') === 'true') || n.getAttribute('aria-busy') === 'true') return true;
+    var spin = n.querySelectorAll('mat-spinner, mat-progress-spinner, [role="progressbar"]');
+    for (var i = 0; i < spin.length; i++) {
+        if (!_v2sSlInMessageText(spin[i])) return true;
+    }
+    return /^(sending|queued)\b/i.test(_v2sSlBubbleStatus(n));
+}
+
+/**
+ * Deliver M4: the bubble's short status line ("Sending...", "Not sent"), read only from status
+ * elements outside the message text and the screen-reader label, which carry message content;
+ * '' when there is none. Never logs.
+ */
+function _v2sSlBubbleStatus(n) {
+    var els = n.querySelectorAll('[role="status"], .status, .message-status, [class*="status"], [gv-test-id*="status"]');
+    for (var i = 0; i < els.length; i++) {
+        if (_v2sSlInMessageText(els[i]) || _v2sSlHoldsMessageText(els[i])) continue;
+        var t = (els[i].textContent || '').trim();
+        if (t && t.length <= 40) return t;
+    }
+    return '';
+}
+
+/** Deliver M4: el wraps the message text or the screen-reader label (not a status line). */
+function _v2sSlHoldsMessageText(el) {
+    return !!el.querySelector('gv-annotation, .content, .bubble, .cdk-visually-hidden');
+}
+
+/** Deliver M4: el sits inside the message text or the screen-reader label of its bubble. */
+function _v2sSlInMessageText(el) {
+    return !!(el.closest && el.closest('gv-annotation, .content, .bubble, .cdk-visually-hidden'));
 }
 
 function _v2sSlLegacyDirection(n) {

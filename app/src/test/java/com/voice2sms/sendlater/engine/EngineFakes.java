@@ -179,6 +179,12 @@ final class EngineFakes {
             return to(id, Status.HELD, r, Status.SCHEDULED, Status.HELD, Status.IN_FLIGHT);
         }
 
+        /** Deliver M4: mirrors SendLaterRepository.unverifySent (SENT_VERIFIED only). */
+        @Override public boolean unverifySent(long id) {
+            j.add("store.unverifySent " + id);
+            return to(id, Status.HELD, HoldReason.UNVERIFIED, Status.SENT_VERIFIED);
+        }
+
         @Override public boolean cancel(long id) {
             j.add("store.cancel " + id);
             return to(id, Status.CANCELED, null, Status.SCHEDULED, Status.HELD, Status.IN_FLIGHT);

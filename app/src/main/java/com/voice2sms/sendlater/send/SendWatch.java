@@ -36,6 +36,11 @@ import java.util.List;
  * <p>LIVE-F9: on the real GV web page a bubble's only time is its screen-reader label, which the
  * page draws on an optimistic bubble as well. A label time dates a bubble (G3) but never confirms
  * it at once: such a match must settle like an untimed one. A failed bubble never matches.
+ *
+ * <p>Deliver M4: a match the page still shows as sending / pending ({@link ThreadBubble#isSending})
+ * is not settled, whatever time it carries: the settle clock starts only once GV stops showing it
+ * as sending. After a verdict, {@link #followUp} keeps watching the same bubble for a bounded
+ * window ({@link SentFollowUp}) so a later "Not sent" is noticed.
  */
 public final class SendWatch {
 
@@ -49,6 +54,8 @@ public final class SendWatch {
     private boolean lastMatchConfirmed;
     /** When the current unconfirmed match was first seen with the box empty; -1 when none. */
     private long firstSightingMs = -1L;
+    /** Deliver M4: the last onPoll's match is still shown as sending: nothing settles. */
+    private boolean lastMatchSending;
 
     public SendWatch(String bodyHash) {
         this.bodyHash = bodyHash;
@@ -57,6 +64,7 @@ public final class SendWatch {
     /** @param bubbles the thread read (null: not readable); @param pending the probe after it. */
     public List<ThreadEvent> onPoll(List<ThreadBubble> bubbles, boolean pending, long nowMs) {
         lastMatchConfirmed = false;
+        lastMatchSending = false;
         if (pending) sawPending = true;
         if (baseline == null) {
             if (bubbles != null && pending) {
@@ -70,7 +78,8 @@ public final class SendWatch {
                 own = -1;   // G3: may be an older identical text; only a new conversation qualifies
             }
             // Without a baseline an id cannot date the bubble; only a time can.
-            lastMatchConfirmed = own >= 0 && serverTimed(bubbles.get(own));
+            lastMatchSending = own >= 0 && bubbles.get(own).isSending();
+            lastMatchConfirmed = own >= 0 && serverTimed(bubbles.get(own)) && !lastMatchSending;
             return ThreadBaseline.verificationEvents(bodyHash, bubbles, own, nowMs);
         }
         if (bubbles == null) return null;
@@ -78,7 +87,8 @@ public final class SendWatch {
         ThreadBubble match = firstNewOwn(bubbles, newStart);
         // R4 (OD26): an id attribute proves nothing (an optimistic bubble may carry a client id);
         // only a time the page shows confirms at once, else the settle rule decides.
-        lastMatchConfirmed = match != null && serverTimed(match);
+        lastMatchSending = match != null && match.isSending();
+        lastMatchConfirmed = match != null && serverTimed(match) && !lastMatchSending;
         return ThreadBaseline.verificationEvents(bodyHash, bubbles, newStart, nowMs);
     }
 
@@ -90,8 +100,9 @@ public final class SendWatch {
     public SendVerifier.Result settle(SendVerifier.Result verdict, boolean pending, long nowMs) {
         boolean match = verdict == SendVerifier.Result.VERIFIED
                 || verdict == SendVerifier.Result.VERIFIED_WITH_LATE_REPLY;
-        if (!match || pending) {
-            firstSightingMs = -1L;   // gone, or text back in the box: start over
+        if (!match || pending || lastMatchSending) {
+            // gone, text back in the box, or GV still sending it (deliver M4): start over
+            firstSightingMs = -1L;
             return null;
         }
         if (lastMatchConfirmed) return verdict;
@@ -125,6 +136,14 @@ public final class SendWatch {
             if (b != null && b.getDirection() == ThreadEvent.Direction.OUT) n++;
         }
         return n;
+    }
+
+    /**
+     * Deliver M4: the post-verification watch of this send's bubble, started at {@code nowMs}
+     * (same baseline and body hash as the polls that verified it).
+     */
+    public SentFollowUp followUp(long nowMs) {
+        return new SentFollowUp(bodyHash, baseline, nowMs);
     }
 
     /** The pre-send read, or null when none was confirmed. */

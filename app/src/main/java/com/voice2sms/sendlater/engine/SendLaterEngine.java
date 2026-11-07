@@ -79,6 +79,18 @@ public final class SendLaterEngine {
 
     /** Thread-check time of the attempt now IN_FLIGHT, per id (R31 "replied just as it sent"). */
     private static final Map<Long, Long> checkTimes = new HashMap<>();
+    /**
+     * Deliver M4: when each recent SENT_VERIFIED was recorded (engine clock), per id. Only these
+     * may be downgraded by {@link #onSentNotDelivered}, and only within
+     * {@link #SENT_FOLLOW_UP_MAX_MS}. In memory: a process restart ends every follow-up.
+     */
+    private static final Map<Long, Long> verifiedAt = new HashMap<>();
+    /**
+     * Deliver M4: a "Not sent" seen later than this after the SENT_VERIFIED no longer changes the
+     * row (the sender watches for {@code SentFollowUp.WATCH_MS}, 30 s; this adds slack for the
+     * read and the engine queue).
+     */
+    static final long SENT_FOLLOW_UP_MAX_MS = 90_000L;
     /** Extra sources registered by other nodes (production wiring only). */
     private static final List<ThreadEventSource> extraSources = new ArrayList<>();
 
@@ -104,6 +116,7 @@ public final class SendLaterEngine {
             sender = null;
             installedForTest = false;
             checkTimes.clear();
+            verifiedAt.clear();
         }
     }
 
@@ -485,8 +498,14 @@ public final class SendLaterEngine {
      */
     private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent,
                              boolean armExpiry, boolean notify, SendOutcome lastOutcome) {
+        if (!d.store.hold(m.getId(), reason)) return;
+        afterHold(d, m, reason, now, mayHaveSent, armExpiry, notify, lastOutcome);
+    }
+
+    /** Everything a hold does once the store moved the row to HELD (notification, alarms, broadcast). */
+    private static void afterHold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent,
+                                  boolean armExpiry, boolean notify, SendOutcome lastOutcome) {
         long id = m.getId();
-        if (!d.store.hold(id, reason)) return;
         d.marks.setReminded(id, false);
         d.marks.clearLastCall(id);
         schedulerOf(d).cancelAlarms(id);
@@ -577,6 +596,7 @@ public final class SendLaterEngine {
         long id = m.getId();
         Long checkTime = checkTimes.remove(id);
         if (!d.store.markSentVerified(id)) return;
+        noteVerified(id, d.conditions.nowMs());
         d.marks.clear(id);
         schedulerOf(d).cancelAll(id);
         ScheduledMessage sent = reload(d, m);
@@ -586,6 +606,37 @@ public final class SendLaterEngine {
             d.notifier.sent(sent);
         }
         d.broadcaster.stateChanged(id, m.getRecipientE164());
+    }
+
+    /** Deliver M4: records a SENT_VERIFIED for the follow-up; drops entries past their window. */
+    private static void noteVerified(long id, long nowMs) {
+        java.util.Iterator<Map.Entry<Long, Long>> it = verifiedAt.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Long, Long> e = it.next();
+            if (nowMs - e.getValue() > SENT_FOLLOW_UP_MAX_MS || nowMs < e.getValue()) it.remove();
+        }
+        verifiedAt.put(id, nowMs);
+    }
+
+    /**
+     * Deliver M4: the scheduled-send controller saw the bubble it had verified turn into "Not
+     * sent" (GV failed it after the verdict). SENT_VERIFIED -> HELD(UNVERIFIED) with the "may
+     * have already sent" notification (it replaces "Sent"), an expiry alarm and the state
+     * broadcast, exactly as a SENT_UNVERIFIED outcome ends. Applies once, only to a row this
+     * process verified no more than {@link #SENT_FOLLOW_UP_MAX_MS} ago and that is still
+     * SENT_VERIFIED; anything else is ignored. Never retries the send (I5).
+     */
+    public static void onSentNotDelivered(final Context context, final long id) {
+        run(context, () -> {
+            EngineDeps d = deps(context);
+            Long at = verifiedAt.remove(id);
+            long now = d.conditions.nowMs();
+            if (at == null || now < at || now - at > SENT_FOLLOW_UP_MAX_MS) return;
+            ScheduledMessage m = d.store.get(id);
+            if (m == null || m.getStatus() != Status.SENT_VERIFIED) return;
+            if (!d.store.unverifySent(id)) return;
+            afterHold(d, m, HoldReason.UNVERIFIED, now, true, enabled(d), true, SendOutcome.SENT_UNVERIFIED);
+        });
     }
 
     /**
