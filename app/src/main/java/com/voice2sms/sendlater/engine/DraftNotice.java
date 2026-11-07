@@ -15,7 +15,8 @@ import com.voice2sms.sendlater.domain.ScheduledMessage;
  *       {@link SendLaterUnlockActivity}, so it needs an unlock, OD31 L1) whose compose clears the
  *       box and types ours;</li>
  *   <li>{@link #ACTION_KEEP} "Keep draft": the notification goes; the message stays in Upcoming
- *       waiting for the user (nothing typed, nothing sent);</li>
+ *       waiting for the user (nothing typed, nothing sent). Needs an unlock too (deliver sec-L1):
+ *       an authentication-required broadcast on API 31+, {@link SendLaterUnlockActivity} below;</li>
  *   <li>{@link #ACTION_BOTH} "Send both": a user-tap send that keeps the draft in memory, sends
  *       ours, then puts the draft back in the box.</li>
  * </ul>
@@ -29,7 +30,10 @@ public final class DraftNotice {
     public static final String ACTION_REPLACE = P + "DRAFT_REPLACE";
     /** "Send both" (activity trampoline, unlock required). */
     public static final String ACTION_BOTH = P + "DRAFT_BOTH";
-    /** "Keep draft" (broadcast to {@link SendLaterActionReceiver}). */
+    /**
+     * "Keep draft" (unlock required, sec-L1: authentication-required broadcast to
+     * {@link SendLaterActionReceiver} on API 31+, {@link SendLaterUnlockActivity} below).
+     */
     public static final String ACTION_KEEP = P + "DRAFT_KEEP";
 
     /** The only words the lock screen shows. */

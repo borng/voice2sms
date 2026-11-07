@@ -31,6 +31,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       31+). It grants {@link UserTapGrant} for the message, hands the tap to the engine (same
  *       path as the action receiver), and stays until the send path has started the activity
  *       ({@link UserTapGrant#consume}), the engine started no send, or {@link #HOLD_MS}.</li>
+ *   <li>Deliver sec-L1: below API 31 Cancel, Snooze 1 h and Keep draft come here too
+ *       ({@link #isUnlockOnlyAction}), so they also never run from the lock screen without an
+ *       unlock. They start no send, so they get no {@link UserTapGrant} and no hold: the tap goes
+ *       to the engine (same path as the action receiver) and the activity finishes. On API 31+
+ *       they stay authentication-required broadcasts ({@link SendLaterNotifications}).</li>
  * </ul>
  */
 public final class SendLaterUnlockActivity extends Activity {
@@ -62,12 +67,26 @@ public final class SendLaterUnlockActivity extends Activity {
                 || DraftNotice.ACTION_REPLACE.equals(action) || DraftNotice.ACTION_BOTH.equals(action);
     }
 
+    /**
+     * Deliver sec-L1: Cancel, Snooze 1 h and Keep draft. They need an unlock like the sends, but
+     * start no send, so the activity grants nothing for them.
+     */
+    static boolean isUnlockOnlyAction(String action) {
+        return SendLaterIntents.ACTION_CANCEL.equals(action) || SendLaterIntents.ACTION_SNOOZE.equals(action)
+                || DraftNotice.ACTION_KEEP.equals(action);
+    }
+
+    /** Whether this activity acts on {@code action} at all (after the unlock). */
+    static boolean accepts(String action) {
+        return isUnlockAction(action) || isUnlockOnlyAction(action);
+    }
+
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Intent intent = getIntent();
         final String action = intent != null ? intent.getAction() : null;
         final long id = intent != null ? intent.getLongExtra(SendLaterIntents.EXTRA_MESSAGE_ID, -1L) : -1L;
-        if (savedInstanceState != null || !isUnlockAction(action) || id < 0) {
+        if (savedInstanceState != null || !accepts(action) || id < 0) {
             finish();
             return;
         }
@@ -90,6 +109,10 @@ public final class SendLaterUnlockActivity extends Activity {
     private void act(String action, long id) {
         if (acted) return;
         acted = true;
+        if (!isUnlockAction(action)) {
+            actWithoutGrant(action, id);
+            return;
+        }
         final Context app = getApplicationContext();
         grantedId = id;
         // LIVE-F4: from here until release() the send path may plan DIRECT for this message.
@@ -103,6 +126,17 @@ public final class SendLaterUnlockActivity extends Activity {
         } catch (RuntimeException e) {
             release();   // engine unavailable: nothing sent
         }
+    }
+
+    /** Cancel / Snooze 1 h / Keep draft (sec-L1): hand the tap to the engine and finish. */
+    private void actWithoutGrant(String action, long id) {
+        final Context app = getApplicationContext();
+        try {
+            SendLaterEngine.runInBackground(app, () -> SendLaterEngine.onNotificationTap(app, action, id), null);
+        } catch (RuntimeException e) {
+            // engine unavailable: nothing changed
+        }
+        release();
     }
 
     /** The engine has handled the tap; wait for the launch only when a send is under way. */
