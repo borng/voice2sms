@@ -34,6 +34,8 @@ public final class SendLaterNotifications {
     static final String CHANNEL_HOLD = "sendlater_hold";
     static final String CHANNEL_INFO = "sendlater_info";
     static final String TAG = "sendlater";
+    /** D32: tag of the "draft was not put back" notice (its own slot per message). */
+    static final String TAG_DRAFT = "sendlater_draft";
     /** Extra naming the state a posted notification shows ("hold:REPLIED", "lastCall", ...). */
     static final String EXTRA_KIND = "com.voice2sms.sendlater.notification_kind";
     static final String KIND_LAST_CALL = "lastCall";
@@ -169,6 +171,65 @@ public final class SendLaterNotifications {
         remind(c, m, k.reason(), k);
     }
 
+    /**
+     * D32: the conversation's box held the user's own draft, so nothing was typed. Shows the
+     * draft and the scheduled text with Replace and send / Keep draft / Send both. The lock
+     * screen shows only the public version ({@link DraftNotice#PUBLIC_TITLE}: no name, number or
+     * text); the two sending actions need an unlock (activity trampoline, OD31 L1). The draft
+     * text lives only in this notification; it is never stored or logged.
+     */
+    public static void draftInTheWay(Context c, ScheduledMessage m, String draft) {
+        if (c == null || m == null) return;
+        String body = DraftNotice.body(draft, m);
+        NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
+                .setContentTitle(DraftNotice.title(m))
+                .setContentText(DraftNotice.summary())
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setOnlyAlertOnce(true)
+                .setPublicVersion(draftPublicVersion(c, DraftNotice.PUBLIC_TITLE))
+                .setContentIntent(reviewMode(c, m, false))
+                .addAction(unlockedAction(c, "Replace and send", DraftNotice.ACTION_REPLACE, m.getId()))
+                .addAction(0, "Keep draft", broadcast(c, DraftNotice.ACTION_KEEP, m.getId()))
+                .addAction(unlockedAction(c, "Send both", DraftNotice.ACTION_BOTH, m.getId()));
+        post(c, m.getId(), b.build(), "draft");
+    }
+
+    /**
+     * D32 Send both: the draft could not be put back into the box after our message, so it is
+     * shown here instead, in its own slot (the message's slot gets "Sent"). Private on the lock
+     * screen; tapping opens the conversation. Never logged.
+     */
+    public static void draftNotRestored(Context c, ScheduledMessage m, String draft) {
+        if (c == null || m == null || draft == null) return;
+        String body = DraftNotice.notRestoredBody(draft);
+        NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
+                .setContentTitle(DraftNotice.notRestoredTitle(m))
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setPublicVersion(draftPublicVersion(c, DraftNotice.NOT_RESTORED_PUBLIC_TITLE))
+                .setContentIntent(reviewMode(c, m, false));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(c, Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        ensureChannels(nm);
+        nm.notify(TAG_DRAFT, slot(m.getId()), b.build());
+    }
+
+    /** The lock-screen version of a draft notice: {@code title} only, no name, number or text. */
+    private static Notification draftPublicVersion(Context c, String title) {
+        return new NotificationCompat.Builder(c, CHANNEL_HOLD)
+                .setSmallIcon(android.R.drawable.sym_action_chat)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setContentTitle(title)
+                .build();
+    }
+
     /** R31: the send failed and was not retried; tap opens review mode to send it by hand. */
     public static void sendFailed(Context c, ScheduledMessage m) {
         NotificationCompat.Builder b = base(c, CHANNEL_HOLD, m)
@@ -288,6 +349,9 @@ public final class SendLaterNotifications {
         else if (SendLaterIntents.ACTION_SEND_ANYWAY.equals(action)) a = 2;
         else if (SendLaterIntents.ACTION_SNOOZE.equals(action)) a = 3;
         else if (SendLaterIntents.ACTION_CANCEL.equals(action)) a = 4;
+        else if (DraftNotice.ACTION_REPLACE.equals(action)) a = 6;
+        else if (DraftNotice.ACTION_BOTH.equals(action)) a = 7;
+        else if (DraftNotice.ACTION_KEEP.equals(action)) a = 0;
         else a = 5;
         return slot(id) * 8 + a;
     }

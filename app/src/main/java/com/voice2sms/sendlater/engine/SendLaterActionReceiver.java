@@ -26,7 +26,8 @@ public final class SendLaterActionReceiver extends BroadcastReceiver {
         final PendingResult pending = goAsync();
         SendLaterEngine.runInBackground(app, () -> {
             if (SendLaterIntents.ACTION_SEND_ANYWAY.equals(action) || SendLaterIntents.ACTION_SEND_NOW.equals(action)
-                    || SendLaterIntents.ACTION_SNOOZE.equals(action) || SendLaterIntents.ACTION_CANCEL.equals(action)) {
+                    || SendLaterIntents.ACTION_SNOOZE.equals(action) || SendLaterIntents.ACTION_CANCEL.equals(action)
+                    || DraftNotice.ACTION_KEEP.equals(action)) {
                 // UI M4: a stale tap posts what happened ("Already sending ...") instead of nothing.
                 SendLaterEngine.onNotificationTap(app, action, id);
             } else if (SendLaterIntents.ACTION_EDIT.equals(action)) {

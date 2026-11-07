@@ -59,8 +59,9 @@ public final class ScheduledCompose {
      * LIVE-F10: on the job's thread page, GV must show the conversation (gv-message-list) within
      * this of the injection; otherwise there is none for the number and the new-conversation
      * flow is used. A GV reload of the thread page re-injects and the wait starts over.
+     * D35: 15 s (was 10 s).
      */
-    public static final long THREAD_SETTLE_MS = 10_000L;
+    public static final long THREAD_SETTLE_MS = 15_000L;
     /** The script stops polling WAIT this long after the pre-send deadline (Java decides by then). */
     public static final long CLICK_WAIT_MARGIN_MS = 5_000L;
 

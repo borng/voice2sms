@@ -10,6 +10,7 @@ import com.voice2sms.sendlater.battery.BatteryWarning;
 import com.voice2sms.sendlater.domain.Classification;
 import com.voice2sms.sendlater.domain.ConversationRef;
 import com.voice2sms.sendlater.domain.Decision;
+import com.voice2sms.sendlater.domain.DraftChoice;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LadderEvaluator;
 import com.voice2sms.sendlater.domain.OutboundPolicy;
@@ -383,6 +384,16 @@ public final class SendLaterEngine {
      */
     private static void startSend(EngineDeps d, Context context, ScheduledMessage m, long checkTime,
                                   PreSendCheck check) {
+        startSend(d, context, m, checkTime, check, DraftChoice.Mode.ASK);
+    }
+
+    /**
+     * D32: {@code draftMode} says what the job does with a draft it finds in the conversation's
+     * box: {@link DraftChoice.Mode#ASK} (stop unsent, the choice notification) for every send but
+     * the one the user's Replace and send / Send both tap starts.
+     */
+    private static void startSend(EngineDeps d, Context context, ScheduledMessage m, long checkTime,
+                                  PreSendCheck check, DraftChoice.Mode draftMode) {
         ScheduledSender s = sender;
         long id = m.getId();
         if (s == null) {
@@ -402,7 +413,8 @@ public final class SendLaterEngine {
         if (lastCallShown) d.notifier.sending(inFlight);
         boolean started;
         try {
-            started = s.start(context, inFlight, check != null ? check : PreSendCheck.off());
+            started = s.start(context, inFlight, check != null ? check : PreSendCheck.off(),
+                    draftMode != null ? draftMode : DraftChoice.Mode.ASK);
         } catch (RuntimeException e) {
             Log.e(TAG, "sender.start threw for id " + id + ": " + e.getClass().getSimpleName());
             started = false;
@@ -477,6 +489,19 @@ public final class SendLaterEngine {
         } else {
             d.notifier.remind(m, reason);
         }
+        d.broadcaster.stateChanged(id, m.getRecipientE164());
+        schedulerOf(d).registerExpiry(m);
+    }
+
+    /**
+     * D32: as {@link #remind} (reminded: no later DUE sends it; expires 24 h past its time), with
+     * the "draft in the way" notification. {@code draft} is passed to the notifier only.
+     */
+    private static void remindDraft(EngineDeps d, ScheduledMessage m, String draft) {
+        long id = m.getId();
+        d.marks.setReminded(id, true);
+        schedulerOf(d).cancelAlarms(id);
+        d.notifier.draftInTheWay(m, draft);
         d.broadcaster.stateChanged(id, m.getRecipientE164());
         schedulerOf(d).registerExpiry(m);
     }
@@ -700,6 +725,14 @@ public final class SendLaterEngine {
     }
 
     private static TapResult doSendAnyway(EngineDeps d, Context context, long id) {
+        return doSendAnyway(d, context, id, DraftChoice.Mode.ASK);
+    }
+
+    /**
+     * D32: Replace and send / Send both are Send anyway taps whose one job treats a draft in the
+     * box per {@code draftMode}; every other tap uses {@link DraftChoice.Mode#ASK}.
+     */
+    private static TapResult doSendAnyway(EngineDeps d, Context context, long id, DraftChoice.Mode draftMode) {
         ScheduledMessage m = d.store.get(id);
         if (!tappable(m)) return TapResult.staleFor(m);
         long now = d.conditions.nowMs();
@@ -716,7 +749,7 @@ public final class SendLaterEngine {
         } else if (decision.getKind() == Decision.Kind.SEND) {
             d.notifier.dismiss(id);
             // R28: the user's tap skips the thread check, so no pre-send check either (D30).
-            startSend(d, context, m, now, PreSendCheck.off());
+            startSend(d, context, m, now, PreSendCheck.off(), draftMode);
         }
         return TapResult.DONE;
     }
@@ -805,12 +838,31 @@ public final class SendLaterEngine {
             } else if (SendLaterIntents.ACTION_CANCEL.equals(action)) {
                 cancelTap = true;
                 r = doCancel(d, id);
+            } else if (DraftNotice.ACTION_REPLACE.equals(action)) {
+                r = doSendAnyway(d, context, id, DraftChoice.Mode.REPLACE);
+            } else if (DraftNotice.ACTION_BOTH.equals(action)) {
+                r = doSendAnyway(d, context, id, DraftChoice.Mode.BOTH);
+            } else if (DraftNotice.ACTION_KEEP.equals(action)) {
+                r = doKeepDraft(d, id);
             } else {
                 return null;
             }
             if (r != TapResult.DONE) d.notifier.staleTap(id, d.store.get(id), r, cancelTap);
             return r;
         }
+    }
+
+    /**
+     * D32 Keep draft: the user keeps their draft; the message stays in Upcoming waiting for them
+     * (it was released unsent and marked reminded, so it never sends itself) and the
+     * notification goes. Nothing is typed or sent.
+     */
+    private static TapResult doKeepDraft(EngineDeps d, long id) {
+        ScheduledMessage m = d.store.get(id);
+        if (!tappable(m)) return TapResult.staleFor(m);
+        d.notifier.dismiss(id);
+        d.broadcaster.stateChanged(id, m.getRecipientE164());
+        return TapResult.DONE;
     }
 
     /**
@@ -907,11 +959,15 @@ public final class SendLaterEngine {
         switch (outcome) {
             case SENT_VERIFIED: {
                 // The one producer of SENT_VERIFIED (OD27).
+                DraftStash.drop(id);
                 sentVerified(d, m, listenerInbound(d, m), detail);
                 return;
             }
             case CANNOT_SHOW: {
                 checkTimes.remove(id);
+                // D32: the send path found the user's draft in the box (in memory only, never
+                // stored); taken here whatever the detail says so no draft outlives its outcome.
+                String draft = DraftStash.take(id);
                 // D30: the sender's pre-send check stopped the send (nothing was sent: the Send
                 // tap was never granted). A reply holds with the normal hold notification, never
                 // "may have already sent"; the user's similar text self-preempts.
@@ -929,7 +985,10 @@ public final class SendLaterEngine {
                 RemindCause cause = RemindCause.fromDetail(detail);
                 if (d.store.releaseForRetry(id, "cannot_show")) {
                     d.marks.addFreeRelease(id);
-                    remind(d, reload(d, m), cause.reason(), cause);
+                    // D32: a draft in the box gets the choice notification (reminded all the
+                    // same: it never sends itself) instead of the generic reminder.
+                    if (draft != null) remindDraft(d, reload(d, m), draft);
+                    else remind(d, reload(d, m), cause.reason(), cause);
                 }
                 return;
             }
@@ -937,6 +996,7 @@ public final class SendLaterEngine {
             default: {
                 // OD27: nothing the engine can read proves the send did or did not go out.
                 checkTimes.remove(id);
+                DraftStash.drop(id);
                 hold(d, m, HoldReason.UNVERIFIED, now, true, true, true, outcome);
             }
         }

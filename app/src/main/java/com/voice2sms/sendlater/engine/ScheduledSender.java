@@ -2,6 +2,7 @@ package com.voice2sms.sendlater.engine;
 
 import android.content.Context;
 
+import com.voice2sms.sendlater.domain.DraftChoice;
 import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 
@@ -25,6 +26,17 @@ public interface ScheduledSender {
      */
     default boolean start(Context context, ScheduledMessage message, PreSendCheck check) {
         return start(context, message);
+    }
+
+    /**
+     * D32: {@link #start(Context, ScheduledMessage, PreSendCheck)} with what the job does when the
+     * conversation's box holds the user's own draft ({@link DraftChoice.Mode#ASK} for every send
+     * but the one a Replace and send / Send both tap starts). A sender that never meets a draft
+     * ignores it.
+     */
+    default boolean start(Context context, ScheduledMessage message, PreSendCheck check,
+                          DraftChoice.Mode draftMode) {
+        return start(context, message, check);
     }
 
     /**

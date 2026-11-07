@@ -747,6 +747,27 @@ function v2sScheduledClear(text) {
 }
 
 /**
+ * D32 Send both: the scheduled job ended; puts the user's draft back into the message box when the
+ * box is empty or still holds exactly our scheduled text (anything else is left alone). Returns
+ * true when the box then holds the draft. Never logs either text.
+ */
+function v2sScheduledRestoreDraft(draft, text) {
+    var el = document.querySelector(V2S_COMPOSER_SELECTOR);
+    if (!el || typeof draft !== 'string' || !draft) return false;
+    var v = el.isContentEditable ? el.textContent : el.value;
+    if (typeof v === 'string' && v.length > 0 && !_v2sScheduledHolds(el, text)) {
+        console.log('[Voice2SMS] Scheduled send: the message box is not empty, nothing put back');
+        return false;
+    }
+    _v2sScheduledSet(el, draft, false);
+    var after = el.isContentEditable ? el.textContent : el.value;
+    var ok = after === draft;
+    console.log(ok ? '[Voice2SMS] Scheduled send: message box restored'
+        : '[Voice2SMS] Scheduled send: message box could not be restored');
+    return ok;
+}
+
+/**
  * Scheduled compose. Java sets window._v2sScheduledOpts first: {mode, settleMs, pollMs, waitMs}.
  *
  * mode 'thread' (LIVE-F10): Java loaded the job's own thread URL by a full page load. Once GV
@@ -772,7 +793,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     var opts = window._v2sScheduledOpts || {};
     window._v2sScheduledOpts = null;
     var threadMode = opts.mode === 'thread';
-    var SETTLE_MS = opts.settleMs > 0 ? opts.settleMs : 10000;
+    var SETTLE_MS = opts.settleMs > 0 ? opts.settleMs : 15000;   // D35
     var CLICK_POLL_MS = opts.pollMs > 0 ? opts.pollMs : 500;
     var WAIT_MS = opts.waitMs > 0 ? opts.waitMs : 30000;
     var jobE164 = String(phone || '').replace(/[^\d+]/g, '');
@@ -800,6 +821,15 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
     }
 
     var wrongPageReported = false;
+
+    /**
+     * D32: the Java step for a draft in the box ('replace' | 'both' | 'stop'), or null when the
+     * bridge has no such method. The draft goes to Java only; never logged here.
+     */
+    function draftStep(text) {
+        if (typeof V2SBridge === 'undefined' || !V2SBridge.scheduledDraftStep) return null;
+        return String(V2SBridge.scheduledDraftStep(token, String(text)));
+    }
 
     /**
      * Mirrors ScheduledCompose.pageState: 'thread' | 'wait' | 'wrong' | 'fallback'. LIVE-F11: a
@@ -838,13 +868,21 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
         if (!holdsBody(ta)) {
             // OD34: never overwrite or delete a draft the user left in this thread's box: any
             // text that is not our body stops the job unsent (Java: draft_present, a reminder).
+            // D32: Java decides what happens to it: 'stop' (the user gets the choice notification
+            // with the draft), 'replace' (it is our text after all, or the user chose Replace and
+            // send) or 'both' (the user chose Send both: Java keeps the draft and puts it back).
             var current = ta.isContentEditable ? ta.textContent : ta.value;
             if (typeof current === 'string' && current.trim().length > 0) {
-                console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
-                if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
-                    V2SBridge.onScheduledDraftPresent(token);
+                var step = draftStep(current);
+                if (step !== 'replace' && step !== 'both') {
+                    console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
+                    // An older bridge without the D32 step: the OD34 report (generic reminder).
+                    if (step === null && typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
+                        V2SBridge.onScheduledDraftPresent(token);
+                    }
+                    return;
                 }
-                return;
+                console.log('[Voice2SMS] Scheduled send: replacing the draft in the message box');
             }
             _v2sScheduledSet(ta, body, true);
         }

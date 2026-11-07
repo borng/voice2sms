@@ -55,6 +55,16 @@ public interface EngineNotifier {
         remind(m, cause != null ? cause.reason() : RemindReason.LOCKED);
     }
 
+    /**
+     * D32: nothing was typed because the conversation's box held the user's own draft. Shows the
+     * draft and the scheduled text with Replace and send / Keep draft / Send both. {@code draft}
+     * is never stored or logged. The default falls back to the generic "Couldn't send
+     * automatically" reminder so older notifier fakes keep compiling.
+     */
+    default void draftInTheWay(ScheduledMessage m, String draft) {
+        remindCannotSend(m, RemindCause.COULD_NOT_SEND);
+    }
+
     /** Removes the message's notification (cancel, send under way). */
     default void dismiss(long id) {}
 

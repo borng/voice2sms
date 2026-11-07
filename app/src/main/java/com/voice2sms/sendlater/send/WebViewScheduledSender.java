@@ -22,6 +22,7 @@ import androidx.core.app.NotificationManagerCompat;
 
 import com.voice2sms.GVoiceWebViewActivity;
 import com.voice2sms.GeminiSmsInterceptService;
+import com.voice2sms.sendlater.domain.DraftChoice;
 import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.SendOutcome;
@@ -127,7 +128,19 @@ public final class WebViewScheduledSender implements ScheduledSender {
      */
     @Override
     public boolean start(Context context, ScheduledMessage message, PreSendCheck check) {
-        if (message != null) ScheduledSendController.notePreSendCheck(message.getId(), check);
+        return start(context, message, check, DraftChoice.Mode.ASK);
+    }
+
+    /**
+     * D32: the job's draft mode is recorded for every start (ASK unless the user's Replace and
+     * send / Send both tap started it), so a mode applies to that one job only.
+     */
+    @Override
+    public boolean start(Context context, ScheduledMessage message, PreSendCheck check, DraftChoice.Mode draftMode) {
+        if (message != null) {
+            ScheduledSendController.notePreSendCheck(message.getId(), check);
+            ScheduledSendController.noteDraftMode(message.getId(), draftMode);
+        }
         return start(context, message);
     }
 
