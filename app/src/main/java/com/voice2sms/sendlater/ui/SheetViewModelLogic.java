@@ -1,5 +1,6 @@
 package com.voice2sms.sendlater.ui;
 
+import com.voice2sms.sendlater.domain.ChipLabel;
 import com.voice2sms.sendlater.domain.LatenessBudget;
 import com.voice2sms.sendlater.domain.LatenessPolicy;
 import com.voice2sms.sendlater.domain.PresetSlots;
@@ -8,14 +9,10 @@ import com.voice2sms.sendlater.domain.Watermark;
 import com.voice2sms.sendlater.voice.logic.PhoneNumbers;
 import com.voice2sms.sendlater.voice.logic.RecipientResolver;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
 import java.util.Collections;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 import java.util.TimeZone;
 
 /**
@@ -215,21 +212,10 @@ public final class SheetViewModelLogic {
 
     /**
      * "Wed 1:30 PM" within the coming week, "Wed, Jun 24, 1:30 PM" further out. The day name keeps
-     * "today" and "tomorrow" unambiguous without locale-specific words.
+     * "today" and "tomorrow" unambiguous without locale-specific words. Same rule as the chip.
      */
     static String timeLabel(long t, long nowMs, TimeZone zone) {
-        Calendar now = Calendar.getInstance(zone);
-        now.setTimeInMillis(nowMs);
-        now.set(Calendar.HOUR_OF_DAY, 0);
-        now.set(Calendar.MINUTE, 0);
-        now.set(Calendar.SECOND, 0);
-        now.set(Calendar.MILLISECOND, 0);
-        now.add(Calendar.DAY_OF_MONTH, 6);
-        boolean thisWeek = t < now.getTimeInMillis() + 24L * 60 * 60 * 1000;
-        SimpleDateFormat f = new SimpleDateFormat(thisWeek ? "EEE h:mm a" : "EEE, MMM d, h:mm a",
-                Locale.getDefault());
-        f.setTimeZone(zone);
-        return f.format(new Date(t));
+        return ChipLabel.timeLabel(t, nowMs, zone);
     }
 
     // ------------------------------------------------------------------ hold + If late (R12, D10)

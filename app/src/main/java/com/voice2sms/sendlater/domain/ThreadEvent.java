@@ -3,6 +3,7 @@ package com.voice2sms.sendlater.domain;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Objects;
 
 /**
  * One message or call seen in a conversation (R32). Immutable. {@code text} is optional and must
@@ -72,11 +73,11 @@ public final class ThreadEvent {
         if (!(o instanceof ThreadEvent)) return false;
         ThreadEvent e = (ThreadEvent) o;
         return direction == e.direction && kind == e.kind && timeMs == e.timeMs
-                && Objects2.eq(textHash, e.textHash) && Objects2.eq(text, e.text);
+                && Objects.equals(textHash, e.textHash) && Objects.equals(text, e.text);
     }
 
     @Override public int hashCode() {
-        return Objects2.hash(direction, kind, timeMs, textHash, text);
+        return Objects.hash(direction, kind, timeMs, textHash, text);
     }
 
     /** Never includes the text. */

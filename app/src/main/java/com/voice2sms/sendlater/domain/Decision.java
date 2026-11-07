@@ -1,5 +1,7 @@
 package com.voice2sms.sendlater.domain;
 
+import java.util.Objects;
+
 /**
  * Result of {@link LadderEvaluator} (R25): SEND, HOLD(HoldReason), REMIND(RemindReason),
  * CANCEL(Classification.SELF_PREEMPTED), WAIT(untilMs), EXPIRED (R29). Immutable.
@@ -53,7 +55,7 @@ public final class Decision {
         return kind == d.kind && reason == d.reason && untilMs == d.untilMs;
     }
 
-    @Override public int hashCode() { return Objects2.hash(kind, reason, untilMs); }
+    @Override public int hashCode() { return Objects.hash(kind, reason, untilMs); }
 
     @Override public String toString() {
         return kind + (reason != null ? "(" + reason + ")" : "") + (kind == Kind.WAIT ? "@" + untilMs : "");

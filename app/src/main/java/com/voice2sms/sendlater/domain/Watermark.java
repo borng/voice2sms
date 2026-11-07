@@ -1,5 +1,7 @@
 package com.voice2sms.sendlater.domain;
 
+import java.util.Objects;
+
 /**
  * How far the conversation had got when the message was scheduled (R20). Immutable.
  * {@code messageId} (the Room FK) belongs to the store layer, not to this value.
@@ -39,12 +41,12 @@ public final class Watermark {
         if (!(o instanceof Watermark)) return false;
         Watermark w = (Watermark) o;
         return quality == w.quality && capturedAtDevice == w.capturedAtDevice
-                && Objects2.eq(newestServerId, w.newestServerId) && Objects2.eq(newestTs, w.newestTs)
-                && Objects2.eq(bubbleHash, w.bubbleHash) && Objects2.eq(skewEstimateMs, w.skewEstimateMs);
+                && Objects.equals(newestServerId, w.newestServerId) && Objects.equals(newestTs, w.newestTs)
+                && Objects.equals(bubbleHash, w.bubbleHash) && Objects.equals(skewEstimateMs, w.skewEstimateMs);
     }
 
     @Override public int hashCode() {
-        return Objects2.hash(quality, newestServerId, newestTs, bubbleHash, capturedAtDevice, skewEstimateMs);
+        return Objects.hash(quality, newestServerId, newestTs, bubbleHash, capturedAtDevice, skewEstimateMs);
     }
 
     @Override public String toString() {

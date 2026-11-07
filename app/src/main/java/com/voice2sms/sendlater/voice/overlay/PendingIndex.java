@@ -147,8 +147,8 @@ public final class PendingIndex {
         if (m == null) return;
         String e164 = m.getRecipientE164();
         if (e164 != null) entry(map, e164).add(m, isHeld, isReminded);
-        String name = m.getRecipientDisplayName();
-        if (name != null && !name.trim().isEmpty()) entry(map, nameKey(name)).add(m, isHeld, isReminded);
+        String nameKey = ConversationRef.nameKey(m.getRecipientDisplayName());
+        if (nameKey != null) entry(map, nameKey).add(m, isHeld, isReminded);
     }
 
     private static Entry entry(Map<String, Entry> map, String key) {
@@ -164,11 +164,7 @@ public final class PendingIndex {
     public static String keyForTitle(String title) {
         if (title == null || title.trim().isEmpty()) return null;
         String e164 = PhoneNumbers.toE164(title, RecipientResolver.DEFAULT_REGION);
-        return e164 != null ? e164 : nameKey(title);
-    }
-
-    private static String nameKey(String name) {
-        return new ConversationRef(null, name).key();
+        return e164 != null ? e164 : ConversationRef.nameKey(title);
     }
 
     /** Entry for the open thread's title, or null. */

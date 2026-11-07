@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Store policy of the notification listener (R32-R34). Pure JVM over {@link ListenerEventStore}.
@@ -103,7 +104,7 @@ public final class ListenerEventRecorder {
         List<ScheduledMessage> live = store.liveMessages();
         if (live == null) return out;
         String number = p.getNumber();
-        String nameKey = nameKey(p.getConversationTitle());
+        String nameKey = ConversationRef.nameKey(p.getConversationTitle());
         Map<String, Boolean> contactMatch = new HashMap<>();
         for (ScheduledMessage m : live) {
             if (m == null || m.getStatus() == null || m.getStatus().isTerminal()) continue;
@@ -111,7 +112,7 @@ public final class ListenerEventRecorder {
             if (number != null) {
                 match = number.equals(m.getRecipientE164());
             } else {
-                String mk = nameKey(m.getRecipientDisplayName());
+                String mk = ConversationRef.nameKey(m.getRecipientDisplayName());
                 match = nameKey != null && (nameKey.equals(mk)
                         || contactNameMatches(m.getRecipientE164(), nameKey, contactMatch));
             }
@@ -129,7 +130,7 @@ public final class ListenerEventRecorder {
         if (hit == null) {
             hit = false;
             for (String name : ContactNames.safeNamesFor(contactNames, e164)) {
-                if (nameKey.equals(nameKey(name))) {
+                if (nameKey.equals(ConversationRef.nameKey(name))) {
                     hit = true;
                     break;
                 }
@@ -145,7 +146,7 @@ public final class ListenerEventRecorder {
         for (ThreadEvent e : same) {
             if (e.getTimeMs() == event.getTimeMs() && e.getKind() == event.getKind()
                     && e.getDirection() == event.getDirection()
-                    && eq(e.getTextHash(), event.getTextHash())) {
+                    && Objects.equals(e.getTextHash(), event.getTextHash())) {
                 return true;
             }
         }
@@ -153,10 +154,6 @@ public final class ListenerEventRecorder {
     }
 
     /** ConversationRef's normalized name key, or null for a blank name. */
-    private static String nameKey(String name) {
-        return LiveConversationKeys.nameKey(name);
-    }
-
     static ThreadEvent.Kind toKind(ParsedEvent.Kind k) {
         switch (k) {
             case SMS: return ThreadEvent.Kind.SMS;
@@ -165,9 +162,5 @@ public final class ListenerEventRecorder {
             case VOICEMAIL: return ThreadEvent.Kind.VOICEMAIL;
             default: return null;
         }
-    }
-
-    private static boolean eq(String a, String b) {
-        return a == null ? b == null : a.equals(b);
     }
 }

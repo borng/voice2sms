@@ -1,5 +1,7 @@
 package com.voice2sms.sendlater.domain;
 
+import java.util.Objects;
+
 /**
  * D30 / LIVE-F3: the check of the open thread's newest messages that the WebView sender makes
  * right before it taps Send for a scheduled message (R26, R28, R31, OD22(5), OD27). Pure JVM,
@@ -201,7 +203,7 @@ public final class PreSendCheck {
     }
 
     @Override public int hashCode() {
-        return Objects2.hash(mode, outboundPolicy, listenerFactsKnown, listenerEnabled, listenerSawConversation);
+        return Objects.hash(mode, outboundPolicy, listenerFactsKnown, listenerEnabled, listenerSawConversation);
     }
 
     @Override public String toString() {

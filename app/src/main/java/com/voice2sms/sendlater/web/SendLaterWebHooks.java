@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat;
 
 import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.domain.ChipLabel;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.store.SendLaterRepository;
@@ -23,12 +24,9 @@ import com.voice2sms.sendlater.store.ThreadDirectory;
 import org.json.JSONObject;
 
 import java.lang.ref.WeakReference;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 import java.util.TimeZone;
 
 /**
@@ -268,7 +266,10 @@ public final class SendLaterWebHooks {
             if (ours) {
                 lastCapture = null;
                 if (SendLaterSettings.clearDraft(app)) {
-                    clear = new PendingClear(id, cap.getDraftText(), labelOf(intent));
+                    clear = new PendingClear(id, cap.getDraftText(), ChipLabel.scheduledLabel(
+                            intent.getStringExtra(SendLaterIntents.EXTRA_LABEL),
+                            intent.getLongExtra(SendLaterIntents.EXTRA_SCHEDULED_FOR, -1L),
+                            TimeZone.getDefault()));
                 }
             }
         }
@@ -292,16 +293,6 @@ public final class SendLaterWebHooks {
         }
         host.evaluate("if (window.v2sSendLaterClear) window.v2sSendLaterClear("
                 + c.messageId + ", " + JSONObject.quote(c.draft) + ", " + JSONObject.quote(c.label) + ");");
-    }
-
-    private static String labelOf(Intent intent) {
-        String label = intent.getStringExtra(SendLaterIntents.EXTRA_LABEL);
-        if (label != null && !label.trim().isEmpty()) return label;
-        long at = intent.getLongExtra(SendLaterIntents.EXTRA_SCHEDULED_FOR, -1);
-        if (at <= 0) return "later";
-        SimpleDateFormat f = new SimpleDateFormat("EEE h:mm a", Locale.getDefault());
-        f.setTimeZone(TimeZone.getDefault());
-        return f.format(new Date(at));
     }
 
     // ------------------------------------------------------------------ capture (R10)
@@ -515,12 +506,9 @@ public final class SendLaterWebHooks {
         List<DirectoryReport.Entry> entries = DirectoryReport.parse(json);
         if (entries.isEmpty()) return;
         try {
-            ThreadDirectory dir = ThreadDirectory.get(app);
-            long now = System.currentTimeMillis();
-            int n = 0;
-            for (DirectoryReport.Entry e : entries) {
-                if (dir.upsert(e.displayName, e.e164, now)) n++;
-            }
+            List<String[]> pairs = new ArrayList<>(entries.size());
+            for (DirectoryReport.Entry e : entries) pairs.add(new String[] {e.displayName, e.e164});
+            int n = ThreadDirectory.get(app).upsert(pairs, System.currentTimeMillis());
             if (com.voice2sms.BuildConfig.DEBUG) Log.d(TAG, "thread directory upserted " + n);
         } catch (RuntimeException e) {
             Log.w(TAG, "thread directory upsert failed: " + e.getClass().getSimpleName());
