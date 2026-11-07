@@ -70,6 +70,18 @@ public final class SheetViewModelLogic {
     public static SheetViewModelLogic forCapture(String e164OrNull, String[] candidatesOrNull,
                                                  boolean holdDefault, long nowMs, TimeZone zone,
                                                  int[] slotMinutes) {
+        return forCapture(e164OrNull, candidatesOrNull, false, holdDefault, nowMs, zone, slotMinutes);
+    }
+
+    /**
+     * As {@link #forCapture(String, String[], boolean, long, TimeZone, int[])}; with
+     * {@code unconfirmed} (deliver sec-M1: the candidates came from the GV thread directory alone)
+     * a single candidate is not chosen silently: the sheet shows "Which number?" with it and
+     * Schedule stays disabled until the user picks it. A given {@code e164OrNull} still wins.
+     */
+    public static SheetViewModelLogic forCapture(String e164OrNull, String[] candidatesOrNull,
+                                                 boolean unconfirmed, boolean holdDefault, long nowMs,
+                                                 TimeZone zone, int[] slotMinutes) {
         String given = normalize(e164OrNull);
         SheetViewModelLogic m;
         if (given != null) {
@@ -81,11 +93,12 @@ public final class SheetViewModelLogic {
             RecipientResolver.Resolution r = RecipientResolver.resolve(null, raw, null);
             RecipientState s;
             switch (r.getKind()) {
-                case RESOLVED: s = RecipientState.RESOLVED; break;
+                case RESOLVED: s = unconfirmed ? RecipientState.NEEDS_CHOICE : RecipientState.RESOLVED; break;
                 case NEEDS_CHOICE: s = RecipientState.NEEDS_CHOICE; break;
                 default: s = RecipientState.NEEDS_ENTRY; break;
             }
-            m = new SheetViewModelLogic(false, nowMs, zone, slotMinutes, s, r.getE164(), r.getCandidates());
+            m = new SheetViewModelLogic(false, nowMs, zone, slotMinutes, s,
+                    s == RecipientState.RESOLVED ? r.getE164() : null, r.getCandidates());
         }
         m.holdIfReplied = holdDefault;
         m.selectPreset(0);

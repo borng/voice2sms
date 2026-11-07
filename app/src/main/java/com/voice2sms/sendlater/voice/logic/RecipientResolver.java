@@ -14,6 +14,9 @@ import java.util.Set;
  *       GV web directory numbers for that name. When one side is empty (contacts not granted, or no
  *       web session) the other side alone is the candidate set.</li>
  *   <li>Exactly one candidate: RESOLVED. Several: NEEDS_CHOICE. None: NEEDS_ENTRY.</li>
+ *   <li>deliver sec-M1: numbers that come from the thread directory alone (no contact number for
+ *       the name) are never RESOLVED silently, even when there is only one: the directory is
+ *       scraped from a web page, so the user confirms the number (NEEDS_CHOICE).</li>
  * </ol>
  * Every returned number is E.164; anything that does not normalize is dropped, so a display name
  * is never a recipient. Callers supply already-filtered lists: {@code directory} must hold only the
@@ -55,7 +58,9 @@ public final class RecipientResolver {
         Set<String> d = normalize(directory);
         Set<String> candidates;
         if (c.isEmpty()) {
-            candidates = d;
+            // deliver sec-M1: the directory alone never picks the recipient; the user confirms it.
+            if (d.isEmpty()) return new Resolution(Kind.NEEDS_ENTRY, null, Collections.<String>emptyList());
+            return new Resolution(Kind.NEEDS_CHOICE, null, new ArrayList<>(d));
         } else if (d.isEmpty()) {
             candidates = c;
         } else {

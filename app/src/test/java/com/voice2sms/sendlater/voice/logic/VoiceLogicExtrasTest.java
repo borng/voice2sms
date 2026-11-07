@@ -122,8 +122,9 @@ public class VoiceLogicExtrasTest {
     @Test
     public void resolverEdgeCases() {
         List<String> two = Arrays.asList("+14355550101", "+14355550102");
-        // contacts not granted: directory matches alone are the candidates
-        assertEquals(RecipientResolver.Kind.RESOLVED,
+        // contacts not granted: directory matches alone are the candidates, confirmed by the user
+        // (deliver sec-M1: the directory alone never resolves silently)
+        assertEquals(RecipientResolver.Kind.NEEDS_CHOICE,
                 RecipientResolver.resolve("Test Contact", NONE, Arrays.asList("(435) 555-0101")).getKind());
         // disjoint contacts and directory: never auto-pick, offer all
         RecipientResolver.Resolution r = RecipientResolver.resolve("Test Contact", two, Arrays.asList("+14355550109"));
