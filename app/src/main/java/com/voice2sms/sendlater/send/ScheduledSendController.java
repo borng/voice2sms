@@ -458,6 +458,15 @@ public final class ScheduledSendController {
             if (!isActive()) onUnclaimed();
             return true;
         }
+        if (!isActive() && RegularSend.isRunning(System.currentTimeMillis())) {
+            // deliver M1: a regular compose / auto-send holds the WebView (it came in after the
+            // sender's launch check). Never load over it: nothing typed, the user-busy reminder.
+            WebViewScheduledSender.cancelLaunchNotification(app, id);
+            toEngine(new Job(id, checkTime > 0 ? checkTime : System.currentTimeMillis(), System.currentTimeMillis()),
+                    SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY);
+            // No lock flags, no cover, and the activity is not finished: the regular send runs on.
+            return true;
+        }
         // Claimed: only now may the cover go up and the activity show over the keyguard.
         coverUntilStop = false;
         plannedDark = planned;

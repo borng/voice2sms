@@ -160,13 +160,36 @@ public final class WebViewScheduledSender implements ScheduledSender {
      * At the slot's time: hand the launch to a live activity that is already sending (messages
      * due together queue behind it there), else open GVoiceWebViewActivity as
      * {@link LaunchPlanner} decides NOW (the screen may have changed during the queue delay).
+     * deliver M1: {@code waitStart} is when this launch first found a regular compose / auto-send
+     * running ({@link RegularSend}); it waits for it (bounded by
+     * {@link RegularSend#MAX_LAUNCH_WAIT_MS}) and then takes the user-busy path, so a scheduled
+     * page load never replaces a running regular send.
      */
-    private static void launch(Context app, long id, String token, long checkTime) {
+    private static void launch(final Context app, final long id, final String token, final long checkTime,
+                               final long waitStart) {
+        boolean waiting = false;
         try {
             if (!LaunchClaims.INSTANCE.isPending(id)) return;
             if (ScheduledSendController.offer(id, token, checkTime, 0L)) return;
             if (ForegroundUse.isUserBusy(System.currentTimeMillis())) {
                 // OD23: the user started using the WebView during the queue delay.
+                if (LaunchClaims.INSTANCE.take(id, token)) {
+                    SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
+                            SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY));
+                }
+                return;
+            }
+            RegularSend.LaunchWait regular = RegularSend.launchWait(
+                    RegularSend.isRunning(System.currentTimeMillis()), SystemClock.elapsedRealtime() - waitStart);
+            if (regular == RegularSend.LaunchWait.WAIT) {
+                // deliver M1: a regular send holds the WebView; look again shortly.
+                waiting = true;
+                MAIN.postDelayed(() -> launch(app, id, token, checkTime, waitStart),
+                        RegularSend.LAUNCH_WAIT_POLL_MS);
+                return;
+            }
+            if (regular == RegularSend.LaunchWait.BUSY) {
+                // deliver M1: it still runs after the bounded wait: the user-busy reminder.
                 if (LaunchClaims.INSTANCE.take(id, token)) {
                     SendLaterEngine.onSendOutcome(app, id, SendOutcome.CANNOT_SHOW,
                             SendDetails.forEngine(SendOutcome.CANNOT_SHOW, ForegroundUse.DETAIL_USER_BUSY));
@@ -195,8 +218,14 @@ public final class WebViewScheduledSender implements ScheduledSender {
             }
         } finally {
             // LIVE-F4: the launch is decided (and a DIRECT start made); the tap activity may go.
-            UserTapGrant.consume(id, SystemClock.elapsedRealtime());
+            // A launch waiting for a regular send (M1) is not decided yet.
+            if (!waiting) UserTapGrant.consume(id, SystemClock.elapsedRealtime());
         }
+    }
+
+    /** A launch at its slot's time (deliver M1: no wait yet). */
+    private static void launch(Context app, long id, String token, long checkTime) {
+        launch(app, id, token, checkTime, SystemClock.elapsedRealtime());
     }
 
     /**
