@@ -37,6 +37,7 @@ public final class ScheduledMessage {
     private final Watermark watermark;
     private final Watermark originalWatermark;
     private final RemindReason rungReason;
+    private final long updatedAt;
 
     private ScheduledMessage(Builder b) {
         this.id = b.id;
@@ -57,6 +58,7 @@ public final class ScheduledMessage {
         this.watermark = b.watermark;
         this.originalWatermark = b.originalWatermark;
         this.rungReason = b.rungReason;
+        this.updatedAt = b.updatedAt;
     }
 
     public long getId() { return id; }
@@ -99,6 +101,13 @@ public final class ScheduledMessage {
      */
     public RemindReason getRungReason() { return rungReason; }
 
+    /**
+     * The stored row's last-change time ({@code updatedAt}), read with the row; 0 for a message
+     * that was not read from the store. With {@link #getScheduledFor} it is the snapshot the
+     * engine's guarded markInFlight compares (deliver M2): an edit in between changes it.
+     */
+    public long getUpdatedAt() { return updatedAt; }
+
     public Builder toBuilder() {
         return new Builder()
                 .id(id).createdAt(createdAt).scheduledFor(scheduledFor).text(text)
@@ -106,7 +115,7 @@ public final class ScheduledMessage {
                 .threadItemId(threadItemId).source(source).rung(rung).holdIfReplied(holdIfReplied)
                 .latenessPolicy(latenessPolicy).status(status).holdReason(holdReason)
                 .lastError(lastError).attemptCount(attemptCount).watermark(watermark)
-                .originalWatermark(originalWatermark).rungReason(rungReason);
+                .originalWatermark(originalWatermark).rungReason(rungReason).updatedAt(updatedAt);
     }
 
     /** Never includes text, name or number. */
@@ -138,6 +147,7 @@ public final class ScheduledMessage {
         private Watermark watermark;
         private Watermark originalWatermark;
         private RemindReason rungReason;
+        private long updatedAt;
 
         public Builder id(long v) { id = v; return this; }
         public Builder createdAt(long v) { createdAt = v; return this; }
@@ -157,6 +167,7 @@ public final class ScheduledMessage {
         public Builder watermark(Watermark v) { watermark = v; return this; }
         public Builder originalWatermark(Watermark v) { originalWatermark = v; return this; }
         public Builder rungReason(RemindReason v) { rungReason = v; return this; }
+        public Builder updatedAt(long v) { updatedAt = v; return this; }
 
         public ScheduledMessage build() {
             if (source == null) throw new IllegalStateException("source");

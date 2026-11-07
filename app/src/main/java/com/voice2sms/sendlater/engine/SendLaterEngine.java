@@ -15,6 +15,7 @@ import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LadderEvaluator;
 import com.voice2sms.sendlater.domain.OutboundPolicy;
 import com.voice2sms.sendlater.domain.LatenessBudget;
+import com.voice2sms.sendlater.domain.LatenessPolicy;
 import com.voice2sms.sendlater.domain.PreSendCheck;
 import com.voice2sms.sendlater.domain.RemindReason;
 import com.voice2sms.sendlater.domain.Rung;
@@ -290,6 +291,16 @@ public final class SendLaterEngine {
     }
 
     private static void evaluateAndApply(EngineDeps d, Context context, ScheduledMessage m) {
+        evaluateAndApply(d, context, m, true);
+    }
+
+    /**
+     * {@code mayReevaluate}: when the row changed between this evaluation and the send start
+     * (deliver M2), evaluate the stored row once more; false on that second pass, so an edit
+     * loop can never recurse.
+     */
+    private static void evaluateAndApply(EngineDeps d, Context context, ScheduledMessage m,
+                                         boolean mayReevaluate) {
         long now = d.conditions.nowMs();
         List<ThreadEvent> events = readThread(d, m);
         boolean listener = d.conditions.listenerEnabled();
@@ -312,7 +323,7 @@ public final class SendLaterEngine {
         // OD22(1): replies from the (possibly snoozed) watermark, self-preemption from the original.
         Decision decision = LadderEvaluator.evaluate(m, m.getRung(), events, now, d.conditions.session(),
                 d.conditions.network(), listener, policy, m.getWatermark(), m.getSelfPreemptionBaseline());
-        apply(d, context, m, decision, now, check);
+        apply(d, context, m, decision, now, check, mayReevaluate);
     }
 
     /** Fails closed: an unreadable store counts as "the listener saw this conversation". */
@@ -333,12 +344,12 @@ public final class SendLaterEngine {
     }
 
     private static void apply(EngineDeps d, Context context, ScheduledMessage m, Decision decision, long now,
-                              PreSendCheck check) {
+                              PreSendCheck check, boolean mayReevaluate) {
         long id = m.getId();
         switch (decision.getKind()) {
             case SEND:
                 d.networkWaiter.cancel(id);
-                startSend(d, context, m, now, check);
+                startSend(d, context, m, now, check, DraftChoice.Mode.ASK, mayReevaluate);
                 break;
             case HOLD:
                 d.networkWaiter.cancel(id);
@@ -382,10 +393,6 @@ public final class SendLaterEngine {
      * {@code check}: the pre-send thread check the sender makes before it taps Send (D30);
      * {@link PreSendCheck#off()} for the user's own tap.
      */
-    private static void startSend(EngineDeps d, Context context, ScheduledMessage m, long checkTime,
-                                  PreSendCheck check) {
-        startSend(d, context, m, checkTime, check, DraftChoice.Mode.ASK);
-    }
 
     /**
      * D32: {@code draftMode} says what the job does with a draft it finds in the conversation's
@@ -393,14 +400,19 @@ public final class SendLaterEngine {
      * the one the user's Replace and send / Send both tap starts.
      */
     private static void startSend(EngineDeps d, Context context, ScheduledMessage m, long checkTime,
-                                  PreSendCheck check, DraftChoice.Mode draftMode) {
+                                  PreSendCheck check, DraftChoice.Mode draftMode, boolean mayReevaluate) {
         ScheduledSender s = sender;
         long id = m.getId();
         if (s == null) {
             remind(d, m, RemindReason.NO_SENDER);
             return;
         }
-        if (!d.store.markInFlight(id, ThreadEvent.hashOf(m.getText()))) return;
+        // Deliver M2: only the row the decision was made on goes IN_FLIGHT. An edit in between
+        // (new time, flags, baseline) leaves it waiting and the stored row is evaluated again.
+        if (!d.store.markInFlight(id, ThreadEvent.hashOf(m.getText()), m.getScheduledFor(), m.getUpdatedAt())) {
+            onSnapshotChanged(d, context, m, mayReevaluate);
+            return;
+        }
         boolean lastCallShown = d.marks.isLastCallPosted(id, m.getScheduledFor());
         d.marks.setReminded(id, false);
         d.marks.clearLastCall(id);
@@ -425,6 +437,25 @@ public final class SendLaterEngine {
                 handleOutcome(d, context, now, SendOutcome.CANNOT_SHOW, null);
             }
         }
+    }
+
+    /**
+     * Deliver M2: the guarded markInFlight refused {@code evaluated}. A row that is no longer
+     * waiting, or that is unchanged (the store refused for another reason), is left as it is, as
+     * before. A row edited since the evaluation that is still SCHEDULED, not reminded and with
+     * Send Later on goes through the ladder once more ({@code mayReevaluate}); a not-yet-due row
+     * re-arms its due alarm there. Anything else stays with the alarms its edit armed.
+     */
+    private static void onSnapshotChanged(EngineDeps d, Context context, ScheduledMessage evaluated,
+                                          boolean mayReevaluate) {
+        long id = evaluated.getId();
+        ScheduledMessage now = d.store.get(id);
+        if (!tappable(now)) return;
+        if (now.getScheduledFor() == evaluated.getScheduledFor()
+                && now.getUpdatedAt() == evaluated.getUpdatedAt()) return;
+        if (!mayReevaluate) return;
+        if (now.getStatus() != Status.SCHEDULED || d.marks.isReminded(id) || !enabled(d)) return;
+        evaluateAndApply(d, context, now, false);
     }
 
     private static void hold(EngineDeps d, ScheduledMessage m, HoldReason reason, long now, boolean mayHaveSent) {
@@ -749,7 +780,7 @@ public final class SendLaterEngine {
         } else if (decision.getKind() == Decision.Kind.SEND) {
             d.notifier.dismiss(id);
             // R28: the user's tap skips the thread check, so no pre-send check either (D30).
-            startSend(d, context, m, now, PreSendCheck.off(), draftMode);
+            startSend(d, context, m, now, PreSendCheck.off(), draftMode, true);
         }
         return TapResult.DONE;
     }
@@ -791,6 +822,75 @@ public final class SendLaterEngine {
         if (snoozed != null) s.registerAlarms(snoozed);
         d.broadcaster.stateChanged(id, m.getRecipientE164());
         return TapResult.DONE;
+    }
+
+    /**
+     * Deliver M2: the edit sheet's Update. Under the engine lock, like {@link #cancel}: refuses a
+     * row that is not SCHEDULED/HELD (already sending, sent, cancelled, expired: the stale
+     * {@link TapResult}), else stores the new time, flags and reply baseline (SCHEDULED, hold
+     * reason cleared), clears the reminded and last-call marks (an explicit reschedule makes the
+     * message send itself again, I6), drops any network wait, cancels every alarm (a HELD row's
+     * expiry included), dismisses the notification, arms the new alarms and broadcasts the state
+     * change. Nothing else can run between the write and the re-arm, so a due evaluation never
+     * sends the old version and a reminder never wipes the new time. Inline: call it off the
+     * main thread. A store failure throws (the sheet shows its persist error).
+     */
+    public static TapResult reschedule(final Context context, final long id, final long scheduledFor,
+                                       final boolean holdIfReplied, final LatenessPolicy policy,
+                                       final Watermark baseline) {
+        EngineDeps d = deps(context);
+        synchronized (LOCK) {
+            return doReschedule(d, id, scheduledFor, holdIfReplied, policy, baseline);
+        }
+    }
+
+    static TapResult doReschedule(EngineDeps d, long id, long scheduledFor, boolean holdIfReplied,
+                                  LatenessPolicy policy, Watermark baseline) {
+        ScheduledMessage m = d.store.get(id);
+        if (!tappable(m)) return TapResult.staleFor(m);
+        if (!d.store.reschedule(id, scheduledFor, holdIfReplied, policy, baseline)) {
+            return staleOrGone(d, id);
+        }
+        d.marks.setReminded(id, false);
+        d.marks.clearLastCall(id);
+        d.networkWaiter.cancel(id);
+        SendLaterScheduler s = schedulerOf(d);
+        s.cancelAll(id);
+        d.notifier.dismiss(id);
+        ScheduledMessage fresh = d.store.get(id);
+        if (fresh != null) {
+            try {
+                s.registerAlarms(fresh);
+            } catch (RuntimeException e) {
+                // Stored: the next process start / switch-on re-arms it.
+                Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
+            }
+        }
+        d.broadcaster.stateChanged(id, m.getRecipientE164());
+        return TapResult.DONE;
+    }
+
+    /**
+     * Deliver M2: arms a just-saved capture's alarms under the engine lock, from the stored row,
+     * only while it is still SCHEDULED and not reminded (so it can never undo a cancel or a
+     * reminder that got there first). Inline: call it off the main thread. Never throws.
+     */
+    public static void registerAlarms(final Context context, final ScheduledMessage saved) {
+        if (saved == null) return;
+        try {
+            EngineDeps d = deps(context);
+            synchronized (LOCK) {
+                doRegisterAlarms(d, saved.getId());
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    static void doRegisterAlarms(EngineDeps d, long id) {
+        ScheduledMessage m = d.store.get(id);
+        if (m == null || m.getStatus() != Status.SCHEDULED || d.marks.isReminded(id)) return;
+        schedulerOf(d).registerAlarms(m);
     }
 
     /** Cancel tap: SCHEDULED/HELD -> CANCELED, alarms and notification removed. */

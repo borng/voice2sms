@@ -79,6 +79,9 @@ final class AndroidEngineDeps {
 
         @Override public ScheduledMessage get(long id) { return r().get(id); }
         @Override public boolean markInFlight(long id, String bodyHash) { return r().markInFlight(id, bodyHash); }
+        @Override public boolean markInFlight(long id, String bodyHash, long scheduledFor, long updatedAt) {
+            return r().markInFlight(id, bodyHash, scheduledFor, updatedAt);
+        }
         @Override public boolean markSentVerified(long id) { return r().markSentVerified(id); }
         @Override public boolean hold(long id, HoldReason reason) { return r().hold(id, reason); }
         @Override public boolean cancel(long id) { return r().cancel(id); }

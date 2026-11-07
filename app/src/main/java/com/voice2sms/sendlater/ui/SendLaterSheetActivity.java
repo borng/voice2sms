@@ -46,8 +46,6 @@ import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.Watermark;
 import com.voice2sms.sendlater.engine.GvSession;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
-import com.voice2sms.sendlater.engine.SendLaterNotifications;
-import com.voice2sms.sendlater.engine.SendLaterScheduler;
 import com.voice2sms.sendlater.engine.TapResult;
 import com.voice2sms.sendlater.store.PersistException;
 import com.voice2sms.sendlater.store.SendLaterRepository;
@@ -657,12 +655,9 @@ public class SendLaterSheetActivity extends AppCompatActivity {
             });
             return;
         }
-        try {
-            SendLaterScheduler.get(app).registerAlarms(stored);
-        } catch (RuntimeException e) {
-            // Persisted: boot / permission-change re-registration picks it up.
-            Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
-        }
+        // Deliver M2: armed under the engine lock from the stored row (never throws; a failure is
+        // picked up by the next process start / permission-change re-registration).
+        SendLaterEngine.registerAlarms(app, stored);
         Intent done = new Intent(SendLaterIntents.ACTION_SCHEDULED)
                 .setPackage(app.getPackageName())
                 .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id)
@@ -698,7 +693,10 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         render();
     }
 
-    /** Edit: reschedule -> dismiss stale notification -> re-arm alarms -> state broadcast (R16). */
+    /**
+     * Edit: one engine call under its lock (deliver M2) reschedules, clears the reminded mark,
+     * dismisses the stale notification, re-arms the alarms and broadcasts the state change (R16).
+     */
     private void onUpdate() {
         final long id = editId;
         if (id <= 0 || !logic.isScheduleEnabled()) return;
@@ -726,37 +724,25 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     /**
      * Worker thread. Throws on a store or notification failure (caught by {@link #onUpdate}).
      * {@code baseline} is the fresh reply baseline every time edit takes (OD31 P2, whole-branch M2).
+     * A row that changed meanwhile (already sending, sent, cancelled) is refused by the engine and
+     * the sheet says so inline, like Cancel message.
      */
     private void updateArmAndAnnounce(long id, long when, boolean hold, LatenessPolicy policy,
                                       Watermark baseline) {
-        SendLaterRepository repo = SendLaterRepository.get(app);
-        boolean ok = repo.reschedule(id, when, hold, policy, baseline);
-        if (!ok) {
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                setBusy(false);
-                showNotEditable();
-            });
-            return;
-        }
-        SendLaterNotifications.dismiss(app, id);
-        ScheduledMessage fresh = repo.get(id);
-        if (fresh != null) {
-            try {
-                SendLaterScheduler s = SendLaterScheduler.get(app);
-                s.cancelAll(id); // drops a HELD row's stale expiry alarm
-                s.registerAlarms(fresh);
-            } catch (RuntimeException e) {
-                Log.w(TAG, "registerAlarms failed: " + e.getClass().getSimpleName());
-            }
-        }
-        Intent changed = new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
-                .setPackage(app.getPackageName())
-                .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id);
-        if (fresh != null) changed.putExtra(SendLaterIntents.EXTRA_E164, fresh.getRecipientE164());
-        app.sendBroadcast(changed);
+        final TapResult result = SendLaterEngine.reschedule(app, id, when, hold, policy, baseline);
         runOnUiThread(() -> {
-            if (!isFinishing()) finish();
+            if (isFinishing() || isDestroyed()) return;
+            if (result == TapResult.DONE) {
+                finish();
+                return;
+            }
+            setBusy(false);
+            showNotEditable();
+            String why = TapResult.feedback(result, false);
+            if (why != null) {
+                error.setText(why);
+                error.setVisibility(View.VISIBLE);
+            }
         });
     }
 }

@@ -73,9 +73,9 @@ public class SendLaterSheetErrorPathsTest {
         int failed = worker.indexOf("onPersistFailed");
         assertTrue(worker, tryAt >= 0 && call > tryAt && catchAt > call && failed > catchAt);
         String body = block(c, "void\\s+updateArmAndAnnounce\\s*\\(");
-        assertTrue(body.contains(".reschedule("));
-        assertTrue(body.contains("SendLaterNotifications.dismiss("));
-        assertTrue(body.contains("repo.get("));
+        // Deliver M2: the reschedule, notification dismiss and re-read moved into the engine's
+        // locked SendLaterEngine.reschedule (EditUnderEngineLockTest pins them there).
+        assertTrue(body.contains("SendLaterEngine.reschedule("));
         String failedBody = block(c, "void\\s+onPersistFailed\\s*\\(\\s*\\)\\s*\\{");
         assertTrue(failedBody.contains("R.string.sendlater_sheet_persist_failed"));
     }
