@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat;
 
 import com.voice2sms.GVoiceWebViewActivity;
 import com.voice2sms.sendlater.SendLaterIntents;
+import com.voice2sms.sendlater.domain.ChipLabel;
 import com.voice2sms.sendlater.domain.HoldReason;
 import com.voice2sms.sendlater.domain.LatenessBudget;
 import com.voice2sms.sendlater.domain.RemindReason;
@@ -458,10 +459,9 @@ public final class SendLaterNotifications {
         return "Couldn't send your message to " + who(m);
     }
 
+    /** Name, else the formatted number (D39), else "your contact". */
     static String who(ScheduledMessage m) {
-        String n = m.getRecipientDisplayName();
-        if (n != null && !n.trim().isEmpty()) return n.trim();
-        return m.getRecipientE164() != null ? m.getRecipientE164() : "your contact";
+        return ChipLabel.recipient(m.getRecipientDisplayName(), m.getRecipientE164(), "your contact");
     }
 
     private static String preview(ScheduledMessage m) {

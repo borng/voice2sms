@@ -75,12 +75,7 @@ public final class DraftNotice {
     /** Name, else the formatted number (D39), else "your contact". */
     static String who(ScheduledMessage m) {
         if (m == null) return "your contact";
-        String n = m.getRecipientDisplayName();
-        if (n != null && !n.trim().isEmpty()) return n.trim();
-        String e164 = m.getRecipientE164();
-        if (e164 == null || e164.trim().isEmpty()) return "your contact";
-        String f = ChipLabel.formatNumber(e164);
-        return f != null && !f.trim().isEmpty() ? f : e164;
+        return ChipLabel.recipient(m.getRecipientDisplayName(), m.getRecipientE164(), "your contact");
     }
 
     static String clip(String t) {

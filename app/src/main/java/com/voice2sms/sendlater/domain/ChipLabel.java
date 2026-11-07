@@ -115,10 +115,20 @@ public final class ChipLabel {
         return null;
     }
 
+    /**
+     * D39: how a recipient is shown anywhere outside the chip: the name as captured (trimmed),
+     * else the number via {@link #formatNumber}, else {@code unknown} (no name and no number).
+     * Never truncated; only the chip ({@link #heldDisplayName}) truncates.
+     */
+    public static String recipient(String displayName, String e164, String unknown) {
+        if (displayName != null && !displayName.trim().isEmpty()) return displayName.trim();
+        if (e164 == null || e164.trim().isEmpty()) return unknown;
+        return formatNumber(e164);
+    }
+
     /** Name as captured, else the formatted number; truncated to 20 chars (ellipsis included). */
     public static String heldDisplayName(String displayName, String e164) {
-        String s = displayName != null && !displayName.trim().isEmpty()
-                ? displayName.trim() : formatNumber(e164);
+        String s = recipient(displayName, e164, "");
         if (s.length() > MAX_NAME_CHARS) s = s.substring(0, MAX_NAME_CHARS - 1) + "…";
         return s;
     }
