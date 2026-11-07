@@ -40,8 +40,21 @@ public final class A11yWarning {
 
     private A11yWarning() {}
 
-    /** voice2sms's accessibility service is listed in the system's enabled services. */
+    /**
+     * voice2sms's accessibility service is listed in the system's enabled services. Unreadable:
+     * assume on, so a read failure never posts a false alarm (the warning's fail-open rule).
+     */
     public static boolean isServiceEnabled(Context context) {
+        return isServiceEnabled(context, true);
+    }
+
+    /**
+     * The one "is our accessibility service on" test ({@code Settings.Secure} listing, matched by
+     * {@link A11yHealth#isServiceListed}). {@code failOpen} is the answer when the setting cannot be
+     * read (no context, a throwing resolver): true for the warning, false where "off" is the safe
+     * reading (a status row that must not claim the service is on).
+     */
+    public static boolean isServiceEnabled(Context context, boolean failOpen) {
         try {
             Context c = app(context);
             String listed = Settings.Secure.getString(c.getContentResolver(),
@@ -49,8 +62,7 @@ public final class A11yWarning {
             return A11yHealth.isServiceListed(listed, c.getPackageName(),
                     GeminiSmsInterceptService.class.getName());
         } catch (RuntimeException e) {
-            // Unreadable: assume on, so a read failure never posts a false alarm.
-            return true;
+            return failOpen;
         }
     }
 

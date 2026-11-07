@@ -22,10 +22,7 @@ import com.voice2sms.sendlater.store.ThreadDirectory;
 
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.lang.ref.WeakReference;
-import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -150,13 +147,9 @@ public final class SendLaterWebHooks {
         moduleOnPage = false;
         if (!SendLaterSettings.isEnabled(app)) return null;
         if (moduleScript == null) {
-            try (InputStream is = activity.getAssets().open("inject.js")) {
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
-                moduleScript = new String(bos.toByteArray(), StandardCharsets.UTF_8);
-            } catch (Exception e) {
+            // The same process-wide copy of inject.js the activity evaluates (read once).
+            moduleScript = AssetScripts.read(activity.getAssets()::open, "inject.js");
+            if (moduleScript == null) {
                 Log.w(TAG, "inject.js unreadable; Send Later module not installed");
                 return null;
             }

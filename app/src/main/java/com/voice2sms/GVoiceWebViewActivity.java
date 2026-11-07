@@ -34,6 +34,8 @@ import androidx.core.view.ViewCompat;
 import androidx.preference.PreferenceManager;
 
 import com.voice2sms.sendlater.SendLaterSettings;
+import com.voice2sms.sendlater.engine.GvSession;
+import com.voice2sms.sendlater.web.AssetScripts;
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.OriginGuard;
@@ -472,8 +474,8 @@ public class GVoiceWebViewActivity extends Activity {
     private void loadForScheduledJob(Voice2SmsApplication app) {
         if (!isActivityAlive() || scheduledSend == null) return;
         if (app != null && !app.isSpaLoaded()) {
-            String cookies = CookieManager.getInstance().getCookie("https://voice.google.com");
-            if (cookies == null || !cookies.contains("SID")) {
+            // The engine's session test: a non-empty SID cookie (not any *SID* name); false on error.
+            if (!GvSession.hasWebSession(this)) {
                 scheduledSend.onWebFailure("no_session");
                 return;
             }
@@ -647,16 +649,11 @@ public class GVoiceWebViewActivity extends Activity {
         webView.evaluateJavascript(script, null);
     }
 
+    /** The asset script {@code name}, read from the APK once per process (AssetScripts). */
     private String readAssetScript(String name) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(getAssets().open(name)))) {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line).append("\n");
-            return sb.toString();
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to read " + name + ": " + e.getClass().getSimpleName());
-            return null;
-        }
+        String script = AssetScripts.read(getAssets()::open, name);
+        if (script == null) Log.w(TAG, "Failed to read " + name);
+        return script;
     }
 
     /**
@@ -986,13 +983,6 @@ public class GVoiceWebViewActivity extends Activity {
                 if (!isActivityAlive() || scheduledSend == null) return;
                 scheduledSend.onComposerInjected(token);
             });
-        }
-
-        /** inject.js v2sScheduledCompose asks to tap Send: at most once per job (the Send gate). */
-        @JavascriptInterface
-        public boolean scheduledMayClick(String token) {
-            if (!OriginGuard.isTrustedGvUrl(mainFrameUrl)) return false;
-            return ScheduledSendController.mayClick(token);
         }
 
         /**

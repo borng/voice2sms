@@ -28,6 +28,7 @@ import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.store.SendLaterRepository;
 import com.voice2sms.sendlater.web.ThreadBubble;
 import com.voice2sms.sendlater.web.ThreadReadCallback;
+import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.web.ThreadUrl;
 
 import java.lang.ref.WeakReference;
@@ -77,7 +78,7 @@ import java.util.concurrent.Executors;
  *       compose flow without its own auto-send and is injected again after a cold WebView's
  *       later main-frame loads (LIVE-F6); the job is "typed" only once the page confirms our
  *       body is in the box (LIVE-F8), and Stop stays on the cover until then (LIVE-F7); Send is
- *       tapped only when {@link #mayClick} grants it, at most once per job, never after Stop, a
+ *       tapped only when {@link #clickState} answers yes, at most once per job, never after Stop, a
  *       failure or the outcome.</li>
  *   <li>live-presend (D30, LIVE-F3; {@link PreSendRead}, {@link PreSendCheck}): unless the
  *       engine dispatched with {@link PreSendCheck#off()} (the user's own tap), the open thread is
@@ -160,8 +161,6 @@ public final class ScheduledSendController {
     static final String DETAIL_DRAFT_PRESENT = "draft_present";
     /** Extra compose time after the one reload of the thread page (a second settle plus the load). */
     static final long RELOAD_COMPOSE_GRACE_MS = ScheduledCompose.THREAD_SETTLE_MS + 5_000L;
-    // Split so no "//" sits inside a literal (the source-scanning tests strip // to end of line).
-    private static final String GV_PAGE_PREFIX = "https:/" + "/voice.google.com/";
     /**
      * Upper bound on staying covered after the last outcome (12 s, kept from send-hardening; OD27
      * accepts it). The activity normally finishes on the engine's state broadcast, well before
@@ -277,7 +276,7 @@ public final class ScheduledSendController {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<Job> queue = new ArrayDeque<>();
     private Job current;
-    /** Compose state of the running job, read by the JavaBridge thread ({@link #mayClick}). */
+    /** Compose state of the running job, read by the JavaBridge thread ({@link #clickState}). */
     private volatile ScheduledCompose liveCompose;
     private volatile boolean busy;
     /**
@@ -669,7 +668,7 @@ public final class ScheduledSendController {
     public boolean reloadsThreadInsteadOf(String url) {
         Job job = current;
         if (job == null || job.e164 == null || job.compose == null || job.gvShowedNoThread) return false;
-        if (url == null || !url.startsWith(GV_PAGE_PREFIX) || ThreadUrl.isThreadOf(url, job.e164)) return false;
+        if (!OriginGuard.isTrustedGvUrl(url) || ThreadUrl.isThreadOf(url, job.e164)) return false;
         ScheduledCompose.NoThread next = job.compose.onWrongPage();
         if (next == ScheduledCompose.NoThread.RELOAD) {
             reloadThread(job);
@@ -736,17 +735,6 @@ public final class ScheduledSendController {
         Job job = current;
         if (job == null || job.compose == null || !job.compose.isCurrent(token)) return;
         stopUnsent(job, DETAIL_DRAFT_PRESENT);
-    }
-
-    /**
-     * JavaBridge thread: inject.js asks to tap Send for {@code token}. Granted at most once per
-     * job, only for the current injection and while the job's gate is open (Stop, a failure and
-     * the outcome close it), so the scheduled script can never send twice or after the job ended.
-     */
-    public static boolean mayClick(String token) {
-        ScheduledSendController c = live.get();
-        ScheduledCompose sc = c == null ? null : c.liveCompose;
-        return sc != null && sc.grantClick(token);
     }
 
     /** inject.js auto-send delay for a scheduled send: the user's setting, at least the minimum. */
