@@ -84,6 +84,7 @@ final class AndroidEngineDeps {
         }
         @Override public boolean markSentVerified(long id) { return r().markSentVerified(id); }
         @Override public boolean hold(long id, HoldReason reason) { return r().hold(id, reason); }
+        @Override public boolean unverifySent(long id) { return r().unverifySent(id); }
         @Override public boolean cancel(long id) { return r().cancel(id); }
         @Override public boolean selfPreempt(long id) { return r().selfPreempt(id); }
         @Override public boolean expire(long id) { return r().expire(id); }

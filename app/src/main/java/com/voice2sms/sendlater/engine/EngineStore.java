@@ -35,6 +35,14 @@ public interface EngineStore {
 
     boolean hold(long id, HoldReason reason);
 
+    /**
+     * Deliver M4: SENT_VERIFIED -> HELD(UNVERIFIED) only (GV failed a send after it was verified);
+     * false for any other status. Default: not supported (false), so the row stays as it is.
+     */
+    default boolean unverifySent(long id) {
+        return false;
+    }
+
     boolean cancel(long id);
 
     boolean selfPreempt(long id);

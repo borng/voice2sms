@@ -36,6 +36,8 @@ public final class SendLaterRepository {
     static final List<String> WAITING = names(Status.SCHEDULED, Status.HELD);
     static final List<String> IN_FLIGHT = names(Status.IN_FLIGHT);
     static final List<String> HOLDABLE = LIVE;
+    /** Deliver M4: the only source status of {@link #unverifySent}. */
+    static final List<String> SENT_VERIFIED_ONLY = names(Status.SENT_VERIFIED);
     static final List<String> TERMINAL = names(Status.SENT_VERIFIED, Status.CANCELED,
             Status.SELF_PREEMPTED, Status.EXPIRED, Status.FAILED);
 
@@ -240,6 +242,14 @@ public final class SendLaterRepository {
     public boolean hold(long id, HoldReason reason) {
         if (reason == null) throw new IllegalArgumentException("reason");
         return to(id, Status.HELD, reason, HOLDABLE);
+    }
+
+    /**
+     * Deliver M4: SENT_VERIFIED -> HELD(UNVERIFIED), the one way out of SENT_VERIFIED: GV marked
+     * the bubble "Not sent" after the send path had verified it. Any other status is refused.
+     */
+    public boolean unverifySent(long id) {
+        return to(id, Status.HELD, HoldReason.UNVERIFIED, SENT_VERIFIED_ONLY);
     }
 
     /** Any non-terminal -> CANCELED. */
