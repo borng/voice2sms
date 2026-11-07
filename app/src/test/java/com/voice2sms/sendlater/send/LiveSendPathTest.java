@@ -237,10 +237,10 @@ public class LiveSendPathTest {
         // match H1 removes from the scheduled path; the scheduled new-message flow has no auto-send.
         assertTrue("runs the scheduled new-message flow, never voice2sms()",
                 entry.contains("_v2sScheduledNewMessage(jobE164,") && !entry.contains("voice2sms(phone"));
-        assertTrue("reports typed only after checking the box", entry.contains("V2SBridge.onScheduledTyped(token)")
-                && entry.indexOf("holdsBody(") < entry.indexOf("V2SBridge.onScheduledTyped(token)"));
+        assertTrue("reports typed only after checking the box", entry.contains("V2SBridge.onScheduledTyped(_v2sBridgeNonce, token)")
+                && entry.indexOf("holdsBody(") < entry.indexOf("V2SBridge.onScheduledTyped(_v2sBridgeNonce, token)"));
         int click = entry.indexOf("sendBtn.click()");
-        int gate = entry.indexOf("V2SBridge.scheduledClickStateAt(token, String(location.href))");
+        int gate = entry.indexOf("V2SBridge.scheduledClickStateAt(_v2sBridgeNonce, token, String(location.href))");
         assertTrue("one click, after the Java gate", click > 0 && gate > 0 && gate < click
                 && entry.indexOf(".click()") == click + "sendBtn".length()
                 && entry.lastIndexOf(".click()") == click + "sendBtn".length());

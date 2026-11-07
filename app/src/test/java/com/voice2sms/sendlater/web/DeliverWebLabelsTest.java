@@ -134,7 +134,7 @@ public class DeliverWebLabelsTest {
         JsSource.Fn chip = js.first("_v2sSlRefreshChip");
         assertNotNull(chip);
         assertTrue("bridge read only with a thread open", chip.body.contains("if (st.e164) {"));
-        assertTrue(chip.body.contains("V2SBridge.sendLaterChipState(st.e164)"));
+        assertTrue(chip.body.contains("V2SBridge.sendLaterChipState(_v2sBridgeNonce, st.e164)"));
         assertFalse("never asks the bridge with an empty number", chip.body.contains("st.e164 || ''"));
         assertTrue("off-thread enabled = pushed switch", chip.body.contains("st.enabled = st.switchOn === true;"));
     }
@@ -164,7 +164,7 @@ public class DeliverWebLabelsTest {
         JsSource.Fn undo = js.first("_v2sSlOnUndoTap");
         assertNotNull(undo);
         String b = undo.body;
-        int cancel = b.indexOf("V2SBridge.requestSendLaterUndo(u.messageId)");
+        int cancel = b.indexOf("V2SBridge.requestSendLaterUndo(_v2sBridgeNonce, u.messageId)");
         int empty = b.indexOf("ta.value === ''");
         int restore = b.indexOf("_v2sSlSetInputValue(ta, u.draft, true)");
         assertTrue("cancel first, regardless of the composer", cancel >= 0 && empty > cancel);

@@ -231,7 +231,9 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         String givenNumber = in.getStringExtra(SendLaterIntents.EXTRA_E164);
         String[] candidates = in.getStringArrayExtra(SendLaterIntents.EXTRA_CANDIDATES);
 
-        logic = SheetViewModelLogic.forCapture(givenNumber, candidates,
+        // deliver sec-M1: directory-only candidates are confirmed by the user, even a single one.
+        boolean unconfirmed = in.getBooleanExtra(SendLaterIntents.EXTRA_RECIPIENT_UNCONFIRMED, false);
+        logic = SheetViewModelLogic.forCapture(givenNumber, candidates, unconfirmed,
                 SendLaterSettings.holdDefault(this), System.currentTimeMillis(),
                 TimeZone.getDefault(), SendLaterSettings.slotMinutes(this));
         bindLogic();

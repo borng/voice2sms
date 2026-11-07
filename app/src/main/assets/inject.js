@@ -11,6 +11,14 @@
  * Usage: voice2sms('+15551234567', 'Hello world', false, 2000)
  */
 
+/**
+ * deliver sec-M1: the per-document bridge nonce. Java sets it (BridgeNonce.pageStatement) with
+ * the Send Later module and the scheduled composer, only on a trusted GV page; every Send Later
+ * and scheduled V2SBridge call passes it first and Java ignores a call without the current value.
+ * Declared without an initializer so re-evaluating this script keeps the value. Never logged.
+ */
+var _v2sBridgeNonce;
+
 // ── Angular Zone Helpers (shared by voice2sms and sendImageToGV) ──────────
 
 /**
@@ -829,7 +837,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
      */
     function draftStep(text) {
         if (typeof V2SBridge === 'undefined' || !V2SBridge.scheduledDraftStep) return null;
-        return String(V2SBridge.scheduledDraftStep(token, String(text)));
+        return String(V2SBridge.scheduledDraftStep(_v2sBridgeNonce, token, String(text)));
     }
 
     /**
@@ -852,13 +860,13 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
             if (!wrongPageReported) {
                 wrongPageReported = true;
                 console.log('[Voice2SMS] Scheduled send: not the conversation page, asking for it again');
-                if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledWrongPage) V2SBridge.onScheduledWrongPage(token);
+                if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledWrongPage) V2SBridge.onScheduledWrongPage(_v2sBridgeNonce, token);
             }
             state = 'wait';
         }
         if (state === 'fallback') {
             console.log('[Voice2SMS] Scheduled send: no conversation shown, new-conversation flow next');
-            if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledNoThread) V2SBridge.onScheduledNoThread(token);
+            if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledNoThread) V2SBridge.onScheduledNoThread(_v2sBridgeNonce, token);
             return;
         }
         var ta = state === 'thread' ? composer() : null;
@@ -879,7 +887,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
                     console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
                     // An older bridge without the D32 step: the OD34 report (generic reminder).
                     if (step === null && typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
-                        V2SBridge.onScheduledDraftPresent(token);
+                        V2SBridge.onScheduledDraftPresent(_v2sBridgeNonce, token);
                     }
                     return;
                 }
@@ -902,7 +910,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
             return;
         }
         console.log('[Voice2SMS] Scheduled send: message box filled');
-        if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledTyped) V2SBridge.onScheduledTyped(token);
+        if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledTyped) V2SBridge.onScheduledTyped(_v2sBridgeNonce, token);
         var jittered = Math.max(0, autoSendDelay + Math.floor(Math.random() * 801) - 300);
         setTimeout(function() { clickWhenGranted(10, 0); }, jittered);
     }
@@ -924,7 +932,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
             console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
             // An older bridge without the D32 step: the OD34 report (generic reminder).
             if (step === null && typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
-                V2SBridge.onScheduledDraftPresent(token);
+                V2SBridge.onScheduledDraftPresent(_v2sBridgeNonce, token);
             }
             return false;
         }
@@ -975,12 +983,12 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
         // this is the job's own thread or a new message addressed to the job's number alone.
         if (V2SBridge.scheduledClickStateIn) {
             var chips = recipientChips();
-            return String(V2SBridge.scheduledClickStateIn(token, String(location.href), chips.count, chips.digits));
+            return String(V2SBridge.scheduledClickStateIn(_v2sBridgeNonce, token, String(location.href), chips.count, chips.digits));
         }
         // LIVE-F10 F1: with this page's location, so a clearance given on an empty (new)
         // conversation is dropped once GV shows the number's thread here.
-        if (V2SBridge.scheduledClickStateAt) return String(V2SBridge.scheduledClickStateAt(token, String(location.href)));
-        if (V2SBridge.scheduledClickState) return String(V2SBridge.scheduledClickState(token));
+        if (V2SBridge.scheduledClickStateAt) return String(V2SBridge.scheduledClickStateAt(_v2sBridgeNonce, token, String(location.href)));
+        if (V2SBridge.scheduledClickState) return String(V2SBridge.scheduledClickState(_v2sBridgeNonce, token));
         return 'no';
     }
 
@@ -1511,7 +1519,7 @@ window.v2sReadThread = function(e164, limit) {
     } catch (e) {
         bubbles = null;
     }
-    V2SBridge.onThreadRead(JSON.stringify({ e164: e164, bubbles: bubbles }));
+    V2SBridge.onThreadRead(_v2sBridgeNonce, JSON.stringify({ e164: e164, bubbles: bubbles }));
 };
 
 // ── Send Later helpers ────────────────────────────────────────────────────
@@ -1642,7 +1650,7 @@ function _v2sSlRefreshChip(st) {
     if (st.e164) {
         try {
             // The bridge answers only for the 1:1 thread the main frame shows (L3).
-            state = JSON.parse(V2SBridge.sendLaterChipState(st.e164));
+            state = JSON.parse(V2SBridge.sendLaterChipState(_v2sBridgeNonce, st.e164));
         } catch (e) {
             state = null;
         }
@@ -1788,7 +1796,7 @@ function _v2sSlCreateChip() {
 function _v2sSlChipTap() {
     var st = window._v2sSl;
     if (!st || !st.e164 || st.e164 !== _v2sSlThreadE164()) return;
-    V2SBridge.requestSendLaterChipTap(st.e164);
+    V2SBridge.requestSendLaterChipTap(_v2sBridgeNonce, st.e164);
 }
 
 /** Edge-tab tap (R10): hand the draft and the newest-message watermark to the sheet. */
@@ -1814,7 +1822,7 @@ function _v2sSlCapture() {
     var newestLabel = newest && !newestTime && newest.label ? newest.label : null;
     var quality = (newestId && newestTime) ? 'EXACT' : (newestTime ? 'TIMESTAMP' : 'DEVICE_ONLY');
     st.capture = { e164: e164, href: location.href };
-    V2SBridge.requestSendLater(JSON.stringify({
+    V2SBridge.requestSendLater(_v2sBridgeNonce, JSON.stringify({
         e164: e164,
         displayName: _v2sSlConfirmedName(st, e164),
         draftText: ta.value,
@@ -1890,7 +1898,7 @@ function _v2sSlOnUndoTap() {
     _v2sSlHideBar();
     if (!u || Date.now() > u.until) return;
     if (u.messageId) {
-        var undone = V2SBridge.requestSendLaterUndo(u.messageId);
+        var undone = V2SBridge.requestSendLaterUndo(_v2sBridgeNonce, u.messageId);
         if (!(undone === true || undone === 'true')) {
             _v2sSlShowBar('Couldn’t undo — the message is no longer scheduled', null);
             _v2sSlRefreshChip(st);
@@ -1983,7 +1991,7 @@ function _v2sSlScrapeDirectory(st) {
     var sig = JSON.stringify(out);
     if (sig === st.directorySig) return;
     st.directorySig = sig;
-    V2SBridge.onThreadDirectory(sig);
+    V2SBridge.onThreadDirectory(_v2sBridgeNonce, sig);
 }
 
 /** 1:1 E.164 of a thread-list item from an itemId link inside it, else null. */

@@ -337,6 +337,8 @@ public final class VoiceOverlayController {
                 .putExtra(SendLaterIntents.EXTRA_WATERMARK_QUALITY, snap.getWatermark().getQuality().name())
                 .putExtra(SendLaterIntents.EXTRA_WATERMARK_CAPTURED_AT, snap.getWatermark().getCapturedAtDevice());
         if (snap.getE164() != null) i.putExtra(SendLaterIntents.EXTRA_E164, snap.getE164());
+        // deliver sec-M1: a directory-only number is offered for confirmation, never used silently.
+        if (snap.needsRecipientConfirm()) i.putExtra(SendLaterIntents.EXTRA_RECIPIENT_UNCONFIRMED, true);
         if (snap.getWatermark().getNewestTs() != null) {
             i.putExtra(SendLaterIntents.EXTRA_WATERMARK_NEWEST_TS, snap.getWatermark().getNewestTs().longValue());
         }

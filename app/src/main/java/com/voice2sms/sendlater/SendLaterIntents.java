@@ -43,6 +43,11 @@ public final class SendLaterIntents {
     public static final String EXTRA_E164 = "com.voice2sms.sendlater.extra.E164";
     /** String[]: candidate numbers when the name maps to several (R4). */
     public static final String EXTRA_CANDIDATES = "com.voice2sms.sendlater.extra.CANDIDATES";
+    /**
+     * boolean (deliver sec-M1): the candidates are unconfirmed (thread directory only), so the
+     * sheet asks "Which number?" even for a single candidate.
+     */
+    public static final String EXTRA_RECIPIENT_UNCONFIRMED = "com.voice2sms.sendlater.extra.RECIPIENT_UNCONFIRMED";
     /** String: GV thread item id, e.g. "t.+1..." (WebView). */
     public static final String EXTRA_THREAD_ITEM_ID = "com.voice2sms.sendlater.extra.THREAD_ITEM_ID";
     /** String: Watermark.Quality name. */

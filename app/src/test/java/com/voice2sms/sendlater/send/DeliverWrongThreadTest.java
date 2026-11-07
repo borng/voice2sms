@@ -183,7 +183,7 @@ public class DeliverWrongThreadTest {
         assertFalse("never logs the text", Pattern.compile("console\\.log\\([^;]*\\b(current|body|text)\\b").matcher(draft).find());
 
         String ask = block(entry, "function askClick\\s*\\(\\s*\\)\\s*\\{");
-        int in = ask.indexOf("V2SBridge.scheduledClickStateIn(token, String(location.href), chips.count, chips.digits)");
+        int in = ask.indexOf("V2SBridge.scheduledClickStateIn(_v2sBridgeNonce, token, String(location.href), chips.count, chips.digits)");
         assertTrue("the chip-aware ask comes first", in >= 0 && in < ask.indexOf("V2SBridge.scheduledClickStateAt("));
         String chips = block(entry, "function recipientChips\\s*\\(\\s*\\)\\s*\\{");
         assertTrue("digits only, never a name", chips.contains(".replace(/\\D/g, '')"));

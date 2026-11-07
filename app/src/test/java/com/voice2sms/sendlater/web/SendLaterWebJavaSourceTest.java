@@ -93,8 +93,10 @@ public class SendLaterWebJavaSourceTest {
     };
 
     private static String sig(String name, String argType) {
+        // deliver sec-M1: every Send Later bridge method takes the page nonce first.
         return "@JavascriptInterface\\s+public\\s+[\\w<>]+\\s+" + name
-                + "\\s*\\(\\s*(final\\s+)?" + argType + "\\s+\\w+\\s*\\)\\s*\\{";
+                + "\\s*\\(\\s*(final\\s+)?String\\s+nonce\\s*,\\s*(final\\s+)?" + argType
+                + "\\s+\\w+\\s*\\)\\s*\\{";
     }
 
     @Test

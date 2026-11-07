@@ -12,7 +12,8 @@ import java.util.TimeZone;
 /**
  * What the edge-tab tap captured from the native Voice thread (R3, R4): the title as shown, the
  * draft as exact Unicode, the capture time, the bubble watermark and the E.164 candidates
- * (RecipientResolver; one entry when resolved, empty when the sheet must ask for a number, I3).
+ * (RecipientResolver; one entry when resolved, empty when the sheet must ask for a number, I3;
+ * deliver sec-M1: a number from the thread directory alone is a candidate the user must confirm).
  * Immutable. {@link #toString()} never shows the draft, the name or a number (I7).
  */
 public final class VoiceDraftSnapshot {
@@ -22,14 +23,17 @@ public final class VoiceDraftSnapshot {
     private final long capturedAt;
     private final Watermark watermark;
     private final List<String> candidates;
+    /** RecipientResolver answered RESOLVED (deliver sec-M1: not for directory-only numbers). */
+    private final boolean resolved;
 
     private VoiceDraftSnapshot(String displayName, String draftText, long capturedAt, Watermark watermark,
-                               List<String> candidates) {
+                               List<String> candidates, boolean resolved) {
         this.displayName = displayName;
         this.draftText = draftText;
         this.capturedAt = capturedAt;
         this.watermark = watermark;
         this.candidates = Collections.unmodifiableList(new ArrayList<>(candidates));
+        this.resolved = resolved && this.candidates.size() == 1;
     }
 
     /**
@@ -52,7 +56,8 @@ public final class VoiceDraftSnapshot {
         if (bubbles == null) bubbles = Collections.emptyList();
         Watermark wm = VoiceBubbleParser.bubbleWatermark(bubbles, nowMs, zone);
         RecipientResolver.Resolution r = RecipientResolver.resolve(title, contacts, directory);
-        return new VoiceDraftSnapshot(title, draft, nowMs, wm, r.getCandidates());
+        return new VoiceDraftSnapshot(title, draft, nowMs, wm, r.getCandidates(),
+                r.getKind() == RecipientResolver.Kind.RESOLVED);
     }
 
     /** {@code toolbar_title} as shown at capture. */
@@ -65,12 +70,20 @@ public final class VoiceDraftSnapshot {
 
     public Watermark getWatermark() { return watermark; }
 
-    /** E.164 candidates, never null; one entry when the recipient resolved. */
+    /** E.164 candidates, never null; one entry when the recipient resolved (or one to confirm). */
     public List<String> getCandidates() { return candidates; }
 
-    /** The resolved number when there is exactly one candidate, else null. */
+    /** The resolved number, else null (several candidates, none, or one the user must confirm). */
     public String getE164() {
-        return candidates.size() == 1 ? candidates.get(0) : null;
+        return resolved ? candidates.get(0) : null;
+    }
+
+    /**
+     * deliver sec-M1: true when there are candidates but none was resolved, so the sheet must ask
+     * "Which number?" even for a single candidate.
+     */
+    public boolean needsRecipientConfirm() {
+        return !resolved && !candidates.isEmpty();
     }
 
     @Override public String toString() {

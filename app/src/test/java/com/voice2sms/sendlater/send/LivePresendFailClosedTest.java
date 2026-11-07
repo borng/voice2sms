@@ -206,7 +206,7 @@ public class LivePresendFailClosedTest {
         String fill = block(entry, "function fillThread\\s*\\(polls\\)\\s*\\{");
         String notOurs = block(fill, "if \\(!holdsBody\\(ta\\)\\)\\s*\\{");
         int draft = notOurs.indexOf("current.trim().length > 0");
-        int report = notOurs.indexOf("V2SBridge.onScheduledDraftPresent(token)");
+        int report = notOurs.indexOf("V2SBridge.onScheduledDraftPresent(_v2sBridgeNonce, token)");
         int set = notOurs.indexOf("_v2sScheduledSet(ta, body, true)");
         assertTrue(draft >= 0 && draft < report && report < set);
         String draftBranch = block(notOurs, "if \\(typeof current === 'string' && current.trim\\(\\).length > 0\\)\\s*\\{");

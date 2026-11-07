@@ -145,7 +145,8 @@ public class EnterNewlineTest {
     public void activityInstallsOncePerPageLoadIndependentOfSendLater() throws IOException {
         String src = read(ACTIVITY);
         assertTrue("onPageFinished installs on GV pages regardless of Send Later",
-                src.contains("if (url.startsWith(\"https://voice.google.com\")) installEnterNewline();"));
+                src.contains("if (trustedGv) installEnterNewline();")
+                        && src.contains("final boolean trustedGv = OriginGuard.isTrustedGvUrl(url);"));
         int at = src.indexOf("private void installEnterNewline()");
         assertTrue(at >= 0);
         String method = src.substring(at, src.indexOf("\n    }\n", at));
