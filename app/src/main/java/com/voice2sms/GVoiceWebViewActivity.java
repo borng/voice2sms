@@ -39,6 +39,7 @@ import com.voice2sms.sendlater.web.AssetScripts;
 import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.BridgeNonce;
+import com.voice2sms.sendlater.web.LiveDelegate;
 import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.send.ForegroundUse;
 import com.voice2sms.sendlater.send.RegularSend;
@@ -114,6 +115,26 @@ public class GVoiceWebViewActivity extends Activity {
     private static final BridgeNonce BRIDGE_NONCE = new BridgeNonce();
     /** Send Later due-time send (R30/R31, OD11): the scheduled branch; see ScheduledSendController. */
     private ScheduledSendController scheduledSend;
+    /**
+     * LIVE-F13: the Activity the page's one stable V2SBridge ({@link PageBridge}) forwards to.
+     * An object added with addJavascriptInterface reaches the page only on its next load, so a
+     * per-Activity bridge left a warm, un-reloaded page calling the previous (destroyed)
+     * Activity. Set in onCreate, cleared in onDestroy only while it is still this Activity's.
+     */
+    private static final LiveDelegate<V2SBridge> LIVE_BRIDGE = new LiveDelegate<>();
+    /** The single object the singleton WebView exposes to the page as "V2SBridge". */
+    private static final PageBridge PAGE_BRIDGE = new PageBridge(LIVE_BRIDGE);
+    /** This Activity's bridge, attached to LIVE_BRIDGE while the Activity lives. */
+    private V2SBridge pageBridgeTarget;
+
+    /**
+     * LIVE-F13: the one object to register as "V2SBridge" on a newly created singleton WebView
+     * (Voice2SmsApplication.getOrCreateWebView, before its first load). Never re-added or removed
+     * per Activity.
+     */
+    static Object pageBridge() {
+        return PAGE_BRIDGE;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -141,13 +162,15 @@ public class GVoiceWebViewActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Set up WebViewClient and JS interface (re-set each time since
-        // the bridge closure captures `this` Activity)
+        // Set up the WebViewClient (re-set each time: it captures `this` Activity). The page's
+        // V2SBridge object is NOT re-added here (LIVE-F13): it is registered once per WebView
+        // (Voice2SmsApplication.getOrCreateWebView) and forwards to this Activity's bridge below.
         sendLaterHooks = new SendLaterWebHooks(this, new SendLaterHost());
         setupWebViewClient();
         // The singleton WebView may already show a page that no callback will report again.
         mainFrameUrl = webView.getUrl();
-        webView.addJavascriptInterface(new V2SBridge(), "V2SBridge");
+        pageBridgeTarget = new V2SBridge();
+        LIVE_BRIDGE.attach(pageBridgeTarget);
         scheduledSend = new ScheduledSendController(this, new ScheduledHost());
         boolean scheduledLaunch = scheduledSend.handle(getIntent(), savedInstanceState != null);
         // deliver M1: a regular compose holds the WebView from its intent on (no scheduled
@@ -1177,6 +1200,136 @@ public class GVoiceWebViewActivity extends Activity {
     }
 
     /**
+     * LIVE-F13: the stable object the page sees as "V2SBridge", registered once per singleton
+     * WebView. Every call forwards to the attached Activity's {@link V2SBridge}, which keeps all
+     * the guards (BridgeNonce, OriginGuard on that Activity's mainFrameUrl, isActivityAlive).
+     * With no Activity attached each method gives the answer V2SBridge gives when it refuses:
+     * nothing, {@code ChipState.disabled()}, {@code false}, {@code "no"} or {@code "stop"}.
+     * Holds no Activity itself (static; only the delegate's current target).
+     */
+    static final class PageBridge {
+        private final LiveDelegate<V2SBridge> live;
+
+        PageBridge(LiveDelegate<V2SBridge> live) {
+            this.live = live;
+        }
+
+        @JavascriptInterface
+        public final void requestTapAndType(float cssX, float cssY, String text) {
+            V2SBridge b = live.current();
+            if (b != null) b.requestTapAndType(cssX, cssY, text);
+        }
+
+        @JavascriptInterface
+        public final void requestType(String text) {
+            V2SBridge b = live.current();
+            if (b != null) b.requestType(text);
+        }
+
+        @JavascriptInterface
+        public final void requestShowKeyboard() {
+            V2SBridge b = live.current();
+            if (b != null) b.requestShowKeyboard();
+        }
+
+        @JavascriptInterface
+        public final void requestPageReload() {
+            V2SBridge b = live.current();
+            if (b != null) b.requestPageReload();
+        }
+
+        @JavascriptInterface
+        public final void requestFocusAndKeyboard(float cssX, float cssY) {
+            V2SBridge b = live.current();
+            if (b != null) b.requestFocusAndKeyboard(cssX, cssY);
+        }
+
+        @JavascriptInterface
+        public final void requestSendLater(String nonce, String json) {
+            V2SBridge b = live.current();
+            if (b != null) b.requestSendLater(nonce, json);
+        }
+
+        @JavascriptInterface
+        public final String sendLaterChipState(String nonce, String e164) {
+            V2SBridge b = live.current();
+            return b != null ? b.sendLaterChipState(nonce, e164) : ChipState.disabled();
+        }
+
+        @JavascriptInterface
+        public final void requestSendLaterChipTap(String nonce, String e164) {
+            V2SBridge b = live.current();
+            if (b != null) b.requestSendLaterChipTap(nonce, e164);
+        }
+
+        @JavascriptInterface
+        public final boolean requestSendLaterUndo(String nonce, long messageId) {
+            V2SBridge b = live.current();
+            return b != null && b.requestSendLaterUndo(nonce, messageId);
+        }
+
+        @JavascriptInterface
+        public final void onThreadRead(String nonce, String json) {
+            V2SBridge b = live.current();
+            if (b != null) b.onThreadRead(nonce, json);
+        }
+
+        @JavascriptInterface
+        public final void onScheduledTyped(String nonce, String token) {
+            V2SBridge b = live.current();
+            if (b != null) b.onScheduledTyped(nonce, token);
+        }
+
+        @JavascriptInterface
+        public final String scheduledClickState(String nonce, String token) {
+            V2SBridge b = live.current();
+            return b != null ? b.scheduledClickState(nonce, token) : "no";
+        }
+
+        @JavascriptInterface
+        public final String scheduledClickStateAt(String nonce, String token, String pageUrl) {
+            V2SBridge b = live.current();
+            return b != null ? b.scheduledClickStateAt(nonce, token, pageUrl) : "no";
+        }
+
+        @JavascriptInterface
+        public final String scheduledClickStateIn(String nonce, String token, String pageUrl, int chipCount, String chipDigits) {
+            V2SBridge b = live.current();
+            return b != null ? b.scheduledClickStateIn(nonce, token, pageUrl, chipCount, chipDigits) : "no";
+        }
+
+        @JavascriptInterface
+        public final void onScheduledNoThread(String nonce, String token) {
+            V2SBridge b = live.current();
+            if (b != null) b.onScheduledNoThread(nonce, token);
+        }
+
+        @JavascriptInterface
+        public final void onScheduledWrongPage(String nonce, String token) {
+            V2SBridge b = live.current();
+            if (b != null) b.onScheduledWrongPage(nonce, token);
+        }
+
+        @JavascriptInterface
+        public final void onScheduledDraftPresent(String nonce, String token) {
+            V2SBridge b = live.current();
+            if (b != null) b.onScheduledDraftPresent(nonce, token);
+        }
+
+        @JavascriptInterface
+        public final String scheduledDraftStep(String nonce, String token, String boxText) {
+            V2SBridge b = live.current();
+            return b != null ? b.scheduledDraftStep(nonce, token, boxText) : "stop";
+        }
+
+        @JavascriptInterface
+        public final void onThreadDirectory(String nonce, String json) {
+            V2SBridge b = live.current();
+            if (b != null) b.onThreadDirectory(nonce, json);
+        }
+    }
+
+    /**
      * Read a sticker/image from a content URI delivered by GBoard via commitContent,
      * convert to a format GV web accepts, and inject into the page's file upload input.
      */
@@ -1472,10 +1625,13 @@ public class GVoiceWebViewActivity extends Activity {
             fileUploadCallback = null;
         }
 
-        // Remove JS interface and content listener to break references from
-        // singleton WebView → this Activity
+        // LIVE-F13: the page's stable V2SBridge stops forwarding to this Activity, unless a newer
+        // Activity already took it over (its onCreate may run before this onDestroy). The bridge
+        // object itself stays registered: removing it would drop it from the page on the next load.
+        LIVE_BRIDGE.detach(pageBridgeTarget);
+
+        // Remove the content listener to break references from singleton WebView → this Activity
         if (webView != null) {
-            webView.removeJavascriptInterface("V2SBridge");
             ViewCompat.setOnReceiveContentListener(webView, RichContentWebView.IMAGE_MIME_TYPES, null);
         }
 

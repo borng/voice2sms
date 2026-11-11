@@ -129,6 +129,10 @@ public class Voice2SmsApplication extends Application {
             contextWrapper = new MutableContextWrapper(getApplicationContext());
             singletonWebView = new RichContentWebView(contextWrapper);
             setupWebViewSettings(singletonWebView);
+            // LIVE-F13: the page's one V2SBridge object, added once per WebView before its first
+            // load. It forwards to the attached GVoiceWebViewActivity; activities never re-add
+            // or remove it (an injected object only reaches the page on its next load).
+            singletonWebView.addJavascriptInterface(GVoiceWebViewActivity.pageBridge(), "V2SBridge");
 
             // Keep renderer alive when Activity is not visible
             singletonWebView.setRendererPriorityPolicy(

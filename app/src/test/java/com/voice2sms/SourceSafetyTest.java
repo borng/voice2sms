@@ -518,6 +518,86 @@ public class SourceSafetyTest {
     }
 
     /**
+     * LIVE-F13: the singleton WebView exposes ONE stable "V2SBridge" object, added once when the
+     * WebView is created (an object added with addJavascriptInterface reaches the page only on
+     * its next load, so a per-Activity add left a warm, un-reloaded page calling a destroyed
+     * Activity). Exactly one registration site in main code, inside getOrCreateWebView's
+     * creation branch; no removeJavascriptInterface (removal would drop the stable object on the
+     * next load); GVoiceWebViewActivity attaches/detaches its bridge through LIVE_BRIDGE.
+     */
+    @Test
+    public void v2sBridge_registeredOncePerWebView_notPerActivity() throws IOException {
+        int sites = 0;
+        String siteFile = null;
+        try (java.util.stream.Stream<Path> files = Files.walk(MAIN)) {
+            for (Path p : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".java"))::iterator) {
+                String src = stripComments(new String(Files.readAllBytes(p)));
+                int n = countMatches(src, ".addJavascriptInterface(");
+                if (n > 0) siteFile = p.getFileName().toString();
+                sites += n;
+                assertFalse(p + " removes a JS interface — the stable V2SBridge must stay registered",
+                        src.contains("removeJavascriptInterface"));
+            }
+        }
+        assertEquals("exactly one addJavascriptInterface site in main code", 1, sites);
+        assertEquals("Voice2SmsApplication.java", siteFile);
+
+        String app = stripComments(read("Voice2SmsApplication.java"));
+        String create = extractMethodBody(app, "getOrCreateWebView");
+        assertNotNull("getOrCreateWebView not found", create);
+        int branch = create.indexOf("if (singletonWebView == null)");
+        assertTrue("creation branch not found", branch > 0);
+        String creation = create.substring(branch, findClosingBrace(create, branch));
+        assertTrue("registered in the creation branch with the stable object",
+                creation.contains("singletonWebView.addJavascriptInterface(GVoiceWebViewActivity.pageBridge(), \"V2SBridge\")"));
+
+        String act = stripComments(read("GVoiceWebViewActivity.java"));
+        assertFalse("GVoiceWebViewActivity must not add a JS interface per onCreate",
+                act.contains("addJavascriptInterface"));
+        String onCreate = extractMethodBody(act, "onCreate");
+        assertNotNull(onCreate);
+        assertTrue("onCreate attaches this Activity's bridge",
+                onCreate.contains("LIVE_BRIDGE.attach(pageBridgeTarget)"));
+        String onDestroy = extractMethodBody(act, "onDestroy");
+        assertNotNull(onDestroy);
+        assertTrue("onDestroy detaches only its own bridge",
+                onDestroy.contains("LIVE_BRIDGE.detach(pageBridgeTarget)"));
+        assertTrue("one process-wide delegate",
+                act.contains("private static final LiveDelegate<V2SBridge> LIVE_BRIDGE = new LiveDelegate<>();"));
+    }
+
+    /**
+     * LIVE-F13: the stable PageBridge forwards every @JavascriptInterface method V2SBridge has
+     * (same name and parameters), so a method added to V2SBridge cannot silently vanish from the
+     * page.
+     */
+    @Test
+    public void pageBridge_forwardsEveryV2SBridgeMethod() throws IOException {
+        String act = stripComments(read("GVoiceWebViewActivity.java"));
+        int v = act.indexOf("private class V2SBridge");
+        assertTrue(v > 0);
+        String bridge = act.substring(v, findClosingBrace(act, v));
+        int p = act.indexOf("static final class PageBridge");
+        assertTrue("PageBridge not found", p > 0);
+        assertTrue("PageBridge follows V2SBridge (first-match source tests read V2SBridge)", p > v);
+        String page = act.substring(p, findClosingBrace(act, p));
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "@JavascriptInterface\\s+public\\s+(\\w+)\\s+(\\w+)\\s*\\(([^)]*)\\)").matcher(bridge);
+        int methods = 0;
+        while (m.find()) {
+            methods++;
+            String params = m.group(3).trim().replaceAll("\\s+", " ");
+            String sig = "@JavascriptInterface public final " + m.group(1) + " " + m.group(2) + "(" + params + ")";
+            assertTrue("PageBridge lacks " + sig, page.replaceAll("\\s+", " ").contains(sig));
+            assertTrue("PageBridge." + m.group(2) + " forwards to the live V2SBridge",
+                    page.contains("b." + m.group(2) + "("));
+        }
+        assertTrue("expected the V2SBridge methods", methods >= 19);
+        assertEquals("PageBridge exposes nothing beyond V2SBridge",
+                methods, countMatches(page, "@JavascriptInterface"));
+    }
+
+    /**
      * Given a source string and the index of a brace-opened block header,
      * returns the index just after the matching closing brace.
      */
