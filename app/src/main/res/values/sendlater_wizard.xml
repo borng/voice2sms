@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- wizard-all-steps (D60, OD46): setup wizard copy for the steps that read SetupChecks.
+     strings.xml is not touched. -->
+<resources>
+    <string name="sendlater_wizard_default_sms_on">Status: Default SMS app</string>
+    <string name="sendlater_wizard_default_sms_off">Status: Not set</string>
+    <string name="sendlater_wizard_accessibility_on">Status: Enabled</string>
+    <string name="sendlater_wizard_accessibility_off">Status: Not enabled</string>
+
+    <string name="sendlater_wizard_signin_title">Sign in to Google Voice</string>
+    <string name="sendlater_wizard_signin_body">Voice2SMS sends your texts through your Google Voice account. Open the Google Voice screen once and sign in with the Google account that has your Voice number.</string>
+    <string name="sendlater_wizard_signin_on">Status: Google account chosen</string>
+    <string name="sendlater_wizard_signin_off">Status: Not signed in</string>
+    <string name="sendlater_wizard_signin_button">Open Google Voice</string>
+
+    <string name="sendlater_wizard_full_screen_on">Status: Full-screen alerts allowed (a scheduled text can go out while the phone is locked)</string>
+    <string name="sendlater_wizard_full_screen_off">Status: Full-screen alerts not allowed (a scheduled text may wait until you unlock the phone)</string>
+    <string name="sendlater_wizard_full_screen_button">Allow full-screen alerts</string>
+</resources>

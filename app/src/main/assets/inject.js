@@ -11,6 +11,14 @@
  * Usage: voice2sms('+15551234567', 'Hello world', false, 2000)
  */
 
+/**
+ * deliver sec-M1: the per-document bridge nonce. Java sets it (BridgeNonce.pageStatement) with
+ * the Send Later module and the scheduled composer, only on a trusted GV page; every Send Later
+ * and scheduled V2SBridge call passes it first and Java ignores a call without the current value.
+ * Declared without an initializer so re-evaluating this script keeps the value. Never logged.
+ */
+var _v2sBridgeNonce;
+
 // ── Angular Zone Helpers (shared by voice2sms and sendImageToGV) ──────────
 
 /**
@@ -713,6 +721,438 @@ function voice2sms(phone, body, autoSend, autoSendDelay) {
     start(MAX_RETRIES);
 }
 
+// ── Scheduled send entry (Send Later R30; LIVE-F6, LIVE-F8, LIVE-F10) ──────
+
+/** The box holds our scheduled text (surrounding whitespace aside). */
+function _v2sScheduledHolds(el, text) {
+    if (!el || typeof text !== 'string' || !text) return false;
+    var v = el.isContentEditable ? el.textContent : el.value;
+    return typeof v === 'string' && (v === text || v.trim() === text.trim());
+}
+
+/** Puts value into the message box, Angular-safe (native setter + InputEvent in the zone). */
+function _v2sScheduledSet(el, value, focus) {
+    if (el.isContentEditable) {
+        if (focus) el.focus();
+        el.textContent = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+        _v2sSlSetInputValue(el, value, focus);
+    }
+}
+
+/**
+ * LIVE-F10: a scheduled job ended unsent after typing (pre-send hold, timeout, Stop). Empties the
+ * message box only when it still holds our scheduled text, so none is left in GV's box to be sent
+ * by hand by mistake; any other text is left alone. Never logs the text.
+ */
+function v2sScheduledClear(text) {
+    var el = document.querySelector(V2S_COMPOSER_SELECTOR);
+    if (!_v2sScheduledHolds(el, text)) return false;
+    _v2sScheduledSet(el, '', false);
+    console.log('[Voice2SMS] Scheduled send: cleared the message box');
+    return true;
+}
+
+/**
+ * D32 Send both: the scheduled job ended; puts the user's draft back into the message box when the
+ * box is empty or still holds exactly our scheduled text (anything else is left alone). Returns
+ * true when the box then holds the draft. Never logs either text.
+ */
+function v2sScheduledRestoreDraft(draft, text) {
+    var el = document.querySelector(V2S_COMPOSER_SELECTOR);
+    if (!el || typeof draft !== 'string' || !draft) return false;
+    var v = el.isContentEditable ? el.textContent : el.value;
+    if (typeof v === 'string' && v.length > 0 && !_v2sScheduledHolds(el, text)) {
+        console.log('[Voice2SMS] Scheduled send: the message box is not empty, nothing put back');
+        return false;
+    }
+    _v2sScheduledSet(el, draft, false);
+    var after = el.isContentEditable ? el.textContent : el.value;
+    var ok = after === draft;
+    console.log(ok ? '[Voice2SMS] Scheduled send: message box restored'
+        : '[Voice2SMS] Scheduled send: message box could not be restored');
+    return ok;
+}
+
+/**
+ * Scheduled compose. Java sets window._v2sScheduledOpts first: {mode, settleMs, pollMs, waitMs}.
+ *
+ * mode 'thread' (LIVE-F10): Java loaded the job's own thread URL by a full page load. Once GV
+ * shows that conversation (gv-message-list, and the location is the job's 1:1 thread) the thread's
+ * own box is filled, unless it already holds text that is not our body (OD34: the user's draft is
+ * never overwritten; V2SBridge.onScheduledDraftPresent and the job stops unsent); when GV goes
+ * elsewhere (LIVE-F11) Java is asked to load the job's thread again (V2SBridge.onScheduledWrongPage,
+ * bounded) while the script waits; when the thread shows no conversation within settleMs, Java is
+ * told (V2SBridge.onScheduledNoThread), which reloads the thread page once (full load, one more
+ * settle) and only then loads the messages list for mode 'new'.
+ * mode 'new' (deliver H1): the scheduled new-conversation flow (_v2sScheduledNewMessage): the job's
+ * conversation is opened only by its own thread id, else a new message gets the job's number as
+ * its recipient chip; the D32 draft step runs before typing into a box that holds text. Never
+ * voice2sms() (its list match on text can open another person's conversation), never its auto-send.
+ *
+ * Either way it reports "typed" only once the box really holds our text
+ * (V2SBridge.onScheduledTyped) and taps Send only when Java says yes: the tri-state ask
+ * (V2SBridge.scheduledClickState) answers 'wait' while the pre-send check is pending, so the
+ * script asks again every pollMs (re-checking the box each time, bounded by waitMs) and taps only
+ * on 'yes' (once per job, current token only, never after Stop or a failure). On 'no' it clears
+ * our text. Java may inject this again after a main-frame reload wiped the page; the generation
+ * counter cancels an older run in the same document. Never logs the number or the text.
+ */
+function v2sScheduledCompose(phone, body, autoSendDelay, token) {
+    'use strict';
+    var opts = window._v2sScheduledOpts || {};
+    window._v2sScheduledOpts = null;
+    var threadMode = opts.mode === 'thread';
+    var SETTLE_MS = opts.settleMs > 0 ? opts.settleMs : 15000;   // D35
+    var CLICK_POLL_MS = opts.pollMs > 0 ? opts.pollMs : 500;
+    var WAIT_MS = opts.waitMs > 0 ? opts.waitMs : 30000;
+    var jobE164 = String(phone || '').replace(/[^\d+]/g, '');
+    // As voice2sms() does: a newer run cancels an older one in this document. deliver H1: the
+    // new-conversation flow is the scheduled one (_v2sScheduledNewMessage), never voice2sms(),
+    // whose list match on text can open another person's conversation.
+    window._v2sGeneration = (window._v2sGeneration || 0) + 1;
+    var myGeneration = window._v2sGeneration;
+    var POLL_MS = 250;
+    var MAX_POLLS = 160;   // 40 s, the Java compose timeout
+    var startedAt = Date.now();
+
+    function cancelled() {
+        return window._v2sGeneration !== myGeneration;
+    }
+
+    function composer() {
+        return document.querySelector(V2S_COMPOSER_SELECTOR);
+    }
+
+    function holdsBody(el) {
+        return _v2sScheduledHolds(el, body);
+    }
+
+    var wrongPageReported = false;
+
+    /**
+     * D32: the Java step for a draft in the box ('replace' | 'both' | 'stop'), or null when the
+     * bridge has no such method. The draft goes to Java only; never logged here.
+     */
+    function draftStep(text) {
+        if (typeof V2SBridge === 'undefined' || !V2SBridge.scheduledDraftStep) return null;
+        return String(V2SBridge.scheduledDraftStep(_v2sBridgeNonce, token, String(text)));
+    }
+
+    /**
+     * Mirrors ScheduledCompose.pageState: 'thread' | 'wait' | 'wrong' | 'fallback'. LIVE-F11: a
+     * page that is not the job's thread (the messages list, or GV rewrote the URL while booting)
+     * is 'wrong', never 'fallback': the script waits and Java loads the job's thread again.
+     */
+    function threadPageState() {
+        var pageE164 = _v2sSlThreadE164();
+        if (!pageE164 || pageE164 !== jobE164) return 'wrong';
+        if (document.querySelector('gv-message-list')) return 'thread';
+        return (Date.now() - startedAt) >= SETTLE_MS ? 'fallback' : 'wait';
+    }
+
+    function fillThread(polls) {
+        if (cancelled() || polls <= 0) return;
+        var state = threadPageState();
+        if (state === 'wrong') {
+            // LIVE-F11: once per run; Java reloads the thread (bounded) or decides the fallback.
+            if (!wrongPageReported) {
+                wrongPageReported = true;
+                console.log('[Voice2SMS] Scheduled send: not the conversation page, asking for it again');
+                if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledWrongPage) V2SBridge.onScheduledWrongPage(_v2sBridgeNonce, token);
+            }
+            state = 'wait';
+        }
+        if (state === 'fallback') {
+            console.log('[Voice2SMS] Scheduled send: no conversation shown, new-conversation flow next');
+            if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledNoThread) V2SBridge.onScheduledNoThread(_v2sBridgeNonce, token);
+            return;
+        }
+        var ta = state === 'thread' ? composer() : null;
+        if (!ta) {
+            setTimeout(function() { fillThread(polls - 1); }, POLL_MS);
+            return;
+        }
+        if (!holdsBody(ta)) {
+            // OD34: never overwrite or delete a draft the user left in this thread's box: any
+            // text that is not our body stops the job unsent (Java: draft_present, a reminder).
+            // D32: Java decides what happens to it: 'stop' (the user gets the choice notification
+            // with the draft), 'replace' (it is our text after all, or the user chose Replace and
+            // send) or 'both' (the user chose Send both: Java keeps the draft and puts it back).
+            var current = ta.isContentEditable ? ta.textContent : ta.value;
+            if (typeof current === 'string' && current.trim().length > 0) {
+                var step = draftStep(current);
+                if (step !== 'replace' && step !== 'both') {
+                    console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
+                    // An older bridge without the D32 step: the OD34 report (generic reminder).
+                    if (step === null && typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
+                        V2SBridge.onScheduledDraftPresent(_v2sBridgeNonce, token);
+                    }
+                    return;
+                }
+                console.log('[Voice2SMS] Scheduled send: replacing the draft in the message box');
+            }
+            _v2sScheduledSet(ta, body, true);
+        }
+        waitTyped(polls);
+    }
+
+    function waitTyped(polls) {
+        if (cancelled() || polls <= 0) return;
+        var box = composer();
+        if (!holdsBody(box)) {
+            // Thread mode: GV may re-render the box empty after we filled it; fill an EMPTY box again.
+            if (threadMode && box && !(box.isContentEditable ? box.textContent : box.value)) {
+                _v2sScheduledSet(box, body, true);
+            }
+            setTimeout(function() { waitTyped(polls - 1); }, POLL_MS);
+            return;
+        }
+        console.log('[Voice2SMS] Scheduled send: message box filled');
+        if (typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledTyped) V2SBridge.onScheduledTyped(_v2sBridgeNonce, token);
+        var jittered = Math.max(0, autoSendDelay + Math.floor(Math.random() * 801) - 300);
+        setTimeout(function() { clickWhenGranted(10, 0); }, jittered);
+    }
+
+    /**
+     * deliver H1: the D32 draft step of fillThread for the new-conversation flow: true when our
+     * body may go into box ta. A box with text that is not our body asks Java ('stop': the user
+     * gets the choice notification with the draft; 'replace': it is our text after all, or the
+     * user chose Replace and send; 'both': the user chose Send both, Java keeps the draft and puts
+     * it back). Never touches or logs the draft.
+     */
+    function draftGate(ta) {
+        if (cancelled() || !ta) return false;
+        if (holdsBody(ta)) return true;
+        var current = ta.isContentEditable ? ta.textContent : ta.value;
+        if (typeof current !== 'string' || current.trim().length === 0) return true;
+        var step = draftStep(current);
+        if (step !== 'replace' && step !== 'both') {
+            console.log('[Voice2SMS] Scheduled send: a draft is in the message box, not typing');
+            // An older bridge without the D32 step: the OD34 report (generic reminder).
+            if (step === null && typeof V2SBridge !== 'undefined' && V2SBridge.onScheduledDraftPresent) {
+                V2SBridge.onScheduledDraftPresent(_v2sBridgeNonce, token);
+            }
+            return false;
+        }
+        console.log('[Voice2SMS] Scheduled send: replacing the draft in the message box');
+        return true;
+    }
+
+    function expired() {
+        return (Date.now() - startedAt) >= MAX_POLLS * POLL_MS;
+    }
+
+    /** The draft step, then our body into the box (Angular-safe), then the typed check. */
+    function fillNew() {
+        if (cancelled() || expired()) return;
+        var ta = composer();
+        if (!ta) {
+            setTimeout(fillNew, 100);
+            return;
+        }
+        if (!holdsBody(ta)) {
+            if (!draftGate(ta)) return;
+            _v2sScheduledSet(ta, body, true);
+        }
+        waitTyped(MAX_POLLS);
+    }
+
+    /**
+     * deliver H1/L2: the recipient chips of a new-message view, for the Java gate: their count and
+     * the single chip's digit runs (text, aria-label, title; digits only, never a name).
+     */
+    function recipientChips() {
+        var input = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
+        var scope = (input && input.closest && input.closest('mat-chip-grid, mat-chip-list, mat-form-field')) || document;
+        var chips = scope.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR);
+        var digits = '';
+        if (chips.length === 1) {
+            digits = _v2sSlChipDigits(chips[0]);
+        }
+        return { count: chips.length, digits: digits };
+    }
+
+    /** The Java Send gate: 'yes' | 'wait' | 'no'. */
+    function askClick() {
+        if (typeof V2SBridge === 'undefined') return 'no';
+        // deliver H1/L2: with this page's location and recipient chips; Java says 'no' unless
+        // this is the job's own thread or a new message addressed to the job's number alone.
+        if (V2SBridge.scheduledClickStateIn) {
+            var chips = recipientChips();
+            return String(V2SBridge.scheduledClickStateIn(_v2sBridgeNonce, token, String(location.href), chips.count, chips.digits));
+        }
+        // LIVE-F10 F1: with this page's location, so a clearance given on an empty (new)
+        // conversation is dropped once GV shows the number's thread here.
+        if (V2SBridge.scheduledClickStateAt) return String(V2SBridge.scheduledClickStateAt(_v2sBridgeNonce, token, String(location.href)));
+        if (V2SBridge.scheduledClickState) return String(V2SBridge.scheduledClickState(_v2sBridgeNonce, token));
+        return 'no';
+    }
+
+    function clickWhenGranted(retries, waitUntil) {
+        if (cancelled()) return;
+        // Before every ask: the box must still hold exactly our text: never send anything else.
+        if (!holdsBody(composer())) {
+            console.log('[Voice2SMS] Scheduled send: message box changed, not sending');
+            return;
+        }
+        var sendBtn = document.querySelector('button[aria-label*="Send"]');
+        if (!sendBtn || sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
+            if (retries <= 0) return;
+            setTimeout(function() { clickWhenGranted(retries - 1, waitUntil); }, 500);
+            return;
+        }
+        var state = askClick();
+        if (state === 'wait') {
+            // The pre-send check is still reading the thread: ask again shortly.
+            if (!waitUntil) waitUntil = Date.now() + WAIT_MS;
+            if (Date.now() < waitUntil) {
+                setTimeout(function() { clickWhenGranted(retries, waitUntil); }, CLICK_POLL_MS);
+            } else {
+                console.log('[Voice2SMS] Scheduled send: stopped waiting for the check');
+            }
+            return;
+        }
+        if (state !== 'yes') {
+            console.log('[Voice2SMS] Scheduled send: Send not granted');
+            v2sScheduledClear(body);
+            return;
+        }
+        console.log('[Voice2SMS] Scheduled send: clicking send');
+        sendBtn.click();
+    }
+
+    if (threadMode) fillThread(MAX_POLLS);
+    else _v2sScheduledNewMessage(jobE164, function() { return cancelled() || expired(); }, fillNew);
+}
+
+var V2S_SCHEDULED_RECIPIENT_SELECTOR = 'input[placeholder="Type a name or phone number"], ' +
+    'input[placeholder*="name or phone"], ' +
+    'input[placeholder*="number"], ' +
+    'input[aria-label*="To"], ' +
+    'input[aria-label*="recipient"]';
+var V2S_SCHEDULED_CHIP_SELECTOR = 'mat-chip-row, .mdc-evolution-chip';
+
+/**
+ * deliver H1, scheduled mode 'new' only: the list item whose OWN thread id (itemId t.+E.164) is
+ * e164, else null. Never a text match: a preview or a name holding the digits is someone else's.
+ */
+function _v2sScheduledOwnThreadItem(e164) {
+    var items = document.querySelectorAll(
+        'ol[gv-test-id="list"] li.list-item, gv-message-thread-list-item, gv-thread-list-item');
+    for (var i = 0; i < items.length; i++) {
+        if (_v2sSlItemE164(items[i]) === e164) {
+            return items[i].querySelector('div[role="button"]') || items[i];
+        }
+    }
+    return null;
+}
+
+/**
+ * deliver H1, scheduled mode 'new' only: on the messages list, opens e164's conversation only by
+ * its own thread id, else starts a new message with e164 as its recipient chip (voice2sms()'s
+ * selectors and direct matChipInputTokenEnd call); then calls ready() (the draft step and our
+ * body). stop() true ends it. No chip: nothing typed (fail closed, Java's compose timeout). Types
+ * nothing into the message box and never taps Send; voice2sms() itself is unchanged for every
+ * regular send. Never logs the number.
+ */
+function _v2sScheduledNewMessage(e164, stop, ready) {
+    var POLL_MS = 250;
+
+    function dismissBackdrop() {
+        var backdrop = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+        if (backdrop) backdrop.click();
+    }
+
+    function open() {
+        if (stop()) return;
+        var rendered = document.querySelector('gv-side-nav, gv-thread-list, [gv-test-id="sidenav"]');
+        var fab = document.querySelector('button[aria-label*="new"]');
+        if (!rendered || !fab) {
+            setTimeout(open, POLL_MS);
+            return;
+        }
+        dismissBackdrop();
+        var own = _v2sScheduledOwnThreadItem(e164);
+        if (own) {
+            console.log('[Voice2SMS] Scheduled send: opening the conversation by its thread id');
+            own.click();
+            setTimeout(ready, 100);
+            return;
+        }
+        var btn = document.querySelector('button[aria-label*="new"]')
+            || document.querySelector('[aria-label="Send new message"]')
+            || document.querySelector('button[aria-label*="compose"]');
+        if (!btn) {
+            setTimeout(open, POLL_MS);
+            return;
+        }
+        btn.click();
+        setTimeout(addRecipient, 500);
+    }
+
+    function addRecipient() {
+        if (stop()) return;
+        var inp = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
+        if (!inp) {
+            setTimeout(addRecipient, 100);
+            return;
+        }
+        var before = document.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR).length;
+        if (!makeChip(inp)) {
+            console.log('[Voice2SMS] Scheduled send: could not add the recipient, not typing');
+            return;
+        }
+        waitChip(before, 15);
+    }
+
+    function makeChip(inp) {
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+        function setValue(v) {
+            if (setter && setter.set) setter.set.call(inp, v);
+            else inp.value = v;
+        }
+        var listeners = inp['__zone_symbol__matChipInputTokenEndfalse'];
+        var task = listeners && listeners.length ? listeners[0] : null;
+        if (!task || typeof task.callback !== 'function') return false;
+        setValue(e164);
+        inp.focus();
+        var zone = _v2sGetZoneFromTask(task);
+        if (!zone || zone.name === '<root>') {
+            var elZone = _v2sGetAngularZone(inp);
+            if (elZone && elZone.name !== '<root>') zone = elZone;
+        }
+        if (!zone || zone.name === '<root>') zone = _v2sFindAngularZoneGlobal() || zone;
+        var ev = {
+            value: e164,
+            chipInput: { inputElement: inp, clear: function() { setValue(''); }, focused: true },
+            preventDefault: function() {}
+        };
+        if (zone) zone.run(function() { task.callback(ev); });
+        else task.callback(ev);
+        setValue('');
+        inp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+        return true;
+    }
+
+    function waitChip(before, tries) {
+        if (stop()) return;
+        if (document.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR).length > before) {
+            dismissBackdrop();
+            ready();
+            return;
+        }
+        if (tries <= 0) {
+            console.log('[Voice2SMS] Scheduled send: no recipient chip, not typing');
+            return;
+        }
+        setTimeout(function() { waitChip(before, tries - 1); }, 50);
+    }
+
+    open();
+}
+
 // ── Sticker/Image Bridge ──────────────────────────────────────────────────
 
 /**
@@ -860,4 +1300,984 @@ function sendImageToGV(base64Data, mimeType, fileName) {
     }
 
     tryDirectInject();
+}
+
+// ── Enter inserts a newline in the composer (R44, D29) ────────────────────
+//
+// GV web sends the message when Enter is pressed in the message box. In the
+// voice2sms WebView, Enter (hardware key, soft-keyboard Enter, Shift+Enter)
+// inserts a newline instead; only the Send button sends. Installed once per page
+// load by GVoiceWebViewActivity (onPageFinished), independent of Send Later and of
+// voice2sms(). Clicks are never intercepted, so the Send button and voice2sms's
+// own clickSend() auto-send are unchanged. IME composition (isComposing, keyCode
+// 229) is left alone. Never logs the composer text.
+
+var V2S_COMPOSER_SELECTOR =
+    'textarea[placeholder="Type a message"], ' +
+    'textarea[placeholder*="message"], ' +
+    'textarea[placeholder*="text"], ' +
+    'textarea[aria-label*="message"], ' +
+    '[contenteditable="true"][aria-label*="message"]';
+
+/** True when el is the GV message composer (the selectors fillBody uses). */
+function _v2sIsComposer(el) {
+    if (!el || el.nodeType !== 1 || typeof el.matches !== 'function') return false;
+    try {
+        return el.matches(V2S_COMPOSER_SELECTOR);
+    } catch (e) {
+        return false;
+    }
+}
+
+/** True for an Enter key event that is not part of an IME composition. */
+function _v2sIsPlainEnter(e) {
+    if (e.isComposing || e.keyCode === 229) return false;
+    return e.key === 'Enter' || e.keyCode === 13;
+}
+
+/**
+ * Insert a newline at the caret of the composer through the Angular-safe setter:
+ * native value setter with "\n" replacing selectionStart..selectionEnd, caret after
+ * it, then an input event dispatched in the Angular zone.
+ */
+function _v2sInsertNewline(el) {
+    if (el.tagName !== 'TEXTAREA') {
+        // contenteditable fallback: insertText fires beforeinput 'insertText', which
+        // the beforeinput handler leaves alone.
+        try { document.execCommand('insertText', false, '\n'); } catch (e) { /* ignore */ }
+        return;
+    }
+    var value = typeof el.value === 'string' ? el.value : '';
+    var start = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+    var end = typeof el.selectionEnd === 'number' ? el.selectionEnd : start;
+    if (end < start) { var t = start; start = end; end = t; }
+    var next = value.slice(0, start) + '\n' + value.slice(end);
+    var caret = start + 1;
+
+    var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+    if (nativeSetter && nativeSetter.set) {
+        nativeSetter.set.call(el, next);
+    } else {
+        el.value = next;
+    }
+    try { el.setSelectionRange(caret, caret); } catch (e) { /* ignore */ }
+
+    var inputEvent = new InputEvent('input', {
+        bubbles: true, inputType: 'insertLineBreak', data: null
+    });
+    var angularZone = _v2sGetAngularZone(el);
+    if (angularZone) {
+        angularZone.run(function() { el.dispatchEvent(inputEvent); });
+    } else {
+        el.dispatchEvent(inputEvent);
+    }
+    // Angular may write the model back into the box; keep the caret after the newline.
+    try {
+        if (el.value === next) el.setSelectionRange(caret, caret);
+    } catch (e) { /* ignore */ }
+}
+
+/**
+ * Install the Enter-inserts-newline listeners once per document (R44). Capture phase on
+ * document, so GV's own Enter handlers on the textarea never see the key.
+ */
+function v2sInstallEnterNewline() {
+    if (window._v2sEnterNewline) return;
+    window._v2sEnterNewline = true;
+
+    document.addEventListener('keydown', function(e) {
+        if (!_v2sIsComposer(e.target) || !_v2sIsPlainEnter(e)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _v2sInsertNewline(e.target);
+    }, true);
+
+    // keypress / keyup Enter on the composer: swallow only (the newline was inserted on
+    // keydown) so a GV handler bound to either cannot send.
+    var swallow = function(e) {
+        if (!_v2sIsComposer(e.target) || !_v2sIsPlainEnter(e)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+    };
+    document.addEventListener('keypress', swallow, true);
+    document.addEventListener('keyup', swallow, true);
+
+    // Soft keyboard Enter that arrives as an input edit rather than a key event.
+    document.addEventListener('beforeinput', function(e) {
+        if (!_v2sIsComposer(e.target)) return;
+        if (e.isComposing) return;
+        if (e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph') return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _v2sInsertNewline(e.target);
+    }, true);
+}
+
+// ── Send Later module (R10, R11, R17, R18, R19) ───────────────────────────
+//
+// Independent of voice2sms(): installed once per page load by v2sSendLaterInit(),
+// which GVoiceWebViewActivity calls from onPageFinished. Shows a light-blue edge
+// tab on a 1:1 thread with a non-empty composer, a chip above the compose row
+// when the thread has pending/held messages, and the "Scheduled for ... · Undo"
+// bar after the native sheet scheduled the draft. Never logs drafts, names or
+// numbers (console lines with [Voice2SMS] reach logcat).
+//
+// Thread URL shape is UNVERIFIED on device (F7): only itemId=t.+<7-15 digits> is
+// a 1:1 thread; anything else (t.g.* groups, no itemId) shows no tab and no chip.
+
+var V2S_SL_ACCENT = '#8AB4F8';      // shared Send Later accent (A4 / OD9)
+var V2S_SL_ON_ACCENT = '#0B1D3A';   // text/icon colour on the accent
+var V2S_SL_Z = 2147483000;
+// R40: no fast polling. Ticks come from input, resize and Java's v2sSendLaterRefresh
+// (SPA navigation, state changes, resume); this timer runs only while Send Later is on
+// and a 1:1 thread is open (it keeps the tab/chip placed and the chip fresh).
+var V2S_SL_TICK_MS = 2000;
+/** Page events (input, resize) coalesce into one trailing tick this long after the first. */
+var V2S_SL_COALESCE_MS = 250;
+
+function v2sSendLaterInit() {
+    if (typeof V2SBridge === 'undefined') return;
+    if (window._v2sSl && window._v2sSl.installed) return;
+    window._v2sSl = {
+        installed: true,
+        e164: null,          // 1:1 thread on screen, or null
+        ncCand: null,        // R10a: new-message page, single chip's page-derived E.164, or null
+        ncE164: null,        // R10a: ncCand as the bridge confirmed it (sendLaterNewComposeState), or null
+        enabled: false,      // Send Later on for this page (chip state, or switchOn off-thread)
+        switchOn: true,      // Java installs the module only while on; v2sSendLaterRefresh(on) updates it
+        chip: null,          // last V2SBridge.sendLaterChipState answer
+        chipAt: 0,
+        capture: null,       // {e164, href} of the last tab tap
+        captureBusyUntil: 0, // a tab tap is in flight until then (UI M2: no second sheet)
+        undo: null,          // {messageId, draft, href, e164, until}
+        barTimer: null,
+        title: null,         // {e164, title, at, confirmed} header pairing for R4
+        prevTitle: '',       // header text of the previous thread (stale-header guard)
+        pairs: {},           // e164 -> confirmed header title
+        directorySig: '',
+        timer: null,         // V2S_SL_TICK_MS interval, only while on and a 1:1 thread is open
+        followUps: [],       // bounded one-shot ticks after a forced tick (thread list renders late)
+        tickSoon: null       // pending coalesced tick of page events (_v2sSlTickSoon)
+    };
+    document.addEventListener('input', _v2sSlTickSoon, true);
+    window.addEventListener('resize', _v2sSlTickSoon);
+    _v2sSlTick(true);
+}
+
+/**
+ * Java -> page on ACTION_STATE_CHANGED, SPA navigation and resume: re-read the chip for
+ * the open thread (R17). on = the Send Later switch, pushed by Java: the bridge answers the
+ * chip state only for the open 1:1 thread (L3), so with no thread open this is how the page
+ * learns it is on or off. A refresh also ends a tab tap in flight (the sheet has closed).
+ */
+window.v2sSendLaterRefresh = function(on) {
+    var st = window._v2sSl;
+    if (!st) return;
+    if (typeof on === 'boolean') st.switchOn = on;
+    st.captureBusyUntil = 0;
+    _v2sSlTick(true);
+};
+
+/**
+ * Java -> page after the sheet persisted the message (R11, R7 for the WebView):
+ * clears the composer only when it still holds expectedDraft on the same thread URL,
+ * then offers Undo for 10 s. Otherwise leaves the draft untouched.
+ */
+window.v2sSendLaterClear = function(messageId, expectedDraft, scheduledLabel) {
+    var st = window._v2sSl;
+    if (st) st.captureBusyUntil = 0;
+    var ta = _v2sSlComposer();
+    var e164 = _v2sSlPageE164(st);
+    var sameThread = !!(st && st.capture && e164 && e164 === st.capture.e164
+        && location.href === st.capture.href);
+    if (!ta || !sameThread || typeof expectedDraft !== 'string' || ta.value !== expectedDraft) {
+        _v2sSlShowBar('Saved to Upcoming — draft left as is', null);
+        return false;
+    }
+    _v2sSlSetInputValue(ta, '', false);
+    _v2sSlShowBar('Scheduled for ' + (scheduledLabel || 'later'), {
+        messageId: messageId,
+        draft: expectedDraft,
+        href: location.href,
+        e164: e164,
+        until: Date.now() + 10000
+    });
+    _v2sSlRefreshChip(st);
+    return true;
+};
+
+/**
+ * Java -> page (send path, watermarks): reports the open thread's newest bubbles as
+ * {e164, bubbles: [{direction, timeMs|null, text, label|null, id|null, failed}] | null}.
+ * bubbles is null when the page is not showing that 1:1 thread or the bubbles cannot be read
+ * reliably; [] when the thread is shown and empty.
+ */
+window.v2sReadThread = function(e164, limit) {
+    var bubbles = null;
+    try {
+        if (e164 && _v2sSlThreadE164() === e164) bubbles = _v2sSlReadBubbles(limit);
+    } catch (e) {
+        bubbles = null;
+    }
+    V2SBridge.onThreadRead(_v2sBridgeNonce, JSON.stringify({ e164: e164, bubbles: bubbles }));
+};
+
+// ── Send Later helpers ────────────────────────────────────────────────────
+
+/** E.164 of a GV item id when it is a 1:1 thread id ("t.+<1-9><digits>", 7-15 digits), else null. */
+function _v2sSlE164FromItemId(id) {
+    if (typeof id !== 'string' || !id) return null;
+    // A literal '+' in the query decodes to a space; read it back as the E.164 plus.
+    id = id.replace(/^t\. /, 't.+');
+    if (!/^t\.\+\d{7,15}$/.test(id)) return null;
+    // D38: the one E.164 rule (PhoneNumbers.isE164): no country code starts with 0.
+    if (id.charAt(3) === '0') return null;
+    return id.substring(2);
+}
+
+/**
+ * R10a: the number this page composes to: the open 1:1 thread's (R10), else, on GV's
+ * new-message page, the single recipient chip's number while it is still the one the bridge
+ * confirmed (sendLaterNewComposeState). Null otherwise.
+ */
+function _v2sSlPageE164(st) {
+    var e164 = _v2sSlThreadE164();
+    if (e164) return e164;
+    if (!st || !st.ncE164) return null;
+    var nc = _v2sSlNewComposeChip();
+    return nc.count === 1 && nc.e164 === st.ncE164 ? st.ncE164 : null;
+}
+
+/**
+ * R10a (D38): E.164 named by one chip field (text, aria-label or title), or null. "+" forms keep
+ * their digits; 10 digits, or 11 starting with 1, are NANP. Never a name: digits only.
+ */
+function _v2sSlChipFieldE164(text) {
+    var s = String(text || '');
+    var d = s.replace(/\D/g, '');
+    var e = null;
+    if (/\+\s*\d/.test(s)) e = '+' + d;
+    else if (d.length === 10) e = '+1' + d;
+    else if (d.length === 11 && d.charAt(0) === '1') e = '+' + d;
+    if (!e || !/^\+[1-9]\d{6,14}$/.test(e)) return null;
+    if (e.charAt(1) === '1' && (e.length !== 12 || e.charAt(2) < '2' || e.charAt(5) < '2')) return null;
+    return e;
+}
+
+/**
+ * D57 (H3): the To field holding GV's recipient chips, or null. Once a chip exists GV's To input
+ * placeholder becomes "Add recipients", which V2S_SCHEDULED_RECIPIENT_SELECTOR does not match,
+ * so the chip grid is located directly: the input's grid when the selector still finds it, else
+ * the editable chip grid (mat-chip-grid, the To field; prefer one that holds an input), else the
+ * field around a recipient chip row. Chip sets elsewhere (mat-chip-listbox / mat-chip-option) are
+ * never a recipient field.
+ */
+function _v2sSlRecipientChipScope() {
+    var input = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
+    var scope = input && input.closest ? input.closest('mat-chip-grid, mat-chip-list, mat-form-field') : null;
+    if (scope) return scope;
+    var grids = document.querySelectorAll('mat-chip-grid');
+    for (var i = 0; i < grids.length; i++) {
+        if (grids[i].querySelector('input')) return grids[i];
+    }
+    if (grids.length) return grids[0];
+    var row = document.querySelector('mat-chip-row');
+    if (row && row.closest) return row.closest('mat-chip-grid, mat-form-field') || row.parentElement;
+    return null;
+}
+
+/**
+ * D57 (H3): a chip's visible text, read once: GV's .chip-name when present, else the text
+ * label (or the chip) minus the Remove button and any .cdk-visually-hidden copy. The button
+ * carries hidden "Remove <number>" text and GV adds a spelled-out screen-reader copy of the
+ * digits, so the raw textContent can hold the number two or three times.
+ */
+function _v2sSlChipLabelText(c) {
+    // GV (live, 2026-11-11): the label holds the visible .chip-name AND a .cdk-visually-hidden
+    // spelled-out copy of the digits for screen readers; reading both doubles the number.
+    var name = c.querySelector ? c.querySelector('.chip-name') : null;
+    if (name) return name.textContent || '';
+    var label = c.querySelector
+        ? c.querySelector('.mdc-evolution-chip__text-label, .mat-mdc-chip-action-label')
+        : null;
+    var out = '';
+    (function walk(n) {
+        var kids = n.childNodes || [];
+        for (var i = 0; i < kids.length; i++) {
+            var k = kids[i];
+            if (k.nodeType === 3) {
+                out += k.textContent || '';
+            } else if (k.nodeType === 1) {
+                if (k.matches && k.matches(
+                        'button, .mat-mdc-chip-remove, .mat-mdc-chip-trailing-icon, .cdk-visually-hidden')) {
+                    continue;
+                }
+                walk(k);
+            }
+        }
+    })(label || c);
+    return out;
+}
+
+/**
+ * R10a: recipient chips of GV's new-message page (the To field must be on the page):
+ * {count, e164}, e164 the single chip's number when its fields name exactly one, else null.
+ */
+function _v2sSlNewComposeChip() {
+    var scope = _v2sSlRecipientChipScope();
+    if (!scope) return { count: 0, e164: null };
+    var chips = scope.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR);
+    var e164 = null;
+    if (chips.length === 1) {
+        var c = chips[0];
+        var fields = [_v2sSlChipLabelText(c), c.getAttribute('aria-label') || '', c.getAttribute('title') || ''];
+        for (var i = 0; i < fields.length; i++) {
+            var f = _v2sSlChipFieldE164(fields[i]);
+            if (!f) continue;
+            if (e164 && e164 !== f) return { count: chips.length, e164: null };
+            e164 = f;
+        }
+    }
+    return { count: chips.length, e164: e164 };
+}
+
+/**
+ * deliver H1/L2: one chip's digit runs for the Java Send gate (ScheduledCompose.chipNamesNumber):
+ * its visible label (_v2sSlChipLabelText: no Remove button, no screen-reader copy, which would
+ * double the digits on GV's real chip), aria-label and title, digits only, comma separated.
+ */
+function _v2sSlChipDigits(c) {
+    return [_v2sSlChipLabelText(c), c.getAttribute('aria-label') || '', c.getAttribute('title') || '']
+        .map(function(v) { return String(v).replace(/\D/g, ''); }).join(',');
+}
+
+/** E.164 of the open 1:1 thread from location (itemId via URLSearchParams), else null. */
+function _v2sSlThreadE164() {
+    var id = null;
+    try {
+        id = new URLSearchParams(location.search).get('itemId');
+    } catch (e) {
+        return null;
+    }
+    return _v2sSlE164FromItemId(id);
+}
+
+function _v2sSlComposer() {
+    return document.querySelector(
+        'textarea[placeholder="Type a message"], ' +
+        'textarea[placeholder*="message"], ' +
+        'textarea[aria-label*="message"]'
+    );
+}
+
+function _v2sSlHasDraft(ta) {
+    return !!ta && typeof ta.value === 'string' && ta.value.trim().length > 0;
+}
+
+/**
+ * Angular-safe setter for the Send Later module (copy of voice2sms()'s setInputValue,
+ * which is private to that function): native value setter + InputEvent in the zone.
+ */
+function _v2sSlSetInputValue(el, value, focus) {
+    if (focus) el.focus();
+    var proto = (el.tagName === 'TEXTAREA')
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+    var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (nativeSetter && nativeSetter.set) {
+        nativeSetter.set.call(el, value);
+    } else {
+        el.value = value;
+    }
+    var angularZone = _v2sGetAngularZone(el);
+    var inputEvent = new InputEvent('input', {
+        bubbles: true,
+        inputType: value ? 'insertText' : 'deleteContentBackward',
+        data: value || null
+    });
+    if (angularZone) {
+        angularZone.run(function() { el.dispatchEvent(inputEvent); });
+    } else {
+        el.dispatchEvent(inputEvent);
+    }
+}
+
+/**
+ * One pass: thread change, chip freshness, R4 pairing/scrape, layout. While Send Later
+ * is off only a forced tick (from Java) runs; page events then cost nothing.
+ */
+function _v2sSlTick(force) {
+    var st = window._v2sSl;
+    if (!st) return;
+    if (!force && (!st.enabled || document.hidden)) return;
+    var e164 = _v2sSlThreadE164();
+    // R10a: on the new-message page (no thread), the single chip's number; a thread wins (R10).
+    var nc = e164 ? null : _v2sSlNewComposeChip();
+    var ncCand = nc && nc.count === 1 ? nc.e164 : null;
+    if (e164 !== st.e164) {
+        st.prevTitle = st.title ? st.title.title : '';
+        st.e164 = e164;
+        st.ncCand = ncCand;
+        st.title = null;
+        _v2sSlRefreshChip(st);
+    } else if (ncCand !== st.ncCand) {
+        st.ncCand = ncCand;
+        _v2sSlRefreshChip(st);
+    } else if (force || Date.now() - st.chipAt > 15000) {
+        _v2sSlRefreshChip(st);
+    }
+    if (st.enabled) {
+        // Pairing and the thread-list scrape only while Send Later is on (R4): no contact
+        // data is collected for a feature that is switched off.
+        _v2sSlNoteThreadTitle(st);
+        _v2sSlScrapeDirectory(st);
+    }
+    _v2sSlLayout(st);
+    if (force) _v2sSlFollowUp(st);
+}
+
+/**
+ * Page events (typing, resize): one trailing tick per V2S_SL_COALESCE_MS burst instead of a
+ * full tick per keystroke. Nothing is scheduled while Send Later is off or the page is hidden
+ * (the tick would return at once). Forced ticks and the interval are unaffected.
+ */
+function _v2sSlTickSoon() {
+    var st = window._v2sSl;
+    if (!st || st.tickSoon || !st.enabled || document.hidden) return;
+    st.tickSoon = setTimeout(function() {
+        st.tickSoon = null;
+        _v2sSlTick(false);
+    }, V2S_SL_COALESCE_MS);
+}
+
+/**
+ * After a forced tick (page load, SPA navigation, state change) the GV thread list may
+ * still be rendering: two one-shot ticks catch it for the R4 scrape. Bounded, not a poll;
+ * only while on and no 1:1 thread is open (the timer covers that case).
+ */
+function _v2sSlFollowUp(st) {
+    for (var i = 0; i < st.followUps.length; i++) clearTimeout(st.followUps[i]);
+    st.followUps = [];
+    if (!st.enabled || st.e164) return;
+    var delays = [V2S_SL_TICK_MS, 3 * V2S_SL_TICK_MS];
+    for (var j = 0; j < delays.length; j++) {
+        st.followUps.push(setTimeout(function() { _v2sSlTick(false); }, delays[j]));
+    }
+}
+
+/** Re-reads V2SBridge.sendLaterChipState for the open thread (R17). */
+function _v2sSlRefreshChip(st) {
+    if (!st) return;
+    st.chipAt = Date.now();
+    var state = null;
+    if (st.e164) {
+        try {
+            // The bridge answers only for the 1:1 thread the main frame shows (L3).
+            state = JSON.parse(V2SBridge.sendLaterChipState(_v2sBridgeNonce, st.e164));
+        } catch (e) {
+            state = null;
+        }
+        st.chip = state;
+        st.enabled = !!(state && state.enabled === true);
+        st.ncE164 = null;
+    } else if (st.ncCand && V2SBridge.sendLaterNewComposeState) {
+        // R10a: the live activity confirms the single chip against its intent recipient.
+        var nc = _v2sSlNewComposeChip();
+        try {
+            state = JSON.parse(V2SBridge.sendLaterNewComposeState(_v2sBridgeNonce, nc.count, st.ncCand));
+        } catch (e) {
+            state = null;
+        }
+        var ok = !!(state && state.enabled === true);
+        st.ncE164 = ok ? st.ncCand : null;
+        st.chip = ok ? state : null;
+        st.enabled = ok || st.switchOn === true;
+    } else {
+        // No thread open: the switch as Java last pushed it (v2sSendLaterRefresh(on)).
+        st.chip = null;
+        st.ncE164 = null;
+        st.enabled = st.switchOn === true;
+    }
+    if (!st.enabled) {
+        st.title = null;
+        st.pairs = {};
+        st.directorySig = '';
+    }
+    _v2sSlSchedule(st);
+    _v2sSlLayout(st);
+}
+
+/** Runs the V2S_SL_TICK_MS timer only while Send Later is on and a 1:1 thread is open (R40). */
+function _v2sSlSchedule(st) {
+    // R10a: also on a confirmed new-message page (keeps the tab placed).
+    var want = !!(st && ((st.enabled && st.e164) || (st.enabled && st.ncE164)));
+    if (want && !st.timer) {
+        st.timer = setInterval(function() { _v2sSlTick(false); }, V2S_SL_TICK_MS);
+    } else if (!want && st.timer) {
+        clearInterval(st.timer);
+        st.timer = null;
+    }
+}
+
+/** Outermost ancestor (up to 5 levels) of the composer that still looks like one row. */
+function _v2sSlComposeRow(ta) {
+    var row = ta;
+    var el = ta.parentElement;
+    for (var i = 0; el && i < 5; i++, el = el.parentElement) {
+        var r = el.getBoundingClientRect();
+        if (r.height <= 0 || r.height > 160) break;
+        row = el;
+    }
+    return row;
+}
+
+function _v2sSlSendButton(row) {
+    var scope = row && row.parentElement ? row.parentElement : document;
+    return scope.querySelector('button[aria-label*="Send"]');
+}
+
+function _v2sSlOverlaps(a, b) {
+    return !!a && !!b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+/** Positions (or hides) the edge tab, the chip and the bar around the compose row (R19). */
+function _v2sSlLayout(st) {
+    var ta = st && (st.e164 || st.ncE164) ? _v2sSlComposer() : null;
+    var rect = null;
+    if (ta) {
+        var rr = _v2sSlComposeRow(ta).getBoundingClientRect();
+        if (rr.width > 0 && rr.height > 0) rect = rr;
+    }
+    var tab = document.getElementById('v2s-sl-tab');
+    var chip = document.getElementById('v2s-sl-chip');
+    var bar = document.getElementById('v2s-sl-bar');
+    var barShown = !!(bar && bar.style.display !== 'none');
+    var showTab = !!(rect && st.enabled && _v2sSlHasDraft(ta));
+    var label = st && st.chip && st.enabled && typeof st.chip.label === 'string' ? st.chip.label : '';
+    var showChip = !!(rect && label && !barShown);
+
+    if (showTab) {
+        tab = tab || _v2sSlCreateTab();
+        var h = 48;
+        var w = 22;
+        var top = rect.top + rect.height / 2 - h / 2;
+        var tabRect = { left: window.innerWidth - w, right: window.innerWidth, top: top, bottom: top + h };
+        var send = _v2sSlSendButton(_v2sSlComposeRow(ta));
+        if (send && _v2sSlOverlaps(tabRect, send.getBoundingClientRect())) {
+            top = rect.top - h - 8;   // never cover Send: sit just above the row instead
+        }
+        tab.style.top = Math.max(0, Math.round(top)) + 'px';
+        tab.style.display = 'flex';
+    } else if (tab) {
+        tab.style.display = 'none';
+    }
+
+    if (showChip) {
+        chip = chip || _v2sSlCreateChip();
+        chip.textContent = label;
+        chip.style.left = Math.max(8, Math.round(rect.left + 8)) + 'px';
+        chip.style.bottom = Math.max(0, Math.round(window.innerHeight - rect.top + 6)) + 'px';
+        chip.style.display = 'block';
+    } else if (chip) {
+        chip.style.display = 'none';
+    }
+
+    if (barShown && rect) {
+        bar.style.bottom = Math.max(0, Math.round(window.innerHeight - rect.top + 6)) + 'px';
+    }
+}
+
+function _v2sSlCreateTab() {
+    var tab = document.createElement('div');
+    tab.id = 'v2s-sl-tab';
+    tab.setAttribute('role', 'button');
+    tab.setAttribute('aria-label', 'Send later');
+    tab.style.cssText = 'position:fixed;right:0;width:22px;height:48px;display:none;' +
+        'align-items:center;justify-content:center;border-radius:12px 0 0 12px;' +
+        'background:' + V2S_SL_ACCENT + ';color:' + V2S_SL_ON_ACCENT + ';' +
+        'box-shadow:0 1px 4px rgba(0,0,0,.4);z-index:' + V2S_SL_Z + ';cursor:pointer;';
+    tab.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">' +
+        '<circle cx="12" cy="12" r="9" fill="none" stroke="' + V2S_SL_ON_ACCENT + '" stroke-width="2.2"/>' +
+        '<path d="M12 7v5.2l3.4 2" fill="none" stroke="' + V2S_SL_ON_ACCENT +
+        '" stroke-width="2.2" stroke-linecap="round"/></svg>';
+    // Keep the textarea focused (and the IME up) while the tab is pressed.
+    tab.addEventListener('mousedown', function(e) { e.preventDefault(); });
+    tab.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _v2sSlCapture();
+    });
+    document.body.appendChild(tab);
+    return tab;
+}
+
+function _v2sSlCreateChip() {
+    var chip = document.createElement('div');
+    chip.id = 'v2s-sl-chip';
+    chip.setAttribute('role', 'button');
+    chip.style.cssText = 'position:fixed;display:none;max-width:70vw;padding:4px 12px;' +
+        'border-radius:14px;font:500 13px/20px Roboto,Arial,sans-serif;white-space:nowrap;' +
+        'overflow:hidden;text-overflow:ellipsis;background:' + V2S_SL_ACCENT + ';' +
+        'color:' + V2S_SL_ON_ACCENT + ';box-shadow:0 1px 3px rgba(0,0,0,.35);' +
+        'z-index:' + V2S_SL_Z + ';cursor:pointer;';
+    chip.addEventListener('mousedown', function(e) { e.preventDefault(); });
+    chip.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _v2sSlChipTap();
+    });
+    document.body.appendChild(chip);
+    return chip;
+}
+
+/** Chip tap (R18): Java opens edit mode for one message, Upcoming for several. */
+function _v2sSlChipTap() {
+    var st = window._v2sSl;
+    if (!st || !st.e164 || st.e164 !== _v2sSlThreadE164()) return;
+    V2SBridge.requestSendLaterChipTap(_v2sBridgeNonce, st.e164);
+}
+
+/** Edge-tab tap (R10): hand the draft and the newest-message watermark to the sheet. */
+function _v2sSlCapture() {
+    var st = window._v2sSl;
+    if (!st || !st.enabled) return;
+    var threadE164 = _v2sSlThreadE164();
+    // R10a: no thread: the new-message page's confirmed chip (Java re-checks the binding).
+    var e164 = threadE164 || _v2sSlPageE164(st);
+    var ta = _v2sSlComposer();
+    if (!e164 || e164 !== (threadE164 ? st.e164 : st.ncE164) || !_v2sSlHasDraft(ta)) return;
+    // UI M2: a second tap while the first capture is in flight opens no second sheet.
+    if (st.captureBusyUntil && Date.now() < st.captureBusyUntil) return;
+    st.captureBusyUntil = Date.now() + 1500;
+    var bubbles = null;
+    try {
+        // R10a: a new-message page has no conversation: no watermark (DEVICE_ONLY).
+        bubbles = threadE164 ? _v2sSlReadBubbles(20) : null;
+    } catch (e) {
+        bubbles = null;
+    }
+    var newest = bubbles && bubbles.length ? bubbles[bubbles.length - 1] : null;
+    var newestId = newest && newest.id ? newest.id : null;
+    var newestTime = newest && typeof newest.timeMs === 'number' ? newest.timeMs : null;
+    // LIVE-F9: GV web has no bubble time; Java parses the newest bubble's label instead.
+    var newestLabel = newest && !newestTime && newest.label ? newest.label : null;
+    var quality = (newestId && newestTime) ? 'EXACT' : (newestTime ? 'TIMESTAMP' : 'DEVICE_ONLY');
+    st.capture = { e164: e164, href: location.href };
+    V2SBridge.requestSendLater(_v2sBridgeNonce, JSON.stringify({
+        e164: e164,
+        displayName: _v2sSlConfirmedName(st, e164),
+        draftText: ta.value,
+        newestMessageId: newestId,
+        newestMessageTimeMs: newestTime,
+        newestMessageLabel: newestLabel,
+        watermarkQuality: quality
+    }));
+}
+
+/** In-page confirmation bar; with undo set it offers Undo for 10 s (R11). */
+function _v2sSlShowBar(text, undo) {
+    var st = window._v2sSl;
+    var bar = document.getElementById('v2s-sl-bar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'v2s-sl-bar';
+        bar.style.cssText = 'position:fixed;left:8px;right:8px;bottom:96px;display:none;' +
+            'align-items:center;gap:12px;padding:10px 14px;border-radius:10px;' +
+            'font:14px/20px Roboto,Arial,sans-serif;background:#1E2A3A;color:#E8EAED;' +
+            'box-shadow:0 2px 8px rgba(0,0,0,.5);z-index:' + V2S_SL_Z + ';';
+        document.body.appendChild(bar);
+    }
+    while (bar.firstChild) bar.removeChild(bar.firstChild);
+    var msg = document.createElement('span');
+    msg.style.flex = '1';
+    msg.textContent = text;
+    bar.appendChild(msg);
+    if (st) st.undo = undo;
+    if (undo) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Undo';
+        btn.style.cssText = 'border:0;background:transparent;font:500 14px Roboto,Arial,sans-serif;' +
+            'color:' + V2S_SL_ACCENT + ';padding:4px 8px;cursor:pointer;';
+        btn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            _v2sSlOnUndoTap();
+        });
+        bar.appendChild(btn);
+    }
+    bar.style.display = 'flex';
+    if (st && st.barTimer) clearTimeout(st.barTimer);
+    var timer = setTimeout(function() { _v2sSlHideBar(); }, 10000);
+    if (st) {
+        st.barTimer = timer;
+        _v2sSlLayout(st);
+    }
+}
+
+function _v2sSlHideBar() {
+    var st = window._v2sSl;
+    var bar = document.getElementById('v2s-sl-bar');
+    if (bar) bar.style.display = 'none';
+    if (st) {
+        st.undo = null;
+        if (st.barTimer) clearTimeout(st.barTimer);
+        st.barTimer = null;
+        _v2sSlLayout(st);
+    }
+}
+
+/**
+ * Undo (R11, I4, OD31 PQ1), like the native Undo: always cancels the message, then
+ * restores the draft only while the composer is still empty on the same thread URL.
+ * Otherwise the text is left alone and stays readable in Upcoming under Recent.
+ */
+function _v2sSlOnUndoTap() {
+    var st = window._v2sSl;
+    var u = st ? st.undo : null;
+    _v2sSlHideBar();
+    if (!u || Date.now() > u.until) return;
+    if (u.messageId) {
+        var undone = V2SBridge.requestSendLaterUndo(_v2sBridgeNonce, u.messageId);
+        if (!(undone === true || undone === 'true')) {
+            _v2sSlShowBar('Couldn’t undo — the message is no longer scheduled', null);
+            _v2sSlRefreshChip(st);
+            return;
+        }
+        var ta = _v2sSlComposer();
+        if (ta && ta.value === '' && location.href === u.href
+                && (_v2sSlThreadE164() === u.e164 || _v2sSlPageE164(st) === u.e164)) {
+            _v2sSlSetInputValue(ta, u.draft, true);
+            _v2sSlShowBar('Canceled — draft restored', null);
+        } else {
+            _v2sSlShowBar('Canceled — the composer changed, so your text is in Upcoming under Recent', null);
+        }
+        _v2sSlRefreshChip(st);
+    }
+}
+
+/** Header title of the open thread, or '' (best effort; selectors unverified). */
+function _v2sSlThreadTitle() {
+    var el = document.querySelector(
+        '[gv-test-id="conversation-title"], [gv-test-id="thread-title"], ' +
+        'gv-thread-details-header .title, gv-message-thread-header .title'
+    );
+    var t = el ? (el.textContent || '').trim() : '';
+    return t.length > 0 && t.length <= 80 ? t : '';
+}
+
+/**
+ * R4 pairing from the open thread: the header title counts for this number only after it
+ * has been stable for 1.5 s on the same thread and differs from the previous thread's
+ * header (a stale header during navigation must never pair a name with the wrong number).
+ */
+function _v2sSlNoteThreadTitle(st) {
+    var t = st.e164 ? _v2sSlThreadTitle() : '';
+    if (!t) {
+        st.title = null;
+        return;
+    }
+    if (!st.title || st.title.e164 !== st.e164 || st.title.title !== t) {
+        st.title = { e164: st.e164, title: t, at: Date.now(), confirmed: false };
+        return;
+    }
+    if (!st.title.confirmed && Date.now() - st.title.at >= 1500 && t !== st.prevTitle) {
+        st.title.confirmed = true;
+        st.pairs[st.e164] = t;
+    }
+}
+
+/**
+ * Display name for the capture payload: only a pairing that passed the R4 check (stable
+ * header, different from the previous thread's), never the raw header, else null.
+ */
+function _v2sSlConfirmedName(st, e164) {
+    if (st.title && st.title.confirmed && st.title.e164 === e164 && st.title.title) {
+        return st.title.title;
+    }
+    if (Object.prototype.hasOwnProperty.call(st.pairs, e164) && st.pairs[e164]) {
+        return st.pairs[e164];
+    }
+    return null;
+}
+
+function _v2sSlHasLetter(s) {
+    return /[A-Za-zÀ-￿]/.test(s) && s.indexOf(',') < 0;
+}
+
+/** Thread-list scrape (R4): {displayName, e164} pairs -> V2SBridge.onThreadDirectory. */
+function _v2sSlScrapeDirectory(st) {
+    if (!st || !st.enabled) return;
+    var out = [];
+    var seen = {};
+    var items = document.querySelectorAll(
+        'ol[gv-test-id="list"] li.list-item, gv-message-thread-list-item, gv-thread-list-item'
+    );
+    for (var i = 0; i < items.length && out.length < 300; i++) {
+        var e164 = _v2sSlItemE164(items[i]);
+        var nameEl = e164 ? items[i].querySelector(
+            '[gv-test-id="item-contact"], .contact-name, .participants') : null;
+        var name = nameEl ? (nameEl.textContent || '').trim() : '';
+        if (!e164 || !name || name.length > 80 || !_v2sSlHasLetter(name) || seen[e164]) continue;
+        seen[e164] = true;
+        out.push({ displayName: name, e164: e164 });
+    }
+    for (var k in st.pairs) {
+        if (!Object.prototype.hasOwnProperty.call(st.pairs, k) || seen[k]) continue;
+        if (!_v2sSlHasLetter(st.pairs[k])) continue;
+        seen[k] = true;
+        out.push({ displayName: st.pairs[k], e164: k });
+    }
+    if (!out.length) return;
+    var sig = JSON.stringify(out);
+    if (sig === st.directorySig) return;
+    st.directorySig = sig;
+    V2SBridge.onThreadDirectory(_v2sBridgeNonce, sig);
+}
+
+/** 1:1 E.164 of a thread-list item from an itemId link inside it, else null. */
+function _v2sSlItemE164(item) {
+    var a = item.querySelector('a[href*="itemId="]');
+    var href = a ? a.getAttribute('href') : null;
+    if (!href) return null;
+    try {
+        return _v2sSlE164FromItemId(new URL(href, location.href).searchParams.get('itemId'));
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Newest bubbles of the open thread, oldest first:
+ * [{direction, timeMs|null, text, label|null, id|null, failed, sending}] (LIVE-F9, deliver M4).
+ *
+ * Real GV web DOM (S22, 2026-11-05): gv-message-list > ... > li > gv-message-item >
+ * div.container > div.full-container.incoming|.outgoing > [div.cdk-visually-hidden (the
+ * screen-reader label, which carries the time: Java parses it) and div.message-row >
+ * div.subject-content-container.bubble > div > gv-annotation.content (the text)]. There is no
+ * time element, timestamp or id, and the direction sits on a DESCENDANT of gv-message-item.
+ * An item whose direction is unclear is skipped, never guessed. Returns [] when the thread view
+ * is rendered with no items, null when it is not rendered or no item could be read. Never logs
+ * the text or the label (both hold message content).
+ */
+function _v2sSlReadBubbles(limit) {
+    var sel = 'gv-message-item, gv-text-message-item, [gv-test-id="message-item"], [data-message-id]';
+    var list = document.querySelector('gv-message-list');
+    var nodes = (list || document).querySelectorAll(sel);
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n.parentElement && n.parentElement.closest(sel)) continue;   // nested match
+        var full = n.querySelector('.full-container');
+        var direction = _v2sSlBubbleDirection(n, full);
+        if (!direction) continue;   // never guess a direction
+        var textEl = n.querySelector('gv-annotation.content')
+            || n.querySelector('.bubble')
+            || n.querySelector('[gv-test-id="message-text"], .message-text, .content');
+        var text = ((textEl || n).textContent || '').trim();
+        var labelEl = n.querySelector('.cdk-visually-hidden');
+        var label = labelEl ? (labelEl.textContent || '').trim() : '';
+        out.push({
+            direction: direction,
+            timeMs: _v2sSlBubbleTime(n),
+            text: text,
+            label: label || null,
+            id: n.getAttribute('data-message-id') || n.getAttribute('data-id') || null,
+            failed: _v2sSlBubbleFailed(n, full),
+            sending: _v2sSlBubbleSending(n, full)
+        });
+    }
+    if (!out.length) return (list && !nodes.length) ? [] : null;
+    var max = (typeof limit === 'number' && limit > 0) ? Math.floor(limit) : 20;
+    return out.slice(Math.max(0, out.length - max));
+}
+
+/** The class/test-id words of one element, for direction and status matching. */
+function _v2sSlClassWords(el) {
+    if (!el || !el.getAttribute) return '';
+    return (el.getAttribute('class') || '') + ' ' + (el.getAttribute('gv-test-id') || '');
+}
+
+/** 'OUT' / 'IN' from the item's .full-container (real DOM), else the old item/ancestor classes. */
+function _v2sSlBubbleDirection(n, full) {
+    if (full) {
+        var fc = _v2sSlClassWords(full);
+        var o = /(^|\s)outgoing(\s|$)/.test(fc), inc = /(^|\s)incoming(\s|$)/.test(fc);
+        if (o !== inc) return o ? 'OUT' : 'IN';
+        return null;
+    }
+    return _v2sSlLegacyDirection(n);
+}
+
+/** OD28 L1: GV marks a bubble that did not go out; such a bubble never verifies a send. */
+function _v2sSlBubbleFailed(n, full) {
+    if (/fail|error|not-sent/i.test(_v2sSlClassWords(full) + ' ' + _v2sSlClassWords(n))) return true;
+    // deliver M4: a short status line outside the message text ("Not sent", "Failed").
+    return /^(not sent|failed|couldn.t send|could not send|message not sent)\b/i.test(_v2sSlBubbleStatus(n));
+}
+
+/**
+ * Deliver M4: GV still shows the bubble as on its way (sending / pending class, aria-busy, a
+ * progress spinner, or a "Sending" status line): the server has not taken it, so it never
+ * settles a verification. Never logs.
+ */
+function _v2sSlBubbleSending(n, full) {
+    var words = _v2sSlClassWords(full) + ' ' + _v2sSlClassWords(n);
+    if (/(^|[\s_-])(sending|pending|in-progress|queued)([\s_-]|$)/i.test(words)) return true;
+    if ((full && full.getAttribute('aria-busy') === 'true') || n.getAttribute('aria-busy') === 'true') return true;
+    var spin = n.querySelectorAll('mat-spinner, mat-progress-spinner, [role="progressbar"]');
+    for (var i = 0; i < spin.length; i++) {
+        if (!_v2sSlInMessageText(spin[i])) return true;
+    }
+    return /^(sending|queued)\b/i.test(_v2sSlBubbleStatus(n));
+}
+
+/**
+ * Deliver M4: the bubble's short status line ("Sending...", "Not sent"), read only from status
+ * elements outside the message text and the screen-reader label, which carry message content;
+ * '' when there is none. Never logs.
+ */
+function _v2sSlBubbleStatus(n) {
+    var els = n.querySelectorAll('[role="status"], .status, .message-status, [class*="status"], [gv-test-id*="status"]');
+    for (var i = 0; i < els.length; i++) {
+        if (_v2sSlInMessageText(els[i]) || _v2sSlHoldsMessageText(els[i])) continue;
+        var t = (els[i].textContent || '').trim();
+        if (t && t.length <= 40) return t;
+    }
+    return '';
+}
+
+/** Deliver M4: el wraps the message text or the screen-reader label (not a status line). */
+function _v2sSlHoldsMessageText(el) {
+    return !!el.querySelector('gv-annotation, .content, .bubble, .cdk-visually-hidden');
+}
+
+/** Deliver M4: el sits inside the message text or the screen-reader label of its bubble. */
+function _v2sSlInMessageText(el) {
+    return !!(el.closest && el.closest('gv-annotation, .content, .bubble, .cdk-visually-hidden'));
+}
+
+function _v2sSlLegacyDirection(n) {
+    var el = n;
+    for (var i = 0; el && i < 3; i++, el = el.parentElement) {
+        var c = (el.getAttribute('class') || '') + ' ' + (el.getAttribute('gv-test-id') || '');
+        if (/outgoing|from-me|sent-by-me/i.test(c)) return 'OUT';
+        if (/incoming|from-them|received/i.test(c)) return 'IN';
+    }
+    return null;
+}
+
+function _v2sSlBubbleTime(n) {
+    var t = n.querySelector('time[datetime]');
+    if (t) {
+        var p = Date.parse(t.getAttribute('datetime'));
+        if (!isNaN(p) && p > 0) return p;
+    }
+    var raw = n.getAttribute('data-timestamp');
+    if (raw && /^\d{9,13}$/.test(raw)) {
+        var v = parseInt(raw, 10);
+        return raw.length <= 10 ? v * 1000 : v;
+    }
+    return null;
 }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- setup-checks (D59, OD45): widget for a row with a missing required item, in place of the
+     chevron. TalkBack reads "Needs attention" with the row. -->
+<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="24dp"
+    android:layout_height="24dp"
+    android:contentDescription="@string/sendlater_setup_needs_attention"
+    android:src="@drawable/sendlater_ic_setup_warn" />

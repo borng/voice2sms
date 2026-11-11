@@ -265,7 +265,7 @@ must match.
   the same path prefix. Optional; DataClient alone is sufficient.
 - Payload: UTF-8 JSON
   ```json
-  {"phone":"+15551234567","body":"hello","requestId":"uuid-or-similar"}
+  {"phone":"+12025550123","body":"hello","requestId":"uuid-or-similar"}
   ```
 - `phone` required — regex `^\+?[0-9]{7,15}$`
 - `body` required — ≤ 1600 chars after sanitization (phone strips ASCII
@@ -320,7 +320,12 @@ must match.
 
 - Watch-origin intents carry `force_auto_send=true` via the trampoline
   intent, so `SmsHandlerActivity → GVoiceWebViewActivity` will auto-send
-  through GV without another user confirmation.
+  through GV without another user confirmation. Since 2.0.0 the trampoline
+  also carries the in-process `AutoSendAuth` token (`AutoSendAuth.attach`);
+  `SmsHandlerActivity` is exported, and a `force_auto_send` without that token
+  (from any other app) opens review mode instead. See ARCHITECTURE.md →
+  Auto-send authorization. A watch notification tapped after the phone app's
+  process restarted carries a stale token and also opens review mode.
 - On Android 14+ a background `startActivity()` from the listener can be
   blocked by BAL restrictions. The listener always posts a
   `CATEGORY_MESSAGE` / `PRIORITY_HIGH` notification as a fallback — user

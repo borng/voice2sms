@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher page (SettingsActivity): Scheduled messages card (R35a) and grouped settings rows (R36a). -->
+<resources>
+    <!-- Scheduled messages card (R35a, D47, OD37) -->
+    <string name="sendlater_home_card_title">Scheduled messages</string>
+    <string name="sendlater_home_card_loading">Loading…</string>
+    <!-- Empty state (D55) -->
+    <string name="sendlater_home_card_empty">Nothing scheduled</string>
+    <string name="sendlater_home_card_empty_how">In any one-to-one conversation, start typing. A blue clock tab appears on the right edge. Tap it and pick a time.</string>
+    <string name="sendlater_home_card_empty_scope">Works in Google Voice and in voice2sms. Not in group conversations.</string>
+    <string name="sendlater_home_card_load_failed">Could not load scheduled messages.</string>
+    <string name="sendlater_home_card_switch_on">Send Later is on</string>
+    <string name="sendlater_home_card_switch_off">Send Later is off. Nothing is sent automatically. Tap to change.</string>
+    <string name="sendlater_home_card_held">Held</string>
+    <!-- Header pill (D55): Send Later state; tapping it opens the Send Later group -->
+    <string name="sendlater_home_card_pill_on">On</string>
+    <string name="sendlater_home_card_pill_off">Off</string>
+    <string name="sendlater_home_card_pill_on_description">Send Later is on. Open Send Later settings</string>
+    <string name="sendlater_home_card_pill_off_description">Send Later is off. Nothing is sent automatically. Open Send Later settings</string>
+    <!-- Row time column (D55): day label above the time -->
+    <string name="sendlater_home_row_today">Today</string>
+    <string name="sendlater_home_row_tomorrow">Tomorrow</string>
+    <plurals name="sendlater_home_see_all">
+        <item quantity="one">See all %d scheduled ›</item>
+        <item quantity="other">See all %d scheduled ›</item>
+    </plurals>
+
+    <!-- Group rows (R36a, D48, OD38) -->
+    <string name="sendlater_home_title">Voice2SMS</string>
+    <!-- Section label above the group rows (D55), shown upper case -->
+    <string name="sendlater_home_section_settings">Settings</string>
+    <string name="sendlater_home_group_send_later">Send Later</string>
+    <string name="sendlater_home_group_default_sms">Default SMS app</string>
+    <string name="sendlater_home_group_account">Google account</string>
+    <string name="sendlater_home_group_gemini">Gemini</string>
+    <string name="sendlater_home_group_notifications">Notifications</string>
+    <string name="sendlater_home_group_about">About voice2sms</string>
+
+    <!-- Group summaries, recomputed on every resume (default SMS wording: D54) -->
+    <string name="sendlater_home_summary_send_later_on">On</string>
+    <string name="sendlater_home_summary_send_later_attention">On · needs attention</string>
+    <string name="sendlater_home_summary_send_later_off">Off</string>
+    <string name="sendlater_home_summary_send_later_off_restore">Off · turned off after restore</string>
+    <!-- D55: Send Later row status line = state · exact alarms on/off · battery state -->
+    <string name="sendlater_home_summary_send_later_detail">%1$s · exact alarms %2$s · %3$s</string>
+    <string name="sendlater_home_summary_battery_ok">battery OK</string>
+    <string name="sendlater_home_summary_battery_fix">battery may delay sends</string>
+    <string name="sendlater_home_summary_default_sms_yes">voice2sms is your default texting app</string>
+    <string name="sendlater_home_summary_default_sms_no">Not your default texting app: texts from other apps won\'t open here. Tap to fix.</string>
+    <string name="sendlater_home_summary_account">Current: %1$s</string>
+    <string name="sendlater_home_summary_account_none">Not set</string>
+    <string name="sendlater_home_summary_gemini">Interception %1$s · auto-send %2$s</string>
+    <string name="sendlater_home_summary_notifications">Auto-send confirmation %1$s · incoming SMS %2$s</string>
+    <string name="sendlater_home_on">on</string>
+    <string name="sendlater_home_off">off</string>
+    <string name="sendlater_home_summary_about">What it does · version %1$s</string>
+
+    <!-- About sub-screen text (D56, H4): plain words, no internal ids -->
+    <string name="sendlater_about_what_title">What it does</string>
+    <string name="sendlater_about_what_summary">voice2sms sends your texts through Google Voice: when it is your default texting app, when you ask Gemini to send a text, and when you send one from your watch. Send Later lets you schedule a text to go out at a time you pick.</string>
+    <string name="sendlater_about_how_title">How to schedule a text</string>
+    <string name="sendlater_about_how_summary">Open a conversation with one person and type your message. Then tap the blue clock tab on the right edge of the screen and pick a time.</string>
+    <!-- setup-checks (D59, OD44, OD45): a required item is missing. The warning icon replaces the
+         row chevron; the summary names what is missing ("Needs: accessibility, exact alarms"). -->
+    <string name="sendlater_setup_needs_attention">Needs attention</string>
+    <string name="sendlater_setup_needs">Needs: %1$s</string>
+    <string name="sendlater_setup_item_default_sms">default texting app</string>
+    <string name="sendlater_setup_item_accessibility">accessibility</string>
+    <string name="sendlater_setup_item_listener">notification access</string>
+    <string name="sendlater_setup_item_notifications">notifications</string>
+    <string name="sendlater_setup_item_exact_alarms">exact alarms</string>
+    <string name="sendlater_setup_item_battery">unrestricted battery</string>
+    <string name="sendlater_setup_item_full_screen">full-screen alerts</string>
+    <string name="sendlater_setup_item_account">Google sign-in</string>
+    <!-- Send Later row for the full-screen-intent permission (Android 14+) -->
+    <string name="sendlater_setup_full_screen_title">Show sends over the lock screen</string>
+    <string name="sendlater_setup_full_screen_on">Allowed: a scheduled text can be sent while the phone is locked</string>
+    <string name="sendlater_setup_full_screen_off">Not allowed: a scheduled text may wait until you unlock the phone. Tap to allow.</string>
+    <string name="sendlater_setup_no_screen">Could not open that settings screen. Open Settings → Apps → voice2sms.</string>
+</resources>

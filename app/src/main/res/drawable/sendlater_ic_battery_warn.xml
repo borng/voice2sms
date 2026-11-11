@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Battery indicator WARN (R43): amber disc with a white exclamation mark. Fill
+     sendlater_battery_warn meets 3:1 against both light and dark backgrounds; the white mark
+     meets 4:1 on the fill. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@color/sendlater_battery_warn"
+        android:pathData="M12,2A10,10 0,1 1,12,22A10,10 0,1 1,12,2Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M11,6h2v8h-2zM11,16h2v2h-2z" />
+</vector>

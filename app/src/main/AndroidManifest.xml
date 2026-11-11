@@ -24,10 +24,26 @@
     <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- sendlater:engine permissions -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- sendlater:voice-overlay start: optional, only improves R4 recipient resolution (A5) -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- sendlater:voice-overlay end -->
+    <!-- sendlater:battery-guard permission (R38: ignore-battery-optimizations request) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- sendlater:send-path permission (R30/OD10: full-screen intent opens the send on a locked screen) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
+    <!-- sendlater:dl-privacy start: the two backup-rule attributes on the application element below
+         (OD31) keep sendlater.db and the sendlater_* prefs out of backup and device transfer. -->
+    <!-- sendlater:dl-privacy end -->
     <application
         android:name=".Voice2SmsApplication"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/sendlater_data_extraction_rules"
+        android:fullBackupContent="@xml/sendlater_backup_rules"
         android:hardwareAccelerated="true"
         android:icon="@android:drawable/sym_action_chat"
         android:label="@string/app_name"
@@ -83,11 +99,36 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
 
+        <!-- sendlater:send-path start -->
+        <!-- OD10/OD11: no dedicated send activity and no foreground service. GVoiceWebViewActivity
+             above is the lock-screen target: it sets showWhenLocked/turnScreenOn at runtime only
+             for launches carrying ScheduledSendController.EXTRA_SCHEDULED_MESSAGE_ID. -->
+        <!-- sendlater:send-path end -->
+
         <!-- Settings -->
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
+            android:theme="@style/Theme.Voice2SMS.Settings" />
+
+        <!-- sendlater:sheet-ui start -->
+        <!-- Scheduling sheet (R12). Not exported: capture surfaces, the chip and notifications in
+             this app start it through ACTION_CAPTURE / ACTION_EDIT with setPackage. -->
+        <activity
+            android:name=".sendlater.ui.SendLaterSheetActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:theme="@style/Theme.SendLater.Sheet"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.CAPTURE" />
+                <action android:name="com.voice2sms.sendlater.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- sendlater:sheet-ui end -->
 
         <!-- === Default SMS app stubs (required to appear in SMS app picker) === -->
 
@@ -140,11 +181,80 @@
                 android:resource="@xml/gemini_accessibility_config" />
         </service>
 
+        <!-- sendlater:engine start -->
+        <receiver
+            android:name=".sendlater.engine.SendLaterAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".sendlater.engine.SendLaterBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".sendlater.engine.SendLaterActionReceiver"
+            android:exported="false" />
+        <!-- sendlater:engine end -->
+        <!-- sendlater:dl-actions start -->
+        <!-- L1 (OD31): Send now / Send anyway open this invisible activity, which acts only once
+             the phone is unlocked (it is never shown over the keyguard). LIVE-F4 (all API
+             levels): it starts the send from the foreground, so no accessibility is needed. -->
+        <activity
+            android:name=".sendlater.engine.SendLaterUnlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- sendlater:dl-actions end -->
+
         <!-- First-install setup wizard -->
         <activity
             android:name=".SetupActivity"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+            android:theme="@style/Theme.Voice2SMS.Setup" />
+
+        <!-- sendlater:upcoming-settings start -->
+        <!-- Send Later Upcoming list (R35): Settings, the chip and notifications open it with
+             SendLaterIntents.ACTION_UPCOMING (setPackage'd) and an optional EXTRA_E164 filter. -->
+        <activity
+            android:name=".sendlater.ui.UpcomingActivity"
+            android:exported="false"
+            android:label="@string/sendlater_upcoming_title"
+            android:theme="@style/Theme.Voice2SMS.Settings">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.UPCOMING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- sendlater:upcoming-settings end -->
+        <!-- sendlater:battery-guard start -->
+        <!-- Once-a-day battery warning on the app-internal SCHEDULED broadcast (R39). -->
+        <receiver
+            android:name=".sendlater.battery.BatteryScheduledReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.SCHEDULED" />
+            </intent-filter>
+        </receiver>
+        <!-- sendlater:battery-guard end -->
+        <!-- sendlater:live-a11y-warn start -->
+        <!-- LIVE-F5: once-a-day warning when the accessibility service is off while a message is
+             scheduled, on the app-internal SCHEDULED broadcast. -->
+        <receiver
+            android:name=".sendlater.a11y.A11yScheduledReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.voice2sms.sendlater.action.SCHEDULED" />
+            </intent-filter>
+        </receiver>
+        <!-- sendlater:live-a11y-warn end -->
 
         <!-- Wearable listener: receives SMS send requests from the Voice2SMS watch companion.
              Transport is DataClient on /voice2sms/requests/* (durable) plus MessageClient on
@@ -175,6 +285,20 @@
                     android:pathPrefix="/voice2sms/requests/" />
             </intent-filter>
         </service>
+
+        <!-- sendlater:reply-listener start -->
+        <!-- Send Later reply detection (R32-R34): reads Google Voice and voice2sms incoming-SMS
+             notifications; stores events only for conversations with a pending Send Later message. -->
+        <service
+            android:name=".sendlater.listener.SendLaterNotificationListener"
+            android:label="@string/sendlater_listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- sendlater:reply-listener end -->
 
     </application>
 

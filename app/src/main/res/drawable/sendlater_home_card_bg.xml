@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- home-redesign (D55): rounded Scheduled messages card surface. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/sendlater_home_card_bg" />
+    <corners android:radius="16dp" />
+</shape>

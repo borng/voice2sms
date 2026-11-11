@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One preset row (R13): "This afternoon · 1:00 PM". -->
+<com.google.android.material.radiobutton.MaterialRadioButton xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="2dp"
+    android:background="@drawable/sendlater_preset_bg"
+    android:minHeight="44dp"
+    android:paddingStart="6dp"
+    android:paddingEnd="10dp"
+    android:textAppearance="?attr/textAppearanceBodyLarge" />

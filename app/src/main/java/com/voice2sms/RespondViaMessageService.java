@@ -52,6 +52,7 @@ public class RespondViaMessageService extends Service {
                 webIntent.putExtra("body", body);
             }
             webIntent.putExtra("force_auto_send", true);
+            AutoSendAuth.attach(webIntent);
             startActivity(webIntent);
             if (BuildConfig.DEBUG) Log.d(TAG, "RespondViaMessage: launching composer");
         } else {

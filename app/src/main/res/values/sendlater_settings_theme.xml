@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- dark-settings (D50, R36b, OD41): Settings (root and group sub-screens) and Upcoming follow
+     the system light/dark mode. AppCompat DayNight keeps the same action bar, preference and
+     switch styling as the old Theme.AppCompat.Light.DarkActionBar in light mode. The setup
+     wizard, the GV WebView screen and the Send Later sheet keep their own themes. -->
+<resources>
+    <style name="Theme.Voice2SMS.Settings" parent="Theme.AppCompat.DayNight.DarkActionBar" />
+</resources>

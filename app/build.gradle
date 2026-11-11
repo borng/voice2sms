@@ -39,7 +39,7 @@ android {
         // versionCode and versionName are set dynamically from git tags in CI,
         // or fall back to defaults for local builds
         versionCode project.hasProperty('VERSION_CODE') ? project.property('VERSION_CODE').toInteger() : 1
-        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "1.2.0"
+        versionName project.hasProperty('VERSION_NAME') ? project.property('VERSION_NAME') : "2.0.0"
         // Build stamp surfaced in SettingsActivity for bug-report triage.
         buildConfigField 'String', 'GIT_SHA', "\"${computeGitSha()}\""
         buildConfigField 'String', 'BUILD_DATE', "\"${computeBuildDate()}\""
@@ -80,6 +80,11 @@ dependencies {
     implementation 'androidx.webkit:webkit:1.15.0'
     // Wearable Data Layer for receiving SMS send requests from the Voice2SMS watch companion.
     implementation 'com.google.android.gms:play-services-wearable:18.2.0'
+    // Send Later store (sendlater.db). Java annotation processing only; no Kotlin.
+    implementation 'androidx.room:room-runtime:2.6.1'
+    annotationProcessor 'androidx.room:room-compiler:2.6.1'
+    // Send Later sheet: Material 3 theme, date and time pickers.
+    implementation 'com.google.android.material:material:1.12.0'
 
     testImplementation 'junit:junit:4.13.2'
     // org.json for unit-testing WearPayloadValidator off-device. Android ships the same

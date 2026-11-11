@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Send Later: native Google Voice overlay (voice-overlay node). Never edit strings.xml for these. -->
+<resources>
+    <string name="sendlater_overlay_tab">Send later</string>
+    <!-- %1$s = the scheduled time label from the sheet, e.g. "Sat 9:00 AM" -->
+    <string name="sendlater_overlay_scheduled">Scheduled for %1$s</string>
+    <string name="sendlater_overlay_undo">Undo</string>
+    <!-- TalkBack label for the Undo action on the confirmation (UI M9). -->
+    <string name="sendlater_overlay_undo_description">Undo scheduled message</string>
+    <string name="sendlater_overlay_clear_failed">Scheduled, but the draft couldn\'t be cleared</string>
+    <string name="sendlater_overlay_changed">Saved to Upcoming — the conversation changed, draft left as is</string>
+    <string name="sendlater_overlay_undone">Canceled — draft restored</string>
+    <!-- R6: the composer changed, so the text was not put back; the canceled message stays listed in Upcoming (R35 Recent). -->
+    <string name="sendlater_overlay_undone_kept">Canceled — the composer changed, so your text is in Upcoming under Recent</string>
+    <!-- Undo when the draft was never cleared (clear failed, or clearing is off in Settings). -->
+    <string name="sendlater_overlay_undone_in_composer">Canceled — the draft is still in the composer</string>
+    <string name="sendlater_overlay_undo_failed">Couldn\'t undo — the message is no longer scheduled</string>
+</resources>

@@ -46,6 +46,8 @@ public class Voice2SmsApplication extends Application {
         // they exist before the first SMS_DELIVER broadcast arrives — channels are
         // sticky once registered, so this is cheap on subsequent launches.
         ensureNotificationChannels();
+        com.voice2sms.sendlater.engine.SendLaterEngine.setSender(new com.voice2sms.sendlater.send.WebViewScheduledSender());
+        com.voice2sms.sendlater.engine.SendLaterEngine.onProcessStart(this);
     }
 
     /**
@@ -127,6 +129,10 @@ public class Voice2SmsApplication extends Application {
             contextWrapper = new MutableContextWrapper(getApplicationContext());
             singletonWebView = new RichContentWebView(contextWrapper);
             setupWebViewSettings(singletonWebView);
+            // LIVE-F13: the page's one V2SBridge object, added once per WebView before its first
+            // load. It forwards to the attached GVoiceWebViewActivity; activities never re-add
+            // or remove it (an injected object only reaches the page on its next load).
+            singletonWebView.addJavascriptInterface(GVoiceWebViewActivity.pageBridge(), "V2SBridge");
 
             // Keep renderer alive when Activity is not visible
             singletonWebView.setRendererPriorityPolicy(

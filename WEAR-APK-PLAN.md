@@ -349,8 +349,8 @@ Also port the test file. If we later extract to shared module, deletion is easy.
 
 Covers intent parsing edge cases specifically (complement to `WearPayloadValidatorTest` which covers JSON path):
 
-- Standard `smsto:+15551234567` with `EXTRA_TEXT` body
-- Opaque URI with embedded body `smsto:+15551234567?body=hi%20there`
+- Standard `smsto:+12025550123` with `EXTRA_TEXT` body
+- Opaque URI with embedded body `smsto:+12025550123?body=hi%20there`
 - `sms:` scheme (treated identically to `smsto:`)
 - URI with extra whitespace around number
 - Missing body → validation rejects
@@ -422,7 +422,7 @@ Wear APK distribution via Play requires matching `applicationId` + same keystore
 
 ### Phone-side adb log to watch for success
 ```
-adb -s 192.168.1.154:41801 logcat -s V2SWear Voice2SMS ActivityManager \
+adb -s <phone-ip>:<port> logcat -s V2SWear Voice2SMS ActivityManager \
     | grep -E "DATA_CHANGED|dispatched|GVoiceWebViewActivity"
 ```
 
@@ -435,7 +435,7 @@ Voice2SMS: ...voice2sms(phone, body, autoSend=true, ...)
 
 ### Watch-side adb log to watch
 ```
-adb -s 192.168.1.157:<port> logcat -s V2SWear \
+adb -s <watch-ip>:<port> logcat -s V2SWear \
     | grep -E "SendToReceiver|DataClient"
 ```
 

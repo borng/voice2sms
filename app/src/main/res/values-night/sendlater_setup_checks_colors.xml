@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- setup-checks (OD45), dark: disc 5.5:1 on #303030, 7.8:1 on #121212. The "!" #202124 on the
+     disc: 6.7:1. -->
+<resources>
+    <color name="sendlater_setup_warn">#F28B82</color>
+    <color name="sendlater_setup_warn_glyph">#202124</color>
+</resources>

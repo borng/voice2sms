@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark-mode colour overrides. UI M3: the light-blue accent already meets 4.5:1 on dark surfaces. -->
+<resources>
+    <color name="sendlater_accent_text">#8AB4F8</color>
+    <color name="sendlater_on_accent_text">#0B1D3A</color>
+
+    <!-- dark-settings (D50, R36b, OD41): Settings, the home Scheduled card and Upcoming follow the
+         system dark mode (AppCompat dark window #303030). Ratios below on #303030 / #121212. -->
+
+    <!-- Battery indicator fills (R43): 3:1 icon contrast. values-night also resolves for the
+         always-light setup wizard when the phone is in dark mode, so each fill also holds 3:1 on
+         white, and white glyphs keep 3:1 on it.
+         #1E9E46: 3.8:1 / 5.4:1, 3.5:1 on #FFFFFF, white glyph 3.5:1.
+         #D96A00: 3.8:1 / 5.4:1, 3.5:1 on #FFFFFF, white glyph 3.5:1. -->
+    <color name="sendlater_battery_ok">#1E9E46</color>
+    <color name="sendlater_battery_warn">#D96A00</color>
+
+    <!-- Accessibility-off disc (LIVE-F5; day value in sendlater_a11y.xml): #E8453C 3.4:1 on
+         #303030, 4.0:1 on the night banner, 3.9:1 on white, white glyph 3.9:1. -->
+    <color name="sendlater_a11y_warn">#E8453C</color>
+    <!-- Upcoming accessibility-off banner: #F9DEDC on #3B1A18 = 12.3:1. -->
+    <color name="sendlater_a11y_banner_bg">#3B1A18</color>
+    <color name="sendlater_a11y_banner_text">#F9DEDC</color>
+
+    <!-- Upcoming "Send Later is off" banner: #FFCC80 on #3A2A1A = 9.3:1. -->
+    <color name="sendlater_upcoming_banner_bg">#3A2A1A</color>
+    <color name="sendlater_upcoming_banner_text">#FFCC80</color>
+
+    <!-- Upcoming section headers: Teal 200 #80CBC4 = 7.1:1 / 10.0:1. -->
+    <color name="sendlater_section_header">#80CBC4</color>
+</resources>

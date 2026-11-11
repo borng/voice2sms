@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Name shown on the system notification-access screen (reply-listener node). -->
+    <string name="sendlater_listener_label">Voice2SMS Send Later reply detection</string>
+    <!-- Summary for the listener's settings row (upcoming-settings node); same text as SendLaterListenerStatus.SUMMARY. -->
+    <string name="sendlater_listener_summary">Needs the Google Voice app with notifications on</string>
+</resources>

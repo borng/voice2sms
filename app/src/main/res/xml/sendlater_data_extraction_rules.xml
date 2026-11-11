@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- sendlater:dl-privacy (OD31): Android 12+ (android:dataExtractionRules). Send Later's database
+     (message texts, thread directory) and its sendlater_* prefs files are excluded from both
+     cloud backup and device-to-device transfer: a SCHEDULED or IN_FLIGHT row restored onto a
+     new phone is not wanted either. D36: the master switch (sendlater_switch) too, so a restored or
+     transferred phone starts with Send Later off. Everything else in the app is included as before. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="sendlater.db" />
+        <exclude domain="database" path="sendlater.db-wal" />
+        <exclude domain="database" path="sendlater.db-shm" />
+        <exclude domain="database" path="sendlater.db-journal" />
+        <exclude domain="sharedpref" path="sendlater_engine.xml" />
+        <exclude domain="sharedpref" path="sendlater_queue.xml" />
+        <exclude domain="sharedpref" path="sendlater_listener.xml" />
+        <exclude domain="sharedpref" path="sendlater_battery.xml" />
+        <exclude domain="sharedpref" path="sendlater_settings_asked.xml" />
+        <exclude domain="sharedpref" path="sendlater_retention.xml" />
+        <exclude domain="sharedpref" path="sendlater_a11y.xml" />
+        <exclude domain="sharedpref" path="sendlater_switch.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="sendlater.db" />
+        <exclude domain="database" path="sendlater.db-wal" />
+        <exclude domain="database" path="sendlater.db-shm" />
+        <exclude domain="database" path="sendlater.db-journal" />
+        <exclude domain="sharedpref" path="sendlater_engine.xml" />
+        <exclude domain="sharedpref" path="sendlater_queue.xml" />
+        <exclude domain="sharedpref" path="sendlater_listener.xml" />
+        <exclude domain="sharedpref" path="sendlater_battery.xml" />
+        <exclude domain="sharedpref" path="sendlater_settings_asked.xml" />
+        <exclude domain="sharedpref" path="sendlater_retention.xml" />
+        <exclude domain="sharedpref" path="sendlater_a11y.xml" />
+        <exclude domain="sharedpref" path="sendlater_switch.xml" />
+    </device-transfer>
+</data-extraction-rules>

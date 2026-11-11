@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Send Later battery health copy (R38, R39, D25). The row summary and notification body come
+     from BatteryAdvice (pure JVM, unit-tested); keep the two in step. -->
+<resources>
+    <string name="sendlater_battery_title">Battery</string>
+    <string name="sendlater_battery_warning_title">Scheduled messages may be late</string>
+    <string name="sendlater_battery_fix">Fix</string>
+    <string name="sendlater_battery_channel">Send Later battery warnings</string>
+    <string name="sendlater_battery_channel_description">At most once a day, when battery settings may delay scheduled messages</string>
+    <string name="sendlater_battery_no_screen">Open Settings → Apps → voice2sms → Battery and allow background use</string>
+    <string name="sendlater_battery_setup_title">Scheduled messages and battery</string>
+    <string name="sendlater_battery_setup_body">To send scheduled messages on time, voice2sms needs to be allowed to run in the background: set its battery use to Unrestricted.</string>
+    <string name="sendlater_battery_setup_force_stop">If voice2sms is force-stopped, it stays stopped, even after a reboot, until you open it again. Scheduled messages cannot go out until then.</string>
+    <string name="sendlater_battery_setup_samsung">On this Samsung phone, also add voice2sms to Battery → Never sleeping apps.</string>
+    <!-- Setup wizard Battery step (R42, D27) and indicator (R43, D28) -->
+    <string name="sendlater_battery_setup_step_title">Battery</string>
+    <string name="sendlater_battery_setup_button">Allow background use</string>
+    <string name="sendlater_battery_setup_status_ok">Status: Background use allowed</string>
+    <string name="sendlater_battery_setup_status_limited">Status: Limited. Scheduled messages may be late</string>
+    <string name="sendlater_battery_indicator_ok">Battery OK: background use allowed</string>
+    <string name="sendlater_battery_indicator_warn">Battery warning: background use limited</string>
+</resources>

@@ -1,0 +1,70 @@
+package com.voice2sms.sendlater.web;
+
+import com.voice2sms.sendlater.voice.logic.PhoneNumbers;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * 1:1 thread detection from a Google Voice web URL (R10, F7 - URL shape unverified on device).
+ * Mirrors the inject.js gate: the {@code itemId} query parameter, percent-decoded, must match
+ * {@code ^t\.\+\d{7,15}$} and the number must pass {@link PhoneNumbers#isE164} (no "+0", D38). Group ids ({@code t.g.*}), missing ids and anything else are "not 1:1".
+ * Never guesses. Pure JVM.
+ */
+public final class ThreadUrl {
+
+    private static final Pattern ONE_TO_ONE = Pattern.compile("^t\\.(\\+\\d{7,15})$");
+
+    private static final String MESSAGES = "https://voice.google.com/u/0/messages?itemId=t.%2B";
+
+    private ThreadUrl() {}
+
+    /**
+     * LIVE-F10: the GV web URL of the 1:1 thread of {@code e164} ({@link PhoneNumbers#isE164}), for a FULL
+     * page load ({@code https://voice.google.com/u/0/messages?itemId=t.%2B<digits>}); null for
+     * anything else. GV routes this URL only on a full load, never on an SPA history push.
+     * {@link #isThreadOf} accepts what it returns.
+     */
+    public static String threadUrlOf(String e164) {
+        return PhoneNumbers.isE164(e164) ? MESSAGES + e164.substring(1) : null;
+    }
+
+    /** E.164 ("+" + digits) of a 1:1 thread URL, else null. */
+    public static String oneToOneE164(String url) {
+        String id = itemId(url);
+        if (id == null) return null;
+        Matcher m = ONE_TO_ONE.matcher(id);
+        // D38: the itemId shape stays as GV writes it; the number must also pass the one rule.
+        return m.matches() && PhoneNumbers.isE164(m.group(1)) ? m.group(1) : null;
+    }
+
+    /** True when {@code url} is the 1:1 thread of {@code e164}. */
+    public static boolean isThreadOf(String url, String e164) {
+        return e164 != null && e164.equals(oneToOneE164(url));
+    }
+
+    /** Decoded itemId query value (a literal '+' kept as '+'), or null. */
+    static String itemId(String url) {
+        if (url == null) return null;
+        int q = url.indexOf('?');
+        if (q < 0) return null;
+        int hash = url.indexOf('#', q);
+        String query = hash < 0 ? url.substring(q + 1) : url.substring(q + 1, hash);
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq < 0) continue;
+            if (!"itemId".equals(pair.substring(0, eq))) continue;
+            String raw = pair.substring(eq + 1);
+            if (raw.isEmpty()) return null;
+            try {
+                // Form decoding turns '+' into a space; GV's E.164 plus must survive either spelling.
+                return URLDecoder.decode(raw.replace("+", "%2B"), "UTF-8");
+            } catch (UnsupportedEncodingException | IllegalArgumentException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+}
