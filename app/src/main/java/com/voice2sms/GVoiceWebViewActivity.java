@@ -40,6 +40,7 @@ import com.voice2sms.sendlater.web.CapturePayload;
 import com.voice2sms.sendlater.web.ChipState;
 import com.voice2sms.sendlater.web.BridgeNonce;
 import com.voice2sms.sendlater.web.LiveDelegate;
+import com.voice2sms.sendlater.web.NewComposeRecipient;
 import com.voice2sms.sendlater.web.OriginGuard;
 import com.voice2sms.sendlater.send.ForegroundUse;
 import com.voice2sms.sendlater.send.RegularSend;
@@ -87,7 +88,8 @@ public class GVoiceWebViewActivity extends Activity {
     private int signInRedirects;
 
     private WebView webView;
-    private String recipient;
+    /** Intent recipient; volatile: R10a reads it on the JavaBridge thread (sendLaterNewComposeState). */
+    private volatile String recipient;
     private String body;
     /**
      * deliver M1 (F1): whether the current regular compose (recipient/body) asked for auto-send,
@@ -1065,6 +1067,22 @@ public class GVoiceWebViewActivity extends Activity {
             return sendLaterHooks.bridgeChipState(e164, url);
         }
 
+        /**
+         * R10a (D46, OD36): chip state for GV's new-message page. The page reports its recipient
+         * chip count and the single chip's E.164; this activity confirms that number against its
+         * own intent recipient (NewComposeRecipient), never page text alone.
+         */
+        @JavascriptInterface
+        public String sendLaterNewComposeState(String nonce, int chipCount, String e164) {
+            final String url = mainFrameUrl;
+            if (!BRIDGE_NONCE.accepts(nonce) || !OriginGuard.isTrustedGvUrl(url)) return ChipState.disabled();
+            if (sendLaterHooks == null) {
+                return ChipState.disabled();
+            }
+            final String confirmed = NewComposeRecipient.confirm(url, recipient, chipCount, e164);
+            return sendLaterHooks.bridgeNewComposeState(confirmed, url);
+        }
+
         @JavascriptInterface
         public void requestSendLaterChipTap(String nonce, String e164) {
             final String url = mainFrameUrl;
@@ -1254,6 +1272,12 @@ public class GVoiceWebViewActivity extends Activity {
         public final String sendLaterChipState(String nonce, String e164) {
             V2SBridge b = live.current();
             return b != null ? b.sendLaterChipState(nonce, e164) : ChipState.disabled();
+        }
+
+        @JavascriptInterface
+        public final String sendLaterNewComposeState(String nonce, int chipCount, String e164) {
+            V2SBridge b = live.current();
+            return b != null ? b.sendLaterNewComposeState(nonce, chipCount, e164) : ChipState.disabled();
         }
 
         @JavascriptInterface

@@ -89,6 +89,13 @@ public final class SendLaterWebHooks {
     private long undoMessageId = -1;
     private long undoUntil;
     private final List<PendingRead> reads = new ArrayList<>();
+    /**
+     * R10a: the new-message page the live activity last confirmed ({@link #bridgeNewComposeState}):
+     * its main-frame URL and the single chip's E.164. Null when none; dropped on every main-frame
+     * change, so a capture is accepted only on that same page for that same number.
+     */
+    private String newComposeUrl;
+    private String newComposeE164;
 
     // Main thread only.
     private boolean resumed;
@@ -247,6 +254,10 @@ public final class SendLaterWebHooks {
 
     /** Main thread: the main frame moved (SPA navigation); the page re-reads the chip state. */
     public void onMainFrameUrlChanged() {
+        synchronized (this) {
+            newComposeUrl = null;
+            newComposeE164 = null;
+        }
         refreshChip();
     }
 
@@ -322,8 +333,12 @@ public final class SendLaterWebHooks {
      */
     public void openSheet(CapturePayload p, String currentUrl) {
         if (!ThreadUrl.isThreadOf(currentUrl, p.getE164())) {
-            Log.w(TAG, "capture dropped: page no longer shows that thread");
-            return;
+            if (!isNewComposeOf(currentUrl, p.getE164())) {
+                Log.w(TAG, "capture dropped: page no longer shows that thread");
+                return;
+            }
+            // R10a: a new-message page has no conversation to watermark (DEVICE_ONLY).
+            p = p.withoutWatermark();
         }
         // UI M2: a second tab tap before the first sheet covered the page opens no second sheet.
         if (sheetStartedAt != 0 && SystemClock.elapsedRealtime() - sheetStartedAt < DOUBLE_TAP_MS) {
@@ -390,6 +405,27 @@ public final class SendLaterWebHooks {
             Log.w(TAG, "chip state unavailable: " + e.getClass().getSimpleName());
             return ChipState.toJson(true, null, null, TimeZone.getDefault());
         }
+    }
+
+    /**
+     * R10a, binder thread: chip JSON for GV's new-message page. {@code confirmedE164} is what
+     * {@link NewComposeRecipient#confirm} answered for the live activity's intent recipient and
+     * {@code mainFrameUrl} (null = not confirmed). Confirmed and Send Later on: enabled with no
+     * pending/held label (the chip's tap target is a thread, R18), and the page is bound to that
+     * number for the capture ({@link #openSheet}). Anything else: disabled, and no binding.
+     */
+    public String bridgeNewComposeState(String confirmedE164, String mainFrameUrl) {
+        boolean ok = confirmedE164 != null && mainFrameUrl != null && SendLaterSettings.isEnabled(app);
+        synchronized (this) {
+            newComposeUrl = ok ? mainFrameUrl : null;
+            newComposeE164 = ok ? confirmedE164 : null;
+        }
+        return ok ? ChipState.toJson(true, null, null, TimeZone.getDefault()) : ChipState.disabled();
+    }
+
+    /** R10a: {@code url} is the new-message page last confirmed for {@code e164}. */
+    synchronized boolean isNewComposeOf(String url, String e164) {
+        return url != null && e164 != null && url.equals(newComposeUrl) && e164.equals(newComposeE164);
     }
 
     /**
