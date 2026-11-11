@@ -232,6 +232,32 @@ final class EngineFakes {
             return true;
         }
 
+        /**
+         * D49 / R12a (edit-text): the reschedule that also stores new message text, in the same
+         * guarded write as the time, hold and If-late (SCHEDULED/HELD only; refused rows keep their
+         * text). No {@code @Override} so this helper compiles before the seam method exists; it
+         * becomes the override of {@code EngineStore.reschedule(..., String text)}.
+         */
+        public boolean reschedule(long id, long scheduledFor, boolean holdIfReplied,
+                                  LatenessPolicy policy, Watermark wm, String text) {
+            j.add("store.reschedule+text " + id + " " + scheduledFor);
+            ScheduledMessage m = rows.get(id);
+            if (m == null || (m.getStatus() != Status.SCHEDULED && m.getStatus() != Status.HELD)) return false;
+            ScheduledMessage.Builder b = m.toBuilder().status(Status.SCHEDULED).holdReason(null)
+                    .scheduledFor(scheduledFor).holdIfReplied(holdIfReplied).latenessPolicy(policy)
+                    .text(text)
+                    .updatedAt(m.getUpdatedAt() + 1);
+            if (wm != null) {
+                Watermark orig = m.getOriginalWatermark() != null ? m.getOriginalWatermark() : m.getWatermark();
+                if (orig == null) {
+                    orig = new Watermark(Watermark.Quality.DEVICE_ONLY, null, null, null, m.getCreatedAt(), null);
+                }
+                b.watermark(wm).originalWatermark(orig);
+            }
+            rows.put(id, b.build());
+            return true;
+        }
+
         @Override public boolean upgradeRung(long id, Rung from, Rung to) {
             j.add("store.upgradeRung " + id + " " + from + " " + to);
             ScheduledMessage m = rows.get(id);
