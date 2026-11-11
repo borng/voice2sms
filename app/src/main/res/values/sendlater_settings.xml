@@ -100,6 +100,7 @@
     <string name="sendlater_upcoming_reason_outbound_only">Held: you texted them since scheduling</string>
     <string name="sendlater_upcoming_reason_unverified">Held: could not confirm whether it was sent</string>
     <string name="sendlater_upcoming_reason_locked">Held: the phone was locked</string>
+    <string name="sendlater_upcoming_reason_draft">Held: draft in the conversation</string>
     <string name="sendlater_upcoming_reason_unknown">Held</string>
 
     <!-- UI M5: a SCHEDULED message the engine already reminded about; it will not send by itself. -->

@@ -544,15 +544,27 @@ public final class SendLaterEngine {
     }
 
     /**
-     * D32: as {@link #remind} (reminded: no later DUE sends it; expires 24 h past its time), with
-     * the "draft in the way" notification. {@code draft} is passed to the notifier only.
+     * D32 + D42: the send stopped on the user's own draft. The row goes HELD with
+     * {@link HoldReason#DRAFT} (so no later DUE, last call or restart sends it; it expires 24 h
+     * past its time like other holds) and the "draft in the way" choice notification posts.
+     * {@code draft} is passed to the notifier only, never stored or logged.
+     */
+    private static void holdDraft(EngineDeps d, ScheduledMessage m, String draft, long now) {
+        long id = m.getId();
+        if (!d.store.hold(id, HoldReason.DRAFT)) return;
+        d.marks.setReminded(id, false);
+        d.marks.clearLastCall(id);
+        schedulerOf(d).cancelAlarms(id);
+        remindDraft(d, reload(d, m), draft);
+    }
+
+    /**
+     * D32: posts the "draft in the way" choice notification for {@code m} (now HELD(DRAFT)),
+     * broadcasts the change and arms its expiry. {@code draft} is passed to the notifier only.
      */
     private static void remindDraft(EngineDeps d, ScheduledMessage m, String draft) {
-        long id = m.getId();
-        d.marks.setReminded(id, true);
-        schedulerOf(d).cancelAlarms(id);
         d.notifier.draftInTheWay(m, draft);
-        d.broadcaster.stateChanged(id, m.getRecipientE164());
+        d.broadcaster.stateChanged(m.getId(), m.getRecipientE164());
         schedulerOf(d).registerExpiry(m);
     }
 
@@ -1004,13 +1016,21 @@ public final class SendLaterEngine {
     }
 
     /**
-     * D32 Keep draft: the user keeps their draft; the message stays in Upcoming waiting for them
-     * (it was released unsent and marked reminded, so it never sends itself) and the
-     * notification goes. Nothing is typed or sent.
+     * D32 + D42 Keep draft: the user keeps their draft; the message waits in Upcoming under Held
+     * (HELD with {@link HoldReason#DRAFT}: it never sends itself and expires 24 h past its time)
+     * and the notification goes. A row still SCHEDULED (a choice notification posted before D42)
+     * is held now; a row already HELD keeps its reason. Nothing is typed or sent.
      */
     private static TapResult doKeepDraft(EngineDeps d, long id) {
         ScheduledMessage m = d.store.get(id);
         if (!tappable(m)) return TapResult.staleFor(m);
+        if (m.getStatus() == Status.SCHEDULED) {
+            if (!d.store.hold(id, HoldReason.DRAFT)) return staleOrGone(d, id);
+            d.networkWaiter.cancel(id);
+            // Silent hold: the choice notification is dismissed, no hold notification posts.
+            afterHold(d, m, HoldReason.DRAFT, d.conditions.nowMs(), false, true, false, null);
+            return TapResult.DONE;
+        }
         d.notifier.dismiss(id);
         d.broadcaster.stateChanged(id, m.getRecipientE164());
         return TapResult.DONE;
@@ -1131,15 +1151,18 @@ public final class SendLaterEngine {
                     selfPreempt(d, m);
                     return;
                 }
+                // D42: a draft in the box holds the message as HELD(DRAFT) with the choice
+                // notification (D32); it waits for the user's tap and never sends itself.
+                if (draft != null) {
+                    holdDraft(d, m, draft, now);
+                    return;
+                }
                 // Nothing was typed: back to SCHEDULED with a reminder (the store counts the
                 // release in attemptCount; it is recorded as a free release).
                 RemindCause cause = RemindCause.fromDetail(detail);
                 if (d.store.releaseForRetry(id, "cannot_show")) {
                     d.marks.addFreeRelease(id);
-                    // D32: a draft in the box gets the choice notification (reminded all the
-                    // same: it never sends itself) instead of the generic reminder.
-                    if (draft != null) remindDraft(d, reload(d, m), draft);
-                    else remind(d, reload(d, m), cause.reason(), cause);
+                    remind(d, reload(d, m), cause.reason(), cause);
                 }
                 return;
             }

@@ -302,6 +302,7 @@ public class UpcomingActivity extends AppCompatActivity {
             case OUTBOUND_ONLY: return R.string.sendlater_upcoming_reason_outbound_only;
             case UNVERIFIED: return R.string.sendlater_upcoming_reason_unverified;
             case LOCKED: return R.string.sendlater_upcoming_reason_locked;
+            case DRAFT: return R.string.sendlater_upcoming_reason_draft;
             default: return R.string.sendlater_upcoming_reason_unknown;
         }
     }
