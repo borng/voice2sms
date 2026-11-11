@@ -176,6 +176,18 @@
 
         <PreferenceCategory android:title="About">
             <Preference
+                android:key="about_what"
+                android:title="@string/sendlater_about_what_title"
+                android:summary="@string/sendlater_about_what_summary"
+                android:selectable="false"
+                android:persistent="false" />
+            <Preference
+                android:key="about_how"
+                android:title="@string/sendlater_about_how_title"
+                android:summary="@string/sendlater_about_how_summary"
+                android:selectable="false"
+                android:persistent="false" />
+            <Preference
                 android:key="app_version"
                 android:title="Version"
                 android:selectable="true" />

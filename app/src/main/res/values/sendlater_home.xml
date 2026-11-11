@@ -21,7 +21,7 @@
     <string name="sendlater_home_group_account">Google account</string>
     <string name="sendlater_home_group_gemini">Gemini</string>
     <string name="sendlater_home_group_notifications">Notifications</string>
-    <string name="sendlater_home_group_about">About</string>
+    <string name="sendlater_home_group_about">About voice2sms</string>
 
     <!-- Group summaries, recomputed on every resume (default SMS wording: D54) -->
     <string name="sendlater_home_summary_send_later_on">On</string>
@@ -36,5 +36,11 @@
     <string name="sendlater_home_summary_notifications">Auto-send confirmation %1$s · incoming SMS %2$s</string>
     <string name="sendlater_home_on">on</string>
     <string name="sendlater_home_off">off</string>
-    <string name="sendlater_home_summary_about">Version %1$s</string>
+    <string name="sendlater_home_summary_about">What it does · version %1$s</string>
+
+    <!-- About sub-screen text (D56, H4): plain words, no internal ids -->
+    <string name="sendlater_about_what_title">What it does</string>
+    <string name="sendlater_about_what_summary">voice2sms sends your texts through Google Voice: when it is your default texting app, when you ask Gemini to send a text, and when you send one from your watch. Send Later lets you schedule a text to go out at a time you pick.</string>
+    <string name="sendlater_about_how_title">How to schedule a text</string>
+    <string name="sendlater_about_how_summary">Open a conversation with one person and type your message. Then tap the blue clock tab on the right edge of the screen and pick a time.</string>
 </resources>
