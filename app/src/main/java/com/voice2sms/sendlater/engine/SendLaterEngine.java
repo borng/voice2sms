@@ -903,15 +903,49 @@ public final class SendLaterEngine {
                                        final Watermark baseline) {
         EngineDeps d = deps(context);
         synchronized (LOCK) {
-            return doReschedule(d, id, scheduledFor, holdIfReplied, policy, baseline);
+            return doReschedule(d, id, scheduledFor, holdIfReplied, policy, baseline, null);
         }
     }
 
+    /**
+     * D49 / R12a / OD40: the edit sheet's Update with the (possibly edited) message text. As
+     * {@link #reschedule(Context, long, long, boolean, LatenessPolicy, Watermark)}, and the text is
+     * stored, exactly as given, in the same guarded store write as the time, hold and If-late
+     * (SCHEDULED/HELD only), so it can never land on a row the due path already claimed. Refused
+     * rows keep their text. Every due-time reader (send, D30 compare, verification, self-preemption,
+     * notifications) reads the stored row, so the edited text is what is typed and compared.
+     *
+     * @throws IllegalArgumentException when {@code text} is null, empty or whitespace only
+     */
+    public static TapResult reschedule(final Context context, final long id, final long scheduledFor,
+                                       final boolean holdIfReplied, final LatenessPolicy policy,
+                                       final Watermark baseline, final String text) {
+        if (!hasContent(text)) throw new IllegalArgumentException("text is blank");
+        EngineDeps d = deps(context);
+        synchronized (LOCK) {
+            return doReschedule(d, id, scheduledFor, holdIfReplied, policy, baseline, text);
+        }
+    }
+
+    /** Whether {@code t} has something other than whitespace (empty text cannot be saved). */
+    static boolean hasContent(String t) {
+        if (t == null) return false;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (!Character.isWhitespace(c) && !Character.isSpaceChar(c)) return true;
+        }
+        return false;
+    }
+
+    /** {@code text} null keeps the stored text (time/flags only); otherwise it is stored too. */
     static TapResult doReschedule(EngineDeps d, long id, long scheduledFor, boolean holdIfReplied,
-                                  LatenessPolicy policy, Watermark baseline) {
+                                  LatenessPolicy policy, Watermark baseline, String text) {
         ScheduledMessage m = d.store.get(id);
         if (!tappable(m)) return TapResult.staleFor(m);
-        if (!d.store.reschedule(id, scheduledFor, holdIfReplied, policy, baseline)) {
+        boolean stored = text == null
+                ? d.store.reschedule(id, scheduledFor, holdIfReplied, policy, baseline)
+                : d.store.reschedule(id, scheduledFor, holdIfReplied, policy, baseline, text);
+        if (!stored) {
             return staleOrGone(d, id);
         }
         d.marks.setReminded(id, false);

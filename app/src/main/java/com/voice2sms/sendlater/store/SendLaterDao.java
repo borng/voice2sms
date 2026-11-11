@@ -71,6 +71,17 @@ public interface SendLaterDao {
     int reschedule(long id, long scheduledFor, boolean holdIfReplied, String latenessPolicy,
                    List<String> from, long now);
 
+    /**
+     * D49 / R12a: {@link #reschedule} that also stores the edited text, in the same status-guarded
+     * statement (never a separate text write that could race the IN_FLIGHT claim). updatedAt always
+     * moves forward so the guarded claim ({@link #toInFlightIfUnchanged}) sees a text-only edit.
+     */
+    @Query("UPDATE scheduled_message SET status = 'SCHEDULED', scheduledFor = :scheduledFor, "
+            + "holdIfReplied = :holdIfReplied, latenessPolicy = :latenessPolicy, text = :text, "
+            + "holdReason = NULL, updatedAt = MAX(:now, updatedAt + 1) WHERE id = :id AND status IN (:from)")
+    int rescheduleWithText(long id, long scheduledFor, boolean holdIfReplied, String latenessPolicy,
+                           String text, List<String> from, long now);
+
     @Query("UPDATE scheduled_message SET rung = :to, rungReason = NULL, updatedAt = :now "
             + "WHERE id = :id AND rung = :from AND status IN (:statuses)")
     int upgradeRung(long id, String from, String to, List<String> statuses, long now);

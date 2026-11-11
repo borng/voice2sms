@@ -193,11 +193,26 @@ public final class SendLaterRepository {
      */
     public boolean reschedule(long id, long scheduledFor, boolean holdIfReplied,
                               LatenessPolicy latenessPolicy, Watermark newWm) {
+        return reschedule(id, scheduledFor, holdIfReplied, latenessPolicy, newWm, null);
+    }
+
+    /**
+     * D49 / R12a / OD40: {@link #reschedule(long, long, boolean, LatenessPolicy, Watermark)} that
+     * also stores the edited {@code text} (exactly, no trimming) in the same status-guarded UPDATE
+     * as the time, hold and If-late. {@code null} keeps the stored text. A refused row (not
+     * SCHEDULED/HELD) keeps its text. Blank text is rejected.
+     */
+    public boolean reschedule(long id, long scheduledFor, boolean holdIfReplied,
+                              LatenessPolicy latenessPolicy, Watermark newWm, String text) {
         if (latenessPolicy == null) throw new IllegalArgumentException("latenessPolicy");
+        if (text != null && text.trim().isEmpty()) throw new IllegalArgumentException("text is blank");
         return db.runInTransaction(() -> {
             ScheduledMessageEntity before = newWm != null ? dao.message(id) : null;
-            int n = dao.reschedule(id, scheduledFor, holdIfReplied, latenessPolicy.name(),
-                    WAITING, clock.nowMs());
+            int n = text == null
+                    ? dao.reschedule(id, scheduledFor, holdIfReplied, latenessPolicy.name(),
+                            WAITING, clock.nowMs())
+                    : dao.rescheduleWithText(id, scheduledFor, holdIfReplied, latenessPolicy.name(),
+                            text, WAITING, clock.nowMs());
             if (n == 1 && newWm != null) {
                 dao.upsertWatermark(StoreMapping.replacing(id, dao.watermark(id), newWm,
                         before != null ? before.createdAt : 0L));
