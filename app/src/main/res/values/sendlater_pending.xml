@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- sendlater:pending-notification (R45, OD39): the "N scheduled" notification channel. -->
+<resources>
+    <string name="sendlater_pending_channel_name">Scheduled messages</string>
+    <string name="sendlater_pending_channel_description">How many messages are waiting to send and which one is next.</string>
+</resources>

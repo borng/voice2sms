@@ -226,6 +226,8 @@ final class AndroidEngineDeps {
                     .putExtra(SendLaterIntents.EXTRA_MESSAGE_ID, id);
             if (e164 != null) i.putExtra(SendLaterIntents.EXTRA_E164, e164);
             app.sendBroadcast(i);
+            // R45: every engine status change (edit, cancel, hold, send outcome, expiry, snooze).
+            PendingSummaryNotifier.refresh(app);
         }
     }
 

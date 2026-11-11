@@ -30,6 +30,7 @@ import com.voice2sms.sendlater.SendLaterIntents;
 import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.a11y.A11yWarning;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
+import com.voice2sms.sendlater.engine.PendingSummaryNotifier;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.engine.SendLaterScheduler;
 import com.voice2sms.sendlater.listener.SendLaterListenerStatus;
@@ -219,6 +220,8 @@ public final class SendLaterSettingsController {
             Intent changed = new Intent(SendLaterIntents.ACTION_STATE_CHANGED)
                     .setPackage(app.getPackageName());
             app.sendBroadcast(changed);
+            // R45 / OD24: off cancels the "N scheduled" notification, on brings it back.
+            PendingSummaryNotifier.refresh(app);
         };
         try {
             SendLaterEngine.applySwitch(app, broadcast);

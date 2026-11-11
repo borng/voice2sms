@@ -33,7 +33,11 @@ public final class SendLaterBootReceiver extends BroadcastReceiver {
         final Context app = context.getApplicationContext();
         final PendingResult pending = goAsync();
         SendLaterEngine.runInBackground(app,
-                () -> SendLaterEngine.reregisterAll(app),
+                () -> {
+                    SendLaterEngine.reregisterAll(app);
+                    // R45: after the re-arm (time zone change re-labels the next time too).
+                    PendingSummaryNotifier.refresh(app);
+                },
                 pending::finish);
     }
 }
