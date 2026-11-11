@@ -109,7 +109,7 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
+            android:theme="@style/Theme.Voice2SMS.Settings" />
 
         <!-- sendlater:sheet-ui start -->
         <!-- Scheduling sheet (R12). Not exported: capture surfaces, the chip and notifications in
@@ -227,7 +227,7 @@
             android:name=".sendlater.ui.UpcomingActivity"
             android:exported="false"
             android:label="@string/sendlater_upcoming_title"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+            android:theme="@style/Theme.Voice2SMS.Settings">
             <intent-filter>
                 <action android:name="com.voice2sms.sendlater.action.UPCOMING" />
                 <category android:name="android.intent.category.DEFAULT" />
