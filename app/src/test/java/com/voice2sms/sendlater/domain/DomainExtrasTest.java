@@ -33,7 +33,7 @@ public class DomainExtrasTest {
     @Test
     public void pinnedEnumValues() {
         assertEquals(set("DEFAULT", "WITHIN_30_MIN", "NEVER_LATE", "UP_TO_24H"), names(LatenessPolicy.values()));
-        assertEquals(set("REPLIED", "REACHED_OUT", "OUTBOUND_ONLY", "UNVERIFIED", "LOCKED"), names(HoldReason.values()));
+        assertEquals(set("REPLIED", "REACHED_OUT", "OUTBOUND_ONLY", "UNVERIFIED", "LOCKED", "DRAFT"), names(HoldReason.values()));
         assertEquals(set("LATE", "NO_SESSION", "NO_NETWORK", "LOCKED", "NO_SENDER"), names(RemindReason.values()));
         assertEquals(set("SENT_VERIFIED", "SENT_UNVERIFIED", "FAILED", "CANNOT_SHOW"), names(SendOutcome.values()));
         assertTrue(LatenessPolicy.AUTO == LatenessPolicy.DEFAULT);
