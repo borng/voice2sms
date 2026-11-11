@@ -127,10 +127,11 @@ public class DraftChoiceEngineTest {
         DraftStash.put(ID, DRAFT);
         // The send path's detail for draft_present stays could_not_send (OD34 contract).
         SendLaterEngine.onSendOutcome(null, ID, SendOutcome.CANNOT_SHOW, RemindCause.DETAIL_COULD_NOT_SEND);
-        assertEquals(Status.SCHEDULED, w.store.status(ID));
+        // D42 (OD35 ruling): the draft outcome holds the record as HELD(DRAFT).
+        assertEquals(Status.HELD, w.store.status(ID));
+        assertEquals(HoldReason.DRAFT, w.store.get(ID).getHoldReason());
         assertEquals(Collections.singletonList("draft"), notifier.posted);
         assertEquals(Collections.singletonList(DRAFT), notifier.drafts);
-        assertTrue("never sends itself later", marks.isReminded(ID));
         assertNull("the draft left memory with the notification", DraftStash.take(ID));
     }
 
@@ -160,7 +161,7 @@ public class DraftChoiceEngineTest {
 
     // ------------------------------------------------------------------ the actions
 
-    /** The row after the choice notification: SCHEDULED, reminded. */
+    /** The row after the choice notification: HELD(DRAFT) (D42). */
     private void choiceShown() {
         inFlight();
         DraftStash.put(ID, DRAFT);
@@ -186,10 +187,11 @@ public class DraftChoiceEngineTest {
     @Test public void keepDraftSendsNothingAndKeepsTheMessageWaiting() {
         choiceShown();
         assertEquals(TapResult.DONE, SendLaterEngine.onNotificationTap(null, DraftNotice.ACTION_KEEP, ID));
-        assertEquals(Status.SCHEDULED, w.store.status(ID));
+        // D42 (OD35 ruling): Keep draft leaves the message HELD(DRAFT); nothing is sent.
+        assertEquals(Status.HELD, w.store.status(ID));
+        assertEquals(HoldReason.DRAFT, w.store.get(ID).getHoldReason());
         assertTrue(sender.modes.isEmpty());
         assertTrue(notifier.dismissed.contains(ID));
-        assertTrue("still never sends itself", marks.isReminded(ID));
     }
 
     @Test public void sendNowAndSendAnywayStillAsk() {
