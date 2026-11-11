@@ -45,6 +45,7 @@ import com.voice2sms.sendlater.domain.Rung;
 import com.voice2sms.sendlater.domain.ScheduledMessage;
 import com.voice2sms.sendlater.domain.Watermark;
 import com.voice2sms.sendlater.engine.GvSession;
+import com.voice2sms.sendlater.engine.PendingSummaryNotifier;
 import com.voice2sms.sendlater.engine.SendLaterEngine;
 import com.voice2sms.sendlater.engine.TapResult;
 import com.voice2sms.sendlater.store.PersistException;
@@ -669,6 +670,8 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                 .putExtra(SendLaterIntents.EXTRA_SCHEDULED_FOR, stored.getScheduledFor())
                 .putExtra(SendLaterIntents.EXTRA_LABEL, label);
         app.sendBroadcast(done);
+        // R45: the new message joins the "N scheduled" notification.
+        PendingSummaryNotifier.refresh(app);
         runOnUiThread(() -> {
             if (!isFinishing()) finish();
         });
