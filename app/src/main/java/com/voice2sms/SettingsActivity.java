@@ -302,21 +302,26 @@ public class SettingsActivity extends AppCompatActivity
 
             Preference sendLaterRow = findPreference(KEY_GROUP_SEND_LATER);
             if (sendLaterRow != null) {
+                // D55: "<state> · exact alarms on|off · battery OK|may delay sends"
+                boolean exact = SendLaterSettingsController.exactAlarmsAllowed(c);
+                BatteryStatus status = BatteryHealth.check(c);
+                boolean batteryOk = BatteryIndicator.of(status) == BatteryIndicator.OK;
                 int res;
                 if (!SendLaterSettings.isEnabled(c)) {
                     res = SendLaterSettings.offByRestore(c)
                             ? R.string.sendlater_home_summary_send_later_off_restore
                             : R.string.sendlater_home_summary_send_later_off;
                 } else {
-                    BatteryStatus status = BatteryHealth.check(c);
-                    boolean attention = BatteryIndicator.of(status) != BatteryIndicator.OK
-                            || !SendLaterSettingsController.exactAlarmsAllowed(c)
+                    boolean attention = !batteryOk || !exact
                             || !SendLaterSettingsController.notificationsAllowed(c)
                             || !A11yWarning.isServiceEnabled(c, false);
                     res = attention ? R.string.sendlater_home_summary_send_later_attention
                             : R.string.sendlater_home_summary_send_later_on;
                 }
-                sendLaterRow.setSummary(res);
+                sendLaterRow.setSummary(c.getString(R.string.sendlater_home_summary_send_later_detail,
+                        c.getString(res), onOff(c, exact),
+                        c.getString(batteryOk ? R.string.sendlater_home_summary_battery_ok
+                                : R.string.sendlater_home_summary_battery_fix)));
             }
 
             Preference defaultSmsRow = findPreference(KEY_GROUP_DEFAULT_SMS);

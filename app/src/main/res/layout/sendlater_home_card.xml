@@ -1,53 +1,163 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launcher page "Scheduled messages" card (R35a): title, Send Later state, next 3 rows, See all (N). -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- Launcher page "Scheduled messages" card (R35a; mockup D55): rounded surface; header with a
+     clock icon, the title and an On/Off pill (opens the Send Later group); the next 3 rows
+     (sendlater_home_row); a full-width "See all N scheduled" button; or the empty state. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:paddingStart="?android:attr/listPreferredItemPaddingStart"
-    android:paddingEnd="?android:attr/listPreferredItemPaddingEnd"
+    android:paddingStart="16dp"
     android:paddingTop="16dp"
+    android:paddingEnd="16dp"
     android:paddingBottom="8dp">
 
-    <TextView
-        android:id="@+id/sendlater_home_card_title"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:accessibilityHeading="true"
-        android:text="@string/sendlater_home_card_title"
-        android:textColor="?android:attr/textColorPrimary"
-        android:textSize="20sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/sendlater_home_card_switch"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="?android:attr/selectableItemBackground"
-        android:minHeight="48dp"
-        android:gravity="center_vertical"
-        android:textSize="14sp" />
-
     <LinearLayout
-        android:id="@+id/sendlater_home_card_rows"
+        android:id="@+id/sendlater_home_card_surface"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical" />
+        android:background="@drawable/sendlater_home_card_bg"
+        android:orientation="vertical">
 
-    <TextView
-        android:id="@+id/sendlater_home_card_empty"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:textSize="14sp"
-        android:visibility="gone" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="8dp">
 
-    <Button
-        android:id="@+id/sendlater_home_card_see_all"
-        style="?android:attr/borderlessButtonStyle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="end"
-        android:visibility="gone" />
-</LinearLayout>
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/sendlater_ic_clock"
+                android:tint="@color/sendlater_accent_text" />
+
+            <TextView
+                android:id="@+id/sendlater_home_card_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:accessibilityHeading="true"
+                android:text="@string/sendlater_home_card_title"
+                android:textColor="@color/sendlater_home_card_text"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/sendlater_home_card_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/sendlater_home_pill_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="64dp"
+                android:minHeight="44dp"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:text="@string/sendlater_home_card_pill_on"
+                android:textColor="@color/sendlater_on_accent_text"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/sendlater_home_card_divider" />
+
+        <LinearLayout
+            android:id="@+id/sendlater_home_card_rows"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:divider="@drawable/sendlater_home_divider"
+            android:orientation="vertical"
+            android:showDividers="middle" />
+
+        <!-- Loading / load failed -->
+        <TextView
+            android:id="@+id/sendlater_home_card_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingTop="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="16dp"
+            android:textColor="@color/sendlater_home_card_text_secondary"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <!-- Empty state (D55) -->
+        <LinearLayout
+            android:id="@+id/sendlater_home_card_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="18dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/sendlater_home_card_empty_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/sendlater_home_card_text"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/sendlater_home_card_empty_how"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:lineSpacingExtra="2dp"
+                android:textColor="@color/sendlater_home_card_text_secondary"
+                android:textSize="14sp" />
+
+            <ImageView
+                android:id="@+id/sendlater_home_card_empty_tab"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="12dp"
+                android:adjustViewBounds="true"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/sendlater_home_empty_tab" />
+
+            <TextView
+                android:id="@+id/sendlater_home_card_empty_scope"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="@color/sendlater_home_card_text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <View
+            android:id="@+id/sendlater_home_card_see_all_divider"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/sendlater_home_card_divider"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/sendlater_home_card_see_all"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minHeight="48dp"
+            android:textColor="@color/sendlater_accent_text"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>

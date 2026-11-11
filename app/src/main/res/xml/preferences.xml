@@ -15,183 +15,203 @@
         android:persistent="false" />
     <!-- sendlater:home-scheduled end -->
 
-    <PreferenceScreen
-        android:key="group_send_later"
-        android:title="@string/sendlater_home_group_send_later"
-        android:persistent="false">
+    <!-- home-redesign (D55): "SETTINGS" label (teal, own layout) over the six group rows; each
+         row has its Material icon, a live status line and a chevron. -->
+    <PreferenceCategory
+        android:key="home_settings_section"
+        android:title="@string/sendlater_home_section_settings"
+        android:layout="@layout/sendlater_home_section_label">
 
-        <!-- sendlater:upcoming-settings start (R36, R37) -->
-        <PreferenceCategory android:title="@string/sendlater_settings_category">
-            <SwitchPreferenceCompat
-                android:key="sendlater_enabled"
-                android:title="@string/sendlater_settings_enabled_title"
-                android:summaryOn="@string/sendlater_settings_enabled_on"
-                android:summaryOff="@string/sendlater_settings_enabled_off"
-                android:persistent="false"
-                android:defaultValue="true" />
-            <Preference
-                android:key="sendlater_upcoming"
-                android:title="@string/sendlater_settings_upcoming_title"
-                android:summary="@string/sendlater_settings_upcoming_summary" />
-            <Preference
-                android:key="sendlater_slot_morning"
-                android:title="@string/sendlater_settings_slot_morning"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_slot_afternoon"
-                android:title="@string/sendlater_settings_slot_afternoon"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_slot_evening"
-                android:title="@string/sendlater_settings_slot_evening"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_slot_night"
-                android:title="@string/sendlater_settings_slot_night"
-                android:persistent="false" />
-            <ListPreference
-                android:key="sendlater_outbound_policy"
-                android:title="@string/sendlater_settings_outbound_title"
-                android:entries="@array/sendlater_settings_outbound_entries"
-                android:entryValues="@array/sendlater_settings_outbound_values"
-                android:defaultValue="STILL_SEND"
-                app:useSimpleSummaryProvider="true" />
-            <SwitchPreferenceCompat
-                android:key="sendlater_hold_default"
-                android:title="@string/sendlater_settings_hold_default_title"
-                android:summary="@string/sendlater_settings_hold_default_summary"
-                android:defaultValue="true" />
-            <SwitchPreferenceCompat
-                android:key="sendlater_clear_draft"
-                android:title="@string/sendlater_settings_clear_draft_title"
-                android:summary="@string/sendlater_settings_clear_draft_summary"
-                android:defaultValue="true" />
-            <Preference
-                android:key="sendlater_exact_alarm"
-                android:title="@string/sendlater_settings_exact_title"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_notifications"
-                android:title="@string/sendlater_settings_notifications_title"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_accessibility"
-                android:title="@string/sendlater_settings_accessibility_title"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_listener"
-                android:title="@string/sendlater_settings_listener_title"
-                android:summary="@string/sendlater_listener_summary"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_contacts"
-                android:title="@string/sendlater_settings_contacts_title"
-                android:persistent="false" />
-            <Preference
-                android:key="sendlater_help"
-                android:title="@string/sendlater_settings_help_title"
-                android:summary="@string/sendlater_settings_help_summary"
-                android:selectable="false"
-                android:persistent="false" />
-            <!-- sendlater:battery-guard row (R38), merged into the Send Later category -->
-            <Preference
-                android:key="sendlater_battery"
-                android:title="@string/sendlater_battery_title"
-                android:persistent="false" />
-        </PreferenceCategory>
-        <!-- sendlater:upcoming-settings end -->
-    </PreferenceScreen>
+        <PreferenceScreen
+            android:key="group_send_later"
+            android:icon="@drawable/sendlater_ic_group_schedule"
+            android:widgetLayout="@layout/sendlater_home_chevron"
+            android:title="@string/sendlater_home_group_send_later"
+            android:persistent="false">
 
-    <PreferenceScreen
-        android:key="group_default_sms"
-        android:title="@string/sendlater_home_group_default_sms"
-        android:persistent="false">
+            <!-- sendlater:upcoming-settings start (R36, R37) -->
+            <PreferenceCategory android:title="@string/sendlater_settings_category">
+                <SwitchPreferenceCompat
+                    android:key="sendlater_enabled"
+                    android:title="@string/sendlater_settings_enabled_title"
+                    android:summaryOn="@string/sendlater_settings_enabled_on"
+                    android:summaryOff="@string/sendlater_settings_enabled_off"
+                    android:persistent="false"
+                    android:defaultValue="true" />
+                <Preference
+                    android:key="sendlater_upcoming"
+                    android:title="@string/sendlater_settings_upcoming_title"
+                    android:summary="@string/sendlater_settings_upcoming_summary" />
+                <Preference
+                    android:key="sendlater_slot_morning"
+                    android:title="@string/sendlater_settings_slot_morning"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_slot_afternoon"
+                    android:title="@string/sendlater_settings_slot_afternoon"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_slot_evening"
+                    android:title="@string/sendlater_settings_slot_evening"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_slot_night"
+                    android:title="@string/sendlater_settings_slot_night"
+                    android:persistent="false" />
+                <ListPreference
+                    android:key="sendlater_outbound_policy"
+                    android:title="@string/sendlater_settings_outbound_title"
+                    android:entries="@array/sendlater_settings_outbound_entries"
+                    android:entryValues="@array/sendlater_settings_outbound_values"
+                    android:defaultValue="STILL_SEND"
+                    app:useSimpleSummaryProvider="true" />
+                <SwitchPreferenceCompat
+                    android:key="sendlater_hold_default"
+                    android:title="@string/sendlater_settings_hold_default_title"
+                    android:summary="@string/sendlater_settings_hold_default_summary"
+                    android:defaultValue="true" />
+                <SwitchPreferenceCompat
+                    android:key="sendlater_clear_draft"
+                    android:title="@string/sendlater_settings_clear_draft_title"
+                    android:summary="@string/sendlater_settings_clear_draft_summary"
+                    android:defaultValue="true" />
+                <Preference
+                    android:key="sendlater_exact_alarm"
+                    android:title="@string/sendlater_settings_exact_title"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_notifications"
+                    android:title="@string/sendlater_settings_notifications_title"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_accessibility"
+                    android:title="@string/sendlater_settings_accessibility_title"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_listener"
+                    android:title="@string/sendlater_settings_listener_title"
+                    android:summary="@string/sendlater_listener_summary"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_contacts"
+                    android:title="@string/sendlater_settings_contacts_title"
+                    android:persistent="false" />
+                <Preference
+                    android:key="sendlater_help"
+                    android:title="@string/sendlater_settings_help_title"
+                    android:summary="@string/sendlater_settings_help_summary"
+                    android:selectable="false"
+                    android:persistent="false" />
+                <!-- sendlater:battery-guard row (R38), merged into the Send Later category -->
+                <Preference
+                    android:key="sendlater_battery"
+                    android:title="@string/sendlater_battery_title"
+                    android:persistent="false" />
+            </PreferenceCategory>
+            <!-- sendlater:upcoming-settings end -->
+        </PreferenceScreen>
 
-        <PreferenceCategory android:title="Default SMS App">
-            <Preference
-                android:key="set_default_sms"
-                android:title="Set as default SMS app"
-                android:summary="Required to handle sms: links from other apps" />
-        </PreferenceCategory>
-    </PreferenceScreen>
+        <PreferenceScreen
+            android:key="group_default_sms"
+            android:icon="@drawable/sendlater_ic_group_chat"
+            android:widgetLayout="@layout/sendlater_home_chevron"
+            android:title="@string/sendlater_home_group_default_sms"
+            android:persistent="false">
 
-    <PreferenceScreen
-        android:key="group_google_account"
-        android:title="@string/sendlater_home_group_account"
-        android:persistent="false">
+            <PreferenceCategory android:title="Default SMS App">
+                <Preference
+                    android:key="set_default_sms"
+                    android:title="Set as default SMS app"
+                    android:summary="Required to handle sms: links from other apps" />
+            </PreferenceCategory>
+        </PreferenceScreen>
 
-        <PreferenceCategory android:title="Google Account">
-            <Preference
-                android:key="switch_account"
-                android:title="Switch Google account"
-                android:summary="Not set" />
-        </PreferenceCategory>
-    </PreferenceScreen>
+        <PreferenceScreen
+            android:key="group_google_account"
+            android:icon="@drawable/sendlater_ic_group_person"
+            android:widgetLayout="@layout/sendlater_home_chevron"
+            android:title="@string/sendlater_home_group_account"
+            android:persistent="false">
 
-    <PreferenceScreen
-        android:key="group_gemini"
-        android:title="@string/sendlater_home_group_gemini"
-        android:persistent="false">
+            <PreferenceCategory android:title="Google Account">
+                <Preference
+                    android:key="switch_account"
+                    android:title="Switch Google account"
+                    android:summary="Not set" />
+            </PreferenceCategory>
+        </PreferenceScreen>
 
-        <PreferenceCategory android:title="Gemini Integration">
-            <Preference
-                android:key="gemini_intercept_toggle"
-                android:title="Enable Gemini interception"
-                android:summary="Tap to open Accessibility Settings" />
-            <SwitchPreferenceCompat
-                android:key="gemini_auto_send"
-                android:title="Auto-send Gemini messages"
-                android:summary="Automatically send intercepted Gemini SMS via Google Voice"
-                android:defaultValue="true" />
-            <Preference
-                android:key="setup_wizard"
-                android:title="Run setup wizard"
-                android:summary="Reopen the first-install setup guide" />
-        </PreferenceCategory>
-    </PreferenceScreen>
+        <PreferenceScreen
+            android:key="group_gemini"
+            android:icon="@drawable/sendlater_ic_group_sparkle"
+            android:widgetLayout="@layout/sendlater_home_chevron"
+            android:title="@string/sendlater_home_group_gemini"
+            android:persistent="false">
 
-    <PreferenceScreen
-        android:key="group_notifications"
-        android:title="@string/sendlater_home_group_notifications"
-        android:persistent="false">
+            <PreferenceCategory android:title="Gemini Integration">
+                <Preference
+                    android:key="gemini_intercept_toggle"
+                    android:title="Enable Gemini interception"
+                    android:summary="Tap to open Accessibility Settings" />
+                <SwitchPreferenceCompat
+                    android:key="gemini_auto_send"
+                    android:title="Auto-send Gemini messages"
+                    android:summary="Automatically send intercepted Gemini SMS via Google Voice"
+                    android:defaultValue="true" />
+                <Preference
+                    android:key="setup_wizard"
+                    android:title="Run setup wizard"
+                    android:summary="Reopen the first-install setup guide" />
+            </PreferenceCategory>
+        </PreferenceScreen>
 
-        <PreferenceCategory android:title="Notifications">
-            <SwitchPreferenceCompat
-                android:key="show_autosend_notification"
-                android:title="Auto-send confirmation"
-                android:summary="Show a notification when a message is auto-sent"
-                android:defaultValue="true" />
-            <SwitchPreferenceCompat
-                android:key="incoming_sms_notify"
-                android:title="Incoming SMS notifications"
-                android:summary="Show a heads-up notification for every received SMS — useful for 2FA codes"
-                android:defaultValue="true" />
-        </PreferenceCategory>
-    </PreferenceScreen>
+        <PreferenceScreen
+            android:key="group_notifications"
+            android:icon="@drawable/sendlater_ic_group_bell"
+            android:widgetLayout="@layout/sendlater_home_chevron"
+            android:title="@string/sendlater_home_group_notifications"
+            android:persistent="false">
 
-    <PreferenceScreen
-        android:key="group_about"
-        android:title="@string/sendlater_home_group_about"
-        android:persistent="false">
+            <PreferenceCategory android:title="Notifications">
+                <SwitchPreferenceCompat
+                    android:key="show_autosend_notification"
+                    android:title="Auto-send confirmation"
+                    android:summary="Show a notification when a message is auto-sent"
+                    android:defaultValue="true" />
+                <SwitchPreferenceCompat
+                    android:key="incoming_sms_notify"
+                    android:title="Incoming SMS notifications"
+                    android:summary="Show a heads-up notification for every received SMS — useful for 2FA codes"
+                    android:defaultValue="true" />
+            </PreferenceCategory>
+        </PreferenceScreen>
 
-        <PreferenceCategory android:title="About">
-            <Preference
-                android:key="about_what"
-                android:title="@string/sendlater_about_what_title"
-                android:summary="@string/sendlater_about_what_summary"
-                android:selectable="false"
-                android:persistent="false" />
-            <Preference
-                android:key="about_how"
-                android:title="@string/sendlater_about_how_title"
-                android:summary="@string/sendlater_about_how_summary"
-                android:selectable="false"
-                android:persistent="false" />
-            <Preference
-                android:key="app_version"
-                android:title="Version"
-                android:selectable="true" />
-        </PreferenceCategory>
-    </PreferenceScreen>
+        <PreferenceScreen
+            android:key="group_about"
+            android:icon="@drawable/sendlater_ic_group_info"
+            android:widgetLayout="@layout/sendlater_home_chevron"
+            android:title="@string/sendlater_home_group_about"
+            android:persistent="false">
+
+            <PreferenceCategory android:title="About">
+                <Preference
+                    android:key="about_what"
+                    android:title="@string/sendlater_about_what_title"
+                    android:summary="@string/sendlater_about_what_summary"
+                    android:selectable="false"
+                    android:persistent="false" />
+                <Preference
+                    android:key="about_how"
+                    android:title="@string/sendlater_about_how_title"
+                    android:summary="@string/sendlater_about_how_summary"
+                    android:selectable="false"
+                    android:persistent="false" />
+                <Preference
+                    android:key="app_version"
+                    android:title="Version"
+                    android:selectable="true" />
+            </PreferenceCategory>
+        </PreferenceScreen>
+    </PreferenceCategory>
 
 </PreferenceScreen>
