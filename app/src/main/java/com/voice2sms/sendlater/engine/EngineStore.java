@@ -55,6 +55,16 @@ public interface EngineStore {
 
     boolean reschedule(long id, long scheduledFor, boolean holdIfReplied, LatenessPolicy policy, Watermark newWm);
 
+    /**
+     * D49 / R12a: as {@link #reschedule(long, long, boolean, LatenessPolicy, Watermark)} and also
+     * stores {@code text}, in the same guarded write (SCHEDULED/HELD only; a refused row keeps its
+     * text). Default: not supported (false), so no store silently drops an edited text.
+     */
+    default boolean reschedule(long id, long scheduledFor, boolean holdIfReplied, LatenessPolicy policy,
+                               Watermark newWm, String text) {
+        return false;
+    }
+
     List<ScheduledMessage> allPending();
 
     List<ScheduledMessage> allHeld();

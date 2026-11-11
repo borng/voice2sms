@@ -29,6 +29,8 @@
     <string name="sendlater_sheet_not_editable">This message can no longer be changed</string>
     <string name="sendlater_sheet_persist_failed">Could not save the scheduled message. Nothing was changed. Try again.</string>
     <string name="sendlater_sheet_time_past">That time has passed. Pick a time in the future.</string>
+    <!-- D49 / R12a: label of the editable message text in edit mode. -->
+    <string name="sendlater_sheet_text_hint">Message</string>
     <string name="sendlater_sheet_empty_draft">There is no message text to schedule.</string>
     <string name="sendlater_sheet_loading">Loading…</string>
     <string name="sendlater_sheet_clock_desc">Clock</string>

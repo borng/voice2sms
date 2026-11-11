@@ -94,6 +94,10 @@ final class AndroidEngineDeps {
                                             LatenessPolicy policy, Watermark newWm) {
             return r().reschedule(id, scheduledFor, holdIfReplied, policy, newWm);
         }
+        @Override public boolean reschedule(long id, long scheduledFor, boolean holdIfReplied,
+                                            LatenessPolicy policy, Watermark newWm, String text) {
+            return r().reschedule(id, scheduledFor, holdIfReplied, policy, newWm, text);
+        }
         @Override public List<ScheduledMessage> allPending() { return r().allPending(); }
         @Override public List<ScheduledMessage> allHeld() { return r().allHeld(); }
         @Override public List<ScheduledMessage> inFlight() { return r().inFlight(); }

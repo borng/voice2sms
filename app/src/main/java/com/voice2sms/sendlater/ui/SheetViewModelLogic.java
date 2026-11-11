@@ -47,6 +47,10 @@ public final class SheetViewModelLogic {
     private LatenessPolicy latenessPolicy = LatenessPolicy.DEFAULT;
     /** Edit mode: the stored createdAt, the base of the lateness budget (never changes on edit). */
     private long storedCreatedAtMs = -1L;
+    /** Edit mode (D49 / R12a): the message text, prefilled with the stored text; null in capture. */
+    private String text;
+    /** Edit mode: the text as stored, to tell an edited text from an untouched one. */
+    private String storedText;
 
     private SheetViewModelLogic(boolean editMode, long nowMs, TimeZone zone, int[] slotMinutes,
                                 RecipientState state, String e164, List<String> candidates) {
@@ -117,6 +121,8 @@ public final class SheetViewModelLogic {
         m.latenessPolicy = existing.getLatenessPolicy() != null
                 ? existing.getLatenessPolicy() : LatenessPolicy.DEFAULT;
         m.storedCreatedAtMs = existing.getCreatedAt();
+        m.text = existing.getText() != null ? existing.getText() : "";
+        m.storedText = m.text;
         m.selectedTimeMs = existing.getScheduledFor();
         m.selectedPresetIndex = m.indexOfPreset(existing.getScheduledFor());
         return m;
@@ -206,9 +212,37 @@ public final class SheetViewModelLogic {
         return -1;
     }
 
+    // ------------------------------------------------------------------ text (D49, OD40, R12a)
+
+    /** Edit mode only: the message text is an editable field. Capture keeps the quoted draft. */
+    public boolean isTextEditable() { return editMode; }
+
+    /** Edit mode: the stored text until changed, then exactly what was set. Capture: null. */
+    public String getText() { return text; }
+
+    /** Edit mode: the user's edit, kept exactly (no trimming). Ignored in capture mode. */
+    public void setText(String t) {
+        if (!editMode) return;
+        text = t != null ? t : "";
+    }
+
+    /** Edit mode: whether the text differs from the stored text (exact comparison). */
+    public boolean isTextChanged() { return editMode && !text.equals(storedText); }
+
+    /** Whether {@code t} has something other than whitespace (empty text cannot be saved). */
+    static boolean hasContent(String t) {
+        if (t == null) return false;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (!Character.isWhitespace(c) && !Character.isSpaceChar(c)) return true;
+        }
+        return false;
+    }
+
     // ------------------------------------------------------------------ buttons
 
     public boolean isScheduleEnabled() {
+        if (editMode && !hasContent(text)) return false;
         return recipientState == RecipientState.RESOLVED && e164 != null && selectedTimeMs > 0;
     }
 

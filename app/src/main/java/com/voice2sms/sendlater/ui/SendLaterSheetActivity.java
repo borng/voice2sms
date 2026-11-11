@@ -91,6 +91,9 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     private RadioGroup recipientChoices;
     private TextInputLayout numberEntryLayout;
     private EditText numberEntry;
+    /** D49 / R12a: edit mode's editable message text (capture shows the quoted cardDraft). */
+    private View draftEditLayout;
+    private EditText draftEdit;
     private TextView sessionHint;
     private RadioGroup presets;
     private Button pickDateTime;
@@ -164,6 +167,8 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         recipientChoices = findViewById(R.id.recipient_choices);
         numberEntryLayout = findViewById(R.id.number_entry_layout);
         numberEntry = findViewById(R.id.number_entry);
+        draftEditLayout = findViewById(R.id.draft_edit_layout);
+        draftEdit = findViewById(R.id.draft_edit);
         sessionHint = findViewById(R.id.session_hint);
         presets = findViewById(R.id.presets);
         pickDateTime = findViewById(R.id.pick_datetime);
@@ -206,6 +211,18 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                 boolean ok = logic.enterNumber(s.toString());
                 // OD22(8): an invalid manual number says so inline (empty field: no message yet).
                 showNumberError(!ok && s.toString().trim().length() > 0);
+                render();
+            }
+        });
+        draftEdit.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                if (binding || logic == null || !logic.isTextEditable()) return;
+                logic.setText(s.toString());
+                // Empty or whitespace-only text cannot be saved: the existing empty-draft message.
+                if (isDraftEmpty()) showError(R.string.sendlater_sheet_empty_draft);
+                else clearError();
                 render();
             }
         });
@@ -272,8 +289,10 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         return new Watermark(q, newestId, newestTs, bubbleHash, capturedAt, null);
     }
 
+    /** Capture: the quoted draft; edit mode (D49): the editable text as it is now. */
     private boolean isDraftEmpty() {
-        return draft == null || draft.trim().isEmpty();
+        String t = logic != null && logic.isTextEditable() ? logic.getText() : draft;
+        return t == null || t.trim().isEmpty();
     }
 
     // ================================================================== edit mode (R16)
@@ -314,6 +333,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     private void showNotEditable() {
         editable = false;
         logic = null;
+        draftEdit.setEnabled(false);
         presets.setVisibility(View.GONE);
         pickDateTime.setVisibility(View.GONE);
         holdCheckbox.setVisibility(View.GONE);
@@ -378,8 +398,17 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                 @Override public void onNothingSelected(AdapterView<?> parent) {}
             });
 
-            String quoted = draft == null ? "" : getString(R.string.sendlater_sheet_draft_quoted, draft);
-            cardDraft.setText(quoted);
+            if (logic.isTextEditable()) {
+                // D49 / R12a / OD40: edit mode prefills the stored text, exactly, and lets it change.
+                cardDraft.setVisibility(View.GONE);
+                draftEditLayout.setVisibility(View.VISIBLE);
+                draftEdit.setText(logic.getText());
+            } else {
+                String quoted = draft == null ? "" : getString(R.string.sendlater_sheet_draft_quoted, draft);
+                cardDraft.setText(quoted);
+                cardDraft.setVisibility(View.VISIBLE);
+                draftEditLayout.setVisibility(View.GONE);
+            }
 
             cancelButton.setText(logic.isEditMode()
                     ? R.string.sendlater_sheet_cancel_message : R.string.sendlater_sheet_cancel);
@@ -713,11 +742,22 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         final long when = logic.getSelectedTimeMs();
         final boolean hold = logic.isHoldIfReplied();
         final LatenessPolicy policy = logic.getLatenessPolicy();
+        if (isDraftEmpty()) {
+            showError(R.string.sendlater_sheet_empty_draft);
+            return;
+        }
+        // D49 / R12a: an edited text goes with the time, hold and If-late in one guarded write;
+        // an untouched one is left as stored.
+        final String text = logic.isTextChanged() ? logic.getText() : null;
         clearError();
         setBusy(true);
         io.execute(() -> {
             try {
-                updateArmAndAnnounce(id, when, hold, policy, SheetViewModelLogic.editBaseline(now));
+                if (text != null) {
+                    updateArmAndAnnounce(id, when, hold, policy, SheetViewModelLogic.editBaseline(now), text);
+                } else {
+                    updateArmAndAnnounce(id, when, hold, policy, SheetViewModelLogic.editBaseline(now));
+                }
             } catch (RuntimeException e) {
                 // OD22(8): a DB or notification error shows the persist error; the sheet stays open.
                 Log.w(TAG, "update failed: " + e.getClass().getSimpleName());
@@ -730,11 +770,14 @@ public class SendLaterSheetActivity extends AppCompatActivity {
      * Worker thread. Throws on a store or notification failure (caught by {@link #onUpdate}).
      * {@code baseline} is the fresh reply baseline every time edit takes (OD31 P2, whole-branch M2).
      * A row that changed meanwhile (already sending, sent, cancelled) is refused by the engine and
-     * the sheet says so inline, like Cancel message.
+     * the sheet says so inline, like Cancel message. {@code text} (D49 / R12a): the edited text,
+     * stored in the same guarded write; null keeps the stored text.
      */
     private void updateArmAndAnnounce(long id, long when, boolean hold, LatenessPolicy policy,
-                                      Watermark baseline) {
-        final TapResult result = SendLaterEngine.reschedule(app, id, when, hold, policy, baseline);
+                                      Watermark baseline, String text) {
+        final TapResult result = text != null
+                ? SendLaterEngine.reschedule(app, id, when, hold, policy, baseline, text)
+                : SendLaterEngine.reschedule(app, id, when, hold, policy, baseline);
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed()) return;
             if (result == TapResult.DONE) {
@@ -749,5 +792,11 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                 error.setVisibility(View.VISIBLE);
             }
         });
+    }
+
+    /** Time, hold and If-late only: the stored text is kept (the user did not change it). */
+    private void updateArmAndAnnounce(long id, long when, boolean hold, LatenessPolicy policy,
+                                      Watermark baseline) {
+        updateArmAndAnnounce(id, when, hold, policy, baseline, (String) null);
     }
 }
