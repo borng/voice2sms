@@ -1,7 +1,6 @@
 package com.voice2sms;
 
 import android.Manifest;
-import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
 import android.app.role.RoleManager;
 import android.content.ActivityNotFoundException;
@@ -13,7 +12,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
-import android.view.accessibility.AccessibilityManager;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -24,22 +22,26 @@ import com.voice2sms.sendlater.battery.BatteryIndicator;
 import com.voice2sms.sendlater.battery.BatteryStatus;
 import com.voice2sms.sendlater.listener.SendLaterListenerStatus;
 import com.voice2sms.sendlater.ui.SendLaterSettingsController;
-
-import java.util.List;
+import com.voice2sms.sendlater.ui.SetupChecks;
 
 /**
  * First-install onboarding wizard.
- * Walks the user through 5 setup steps:
+ * Walks the user through 6 setup steps:
  *   1. Set Voice2SMS as default SMS app
- *   2. Run ADB commands to block Gemini's direct SMS (future: Shizuku)
- *   3. Enable the Accessibility Service for Gemini interception
- *   4. Send Later (R42, D27): notification access, exact alarms and notifications, each with a
- *      button and a live status line, plus the plain-words reasons why the accessibility service
- *      also watches Google Voice and why notification access helps (R37)
- *   5. Battery (R42, R43): allow background use, with a green/amber indicator; on Samsung the
+ *   2. Sign in to Google Voice (D60, OD46): status from the saved google_account, button opens
+ *      the Google Voice screen
+ *   3. Run ADB commands to block Gemini's direct SMS (future: Shizuku)
+ *   4. Enable the Accessibility Service for Gemini interception
+ *   5. Send Later (R42, D27): notification access, exact alarms, notifications and (Android 14+
+ *      only) full-screen alerts, each with a button and a live status line, plus the plain-words
+ *      reasons why the accessibility service also watches Google Voice and why notification
+ *      access helps (R37)
+ *   6. Battery (R42, R43): allow background use, with a green/amber indicator; on Samsung the
  *      Never sleeping apps advice
- * Every status line is recomputed in onResume, so coming back from a system screen shows the
- * new state.
+ * Every SetupChecks item has a status line here (D60). The statuses come from the SetupChecks
+ * probes, the same checks the settings screens use for their "Needs attention" mark, and a
+ * missing item shows that mark at the end of its status line. Every status line is recomputed
+ * in onResume, so coming back from a system screen shows the new state.
  */
 public class SetupActivity extends Activity {
 
@@ -60,7 +62,11 @@ public class SetupActivity extends Activity {
         Button btnDefault = findViewById(R.id.btn_set_default_sms);
         btnDefault.setOnClickListener(v -> requestDefaultSms());
 
-        // Step 2: Copy ADB commands
+        // Step 2: Google sign-in (D60, OD46): the Google Voice screen runs the account sign-in
+        findViewById(R.id.btn_google_signin).setOnClickListener(v ->
+                startActivity(new Intent(this, GVoiceWebViewActivity.class)));
+
+        // Step 3: Copy ADB commands
         Button btnCopy = findViewById(R.id.btn_copy_commands);
         btnCopy.setOnClickListener(v -> {
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
@@ -70,7 +76,7 @@ public class SetupActivity extends Activity {
             }
         });
 
-        // Step 3: Open accessibility settings
+        // Step 4: Open accessibility settings
         Button btnAccessibility = findViewById(R.id.btn_enable_accessibility);
         btnAccessibility.setOnClickListener(v -> {
             Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
@@ -89,7 +95,7 @@ public class SetupActivity extends Activity {
             finish();
         });
 
-        // Step 4: Send Later (R42)
+        // Step 5: Send Later (R42)
         findViewById(R.id.btn_sendlater_listener).setOnClickListener(v -> {
             try {
                 startActivity(SendLaterListenerStatus.openSettingsIntent());
@@ -105,8 +111,12 @@ public class SetupActivity extends Activity {
             btnExact.setEnabled(false); // always allowed below API 31
         }
         findViewById(R.id.btn_sendlater_notifications).setOnClickListener(v -> requestNotifications());
+        // Full-screen alerts (D60, OD46): the permission only exists on Android 14+ (API 34)
+        findViewById(R.id.sendlater_full_screen_group).setVisibility(
+                Build.VERSION.SDK_INT >= 34 ? View.VISIBLE : View.GONE);
+        findViewById(R.id.btn_sendlater_full_screen).setOnClickListener(v -> requestFullScreenIntent());
 
-        // Step 5: Battery (R42, R43)
+        // Step 6: Battery (R42, R43)
         findViewById(R.id.btn_battery_fix).setOnClickListener(v -> openBatteryFix());
         findViewById(R.id.battery_samsung_advice)
                 .setVisibility(BatteryHealth.isSamsung() ? View.VISIBLE : View.GONE);
@@ -147,6 +157,14 @@ public class SetupActivity extends Activity {
         openAppDetails();
     }
 
+    /** Android 14+: this app's "Allow full-screen notifications" screen, else App info. */
+    private void requestFullScreenIntent() {
+        if (Build.VERSION.SDK_INT < 34) return;
+        Intent i = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                Uri.parse("package:" + getPackageName()));
+        if (!open(i)) openAppDetails();
+    }
+
     private void openBatteryFix() {
         Intent fix = BatteryHealth.fixIntent(this);
         if (fix == null || !open(fix)) {
@@ -181,62 +199,60 @@ public class SetupActivity extends Activity {
     }
 
     private void updateStatusIndicators() {
-        // Step 1 status: is default SMS app?
-        TextView step1Status = findViewById(R.id.step1_status);
-        boolean isDefault = DefaultSms.isDefault(this);
-        step1Status.setText(isDefault ? "Status: Default SMS app" : "Status: Not set");
-        step1Status.setTextColor(statusColour(isDefault));
+        // Every status from the SetupChecks probes (D60): the same checks as the settings marks.
+        // Accessibility is A11yWarning.isServiceEnabled(c, false) there (fail closed).
+        SetupChecks.Probes probes = SetupChecks.live(this);
 
-        // Step 3 status: is accessibility service enabled?
-        TextView step3Status = findViewById(R.id.step3_status);
-        boolean a11yEnabled = isAccessibilityServiceEnabled();
-        step3Status.setText(a11yEnabled ? "Status: Enabled" : "Status: Not enabled");
-        step3Status.setTextColor(statusColour(a11yEnabled));
+        // Step 1: default SMS app
+        item(probes, SetupChecks.Item.DEFAULT_SMS, R.id.step1_status,
+                R.string.sendlater_wizard_default_sms_on, R.string.sendlater_wizard_default_sms_off);
 
-        // Step 4: Send Later statuses (R42)
-        boolean listenerOn = SendLaterListenerStatus.isEnabled(this);
-        status(R.id.sendlater_listener_status, listenerOn,
+        // Step 2: Google sign-in (the saved google_account)
+        item(probes, SetupChecks.Item.GOOGLE_ACCOUNT, R.id.google_signin_status,
+                R.string.sendlater_wizard_signin_on, R.string.sendlater_wizard_signin_off);
+
+        // Step 4: accessibility service
+        item(probes, SetupChecks.Item.ACCESSIBILITY, R.id.step3_status,
+                R.string.sendlater_wizard_accessibility_on, R.string.sendlater_wizard_accessibility_off);
+
+        // Step 5: Send Later statuses (R42)
+        item(probes, SetupChecks.Item.NOTIFICATION_LISTENER, R.id.sendlater_listener_status,
                 R.string.sendlater_setup_listener_on, R.string.sendlater_setup_listener_off);
-        status(R.id.sendlater_exact_status, SendLaterSettingsController.exactAlarmsAllowed(this),
+        item(probes, SetupChecks.Item.EXACT_ALARMS, R.id.sendlater_exact_status,
                 R.string.sendlater_setup_exact_on, R.string.sendlater_setup_exact_off);
-        status(R.id.sendlater_notifications_status, SendLaterSettingsController.notificationsAllowed(this),
+        item(probes, SetupChecks.Item.POST_NOTIFICATIONS, R.id.sendlater_notifications_status,
                 R.string.sendlater_setup_notifications_on, R.string.sendlater_setup_notifications_off);
+        item(probes, SetupChecks.Item.FULL_SCREEN_INTENT, R.id.sendlater_full_screen_status,
+                R.string.sendlater_wizard_full_screen_on, R.string.sendlater_wizard_full_screen_off);
 
-        // Step 5: Battery status and indicator (R42, R43)
-        BatteryStatus battery = BatteryHealth.check(this);
-        BatteryIndicator indicator = BatteryIndicator.of(battery);
-        status(R.id.battery_status, indicator == BatteryIndicator.OK,
+        // Step 6: Battery status and indicator (R42, R43)
+        item(probes, SetupChecks.Item.BATTERY, R.id.battery_status,
                 R.string.sendlater_battery_setup_status_ok, R.string.sendlater_battery_setup_status_limited);
+        BatteryIndicator indicator = BatteryIndicator.of(BatteryHealth.check(this));
         ImageView icon = findViewById(R.id.battery_indicator);
         icon.setImageResource(indicator.iconRes);
         icon.setContentDescription(getString(indicator.descriptionRes));
     }
 
-    /** A step status line, coloured like step 1 and step 3. */
-    private void status(int viewId, boolean on, int onText, int offText) {
-        TextView t = findViewById(viewId);
-        t.setText(on ? onText : offText);
-        t.setTextColor(statusColour(on));
+    /**
+     * One SetupChecks item's status line: text and colour from its probe, and the setup-checks
+     * "Needs attention" mark at the end of the line while the item is missing.
+     */
+    private void item(SetupChecks.Probes probes, SetupChecks.Item item, int statusId,
+                      int onText, int offText) {
+        boolean ok = probes.isOk(item);
+        TextView t = findViewById(statusId);
+        t.setText(ok ? onText : offText);
+        t.setTextColor(statusColour(ok));
+        t.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                0, 0, ok ? 0 : R.drawable.sendlater_ic_setup_warn, 0);
+        t.setContentDescription(ok ? null
+                : getString(R.string.sendlater_setup_needs_attention) + ". " + t.getText());
     }
 
     /** Status text colour (D51, R42a): resources with night values, 4.5:1 on the step card. */
     private int statusColour(boolean on) {
         return getColor(on ? R.color.sendlater_setup_status_ok : R.color.sendlater_setup_status_off);
-    }
-
-    private boolean isAccessibilityServiceEnabled() {
-        AccessibilityManager am = (AccessibilityManager) getSystemService(ACCESSIBILITY_SERVICE);
-        if (am == null) return false;
-
-        List<AccessibilityServiceInfo> enabled =
-                am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC);
-        String targetId = getPackageName() + "/.GeminiSmsInterceptService";
-        for (AccessibilityServiceInfo info : enabled) {
-            if (info.getId() != null && info.getId().equals(targetId)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private void requestDefaultSms() {
@@ -257,7 +273,7 @@ public class SetupActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_DEFAULT_SMS) {
             updateStatusIndicators();
-            if (resultCode == RESULT_OK) {
+            if (resultCode == RESULT_OK && DefaultSms.isDefault(this)) {
                 Toast.makeText(this, "Voice2SMS set as default SMS app",
                         Toast.LENGTH_SHORT).show();
             }
