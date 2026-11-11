@@ -23,13 +23,13 @@
     <string name="sendlater_home_group_notifications">Notifications</string>
     <string name="sendlater_home_group_about">About</string>
 
-    <!-- Group summaries, recomputed on every resume -->
+    <!-- Group summaries, recomputed on every resume (default SMS wording: D54) -->
     <string name="sendlater_home_summary_send_later_on">On</string>
     <string name="sendlater_home_summary_send_later_attention">On · needs attention</string>
     <string name="sendlater_home_summary_send_later_off">Off</string>
     <string name="sendlater_home_summary_send_later_off_restore">Off · turned off after restore</string>
-    <string name="sendlater_home_summary_default_sms_yes">Voice2SMS is the default SMS app</string>
-    <string name="sendlater_home_summary_default_sms_no">Not the default SMS app. Tap to set it.</string>
+    <string name="sendlater_home_summary_default_sms_yes">voice2sms is your default texting app</string>
+    <string name="sendlater_home_summary_default_sms_no">Not your default texting app: texts from other apps won\'t open here. Tap to fix.</string>
     <string name="sendlater_home_summary_account">Current: %1$s</string>
     <string name="sendlater_home_summary_account_none">Not set</string>
     <string name="sendlater_home_summary_gemini">Interception %1$s · auto-send %2$s</string>
