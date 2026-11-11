@@ -292,7 +292,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     /** Capture: the quoted draft; edit mode (D49): the editable text as it is now. */
     private boolean isDraftEmpty() {
         String t = logic != null && logic.isTextEditable() ? logic.getText() : draft;
-        return t == null || t.trim().isEmpty();
+        return !SheetViewModelLogic.hasContent(t);
     }
 
     // ================================================================== edit mode (R16)
@@ -495,6 +495,8 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         busy = b;
         scheduleButton.setEnabled(!b && editable && logic != null && logic.isScheduleEnabled() && !isDraftEmpty());
         cancelButton.setEnabled(!b);
+        // edit-text review L2: no keystrokes while the captured text is being saved.
+        if (draftEdit != null) draftEdit.setEnabled(!b && editable);
     }
 
     private void showError(int res) {
