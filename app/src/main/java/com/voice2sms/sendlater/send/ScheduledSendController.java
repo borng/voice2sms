@@ -169,10 +169,10 @@ public final class ScheduledSendController {
     static final String DETAIL_WRONG_THREAD = "wrong_thread";
     /**
      * Extra compose time after the one reload of the thread page (a second settle plus the load).
-     * D35: the settle grew to 15 s; the load share is 4 s so the compose timeout plus this grace
-     * stays inside {@link LockCoverPolicy#HARD_TIMEOUT_MS} (60 s).
+     * D35: the settle grew to 15 s; the load share is 5 s. D43: the compose timeout plus this
+     * grace (60 s) stays at least 10 s inside {@link LockCoverPolicy#HARD_TIMEOUT_MS} (75 s).
      */
-    static final long RELOAD_COMPOSE_GRACE_MS = ScheduledCompose.THREAD_SETTLE_MS + 4_000L;
+    static final long RELOAD_COMPOSE_GRACE_MS = ScheduledCompose.THREAD_SETTLE_MS + 5_000L;
     /**
      * Upper bound on staying covered after the last outcome (12 s, kept from send-hardening; OD27
      * accepts it). The activity normally finishes on the engine's state broadcast, well before
