@@ -20,9 +20,9 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:padding="12dp"
-            android:background="#FFF3E0"
+            android:background="@color/sendlater_upcoming_banner_bg"
             android:text="@string/sendlater_upcoming_disabled"
-            android:textColor="#5D4037"
+            android:textColor="@color/sendlater_upcoming_banner_text"
             android:textSize="14sp"
             android:visibility="gone" />
 

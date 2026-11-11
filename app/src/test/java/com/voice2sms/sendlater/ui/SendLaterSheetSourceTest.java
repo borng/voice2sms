@@ -298,8 +298,8 @@ public class SendLaterSheetSourceTest {
 
     @Test public void appThemeAndExistingActivitiesUntouched() throws IOException {
         String m = read(MANIFEST);
-        assertTrue("SettingsActivity keeps its theme",
-                Pattern.compile("(?s)\\.SettingsActivity\"\\s+android:exported=\"false\"\\s+android:theme=\"@style/Theme\\.AppCompat\\.Light\\.DarkActionBar\"")
+        assertTrue("SettingsActivity uses the DayNight settings theme (D50, OD42)",
+                Pattern.compile("(?s)\\.SettingsActivity\"\\s+android:exported=\"false\"\\s+android:theme=\"@style/Theme\\.Voice2SMS\\.Settings\"")
                         .matcher(m).find());
     }
 
