@@ -287,4 +287,34 @@ public class NewComposeChipDomTest {
         assertEquals(CHIP, r.getString(2));
         assertNull(r.isNull(3) ? null : r.get(3));
     }
+
+    /**
+     * LIVE (Pixel, rc7, 2026-11-11): GV's real chip label holds the number twice: the visible
+     * aria-hidden {@code .chip-name} "(202) 555-0123" (wrapped in LRE/PDF marks) and a
+     * {@code .cdk-visually-hidden} spelled-out copy "2 0 2 5 5 5 0 1 2 3" for screen readers.
+     * Reading the whole label gives 20 digits, so no number and no tab.
+     */
+    @Test
+    public void realGvChipWithVisuallyHiddenDigitsYieldsItsNumber() throws Exception {
+        String realChip = "<mat-chip-row id=\"mat-mdc-chip-0\" class=\"mat-mdc-chip mat-mdc-chip-row"
+                + " mdc-evolution-chip chip-row\" role=\"row\" aria-haspopup=\"menu\">"
+                + "<span class=\"mat-mdc-chip-focus-overlay\"></span>"
+                + "<span role=\"gridcell\" class=\"mat-mdc-chip-action mdc-evolution-chip__action"
+                + " mdc-evolution-chip__cell mdc-evolution-chip__cell--primary\">"
+                + "<span class=\"mdc-evolution-chip__text-label mat-mdc-chip-action-label\">"
+                + "<div aria-hidden=\"true\" class=\"chip-name\"> \u202a(202) 555-0123\u202c </div>"
+                + "<div class=\"cdk-visually-hidden\">2 0 2 5 5 5 0 1 2 3</div>"
+                + "<span aria-hidden=\"true\" class=\"mat-mdc-chip-primary-focus-indicator\"></span>"
+                + "</span><span class=\"mat-mdc-chip-touch-target\"></span></span>"
+                + "<span role=\"gridcell\" class=\"mdc-evolution-chip__cell mdc-evolution-chip__cell--trailing\">"
+                + "<button role=\"button\" class=\"mat-mdc-chip-remove mat-mdc-chip-trailing-icon\""
+                + " type=\"button\" aria-label=\"Remove 2 0 2 5 5 5 0 1 2 3?\">"
+                + "<mat-icon aria-hidden=\"true\">cancel</mat-icon></button></span></mat-chip-row>";
+        String html = page(toField(input(PH_AFTER), realChip), null);
+        assertOneChip("real GV chip (chip-name + visually-hidden digits)", chipAndTab(html));
+        // The scheduled Send gate reads the same chip: one digit run must be the number itself.
+        assertEquals("scheduled Send gate digit runs", "2025550123,,",
+                evaluateInPage(html, "", "_v2sSlChipDigits(document.querySelector('mat-chip-row'))").trim()
+                        .replaceAll("^\"|\"$", ""));
+    }
 }
