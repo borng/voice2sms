@@ -1,6 +1,7 @@
 package com.voice2sms;
 
 import android.Manifest;
+import android.accounts.AccountManager;
 import android.app.Activity;
 import android.app.role.RoleManager;
 import android.content.ActivityNotFoundException;
@@ -16,6 +17,8 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.preference.PreferenceManager;
 
 import com.voice2sms.sendlater.battery.BatteryHealth;
 import com.voice2sms.sendlater.battery.BatteryIndicator;
@@ -47,6 +50,7 @@ public class SetupActivity extends Activity {
 
     private static final int REQUEST_DEFAULT_SMS = 4001;
     private static final int REQUEST_POST_NOTIFICATIONS = 4002;
+    private static final int REQUEST_GOOGLE_ACCOUNT = 4003;
 
     private static final String ADB_COMMANDS =
             "adb shell pm revoke com.google.android.googlequicksearchbox android.permission.SEND_SMS\n\n"
@@ -62,9 +66,11 @@ public class SetupActivity extends Activity {
         Button btnDefault = findViewById(R.id.btn_set_default_sms);
         btnDefault.setOnClickListener(v -> requestDefaultSms());
 
-        // Step 2: Google sign-in (D60, OD46): the Google Voice screen runs the account sign-in
-        findViewById(R.id.btn_google_signin).setOnClickListener(v ->
-                startActivity(new Intent(this, GVoiceWebViewActivity.class)));
+        // Step 2: Google sign-in (D60, OD46). The status reads the saved google_account, which
+        // the Google Voice screen does not write on its own, so with no account saved the button
+        // first opens the account chooser (as Settings > Switch account does), saves the choice
+        // and then opens the Google Voice screen for the sign-in itself.
+        findViewById(R.id.btn_google_signin).setOnClickListener(v -> startGoogleSignIn());
 
         // Step 3: Copy ADB commands
         Button btnCopy = findViewById(R.id.btn_copy_commands);
@@ -255,6 +261,27 @@ public class SetupActivity extends Activity {
         return getColor(on ? R.color.sendlater_setup_status_ok : R.color.sendlater_setup_status_off);
     }
 
+    private void startGoogleSignIn() {
+        String saved = PreferenceManager.getDefaultSharedPreferences(this)
+                .getString("google_account", null);
+        if (saved == null || saved.isEmpty()) {
+            Intent chooser = SetupChecks.fixIntent(this, SetupChecks.Item.GOOGLE_ACCOUNT);
+            if (chooser != null) {
+                try {
+                    startActivityForResult(chooser, REQUEST_GOOGLE_ACCOUNT);
+                    return;
+                } catch (ActivityNotFoundException e) {
+                    // No account chooser on this phone: fall through to the Google Voice screen.
+                }
+            }
+        }
+        openGoogleVoice();
+    }
+
+    private void openGoogleVoice() {
+        startActivity(new Intent(this, GVoiceWebViewActivity.class));
+    }
+
     private void requestDefaultSms() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             RoleManager rm = getSystemService(RoleManager.class);
@@ -271,6 +298,20 @@ public class SetupActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_GOOGLE_ACCOUNT) {
+            if (resultCode == RESULT_OK && data != null) {
+                String accountName = data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
+                if (accountName != null && !accountName.isEmpty()) {
+                    PreferenceManager.getDefaultSharedPreferences(this).edit()
+                            .putString("google_account", accountName).apply();
+                    updateStatusIndicators();
+                    openGoogleVoice();
+                    return;
+                }
+            }
+            updateStatusIndicators();
+            return;
+        }
         if (requestCode == REQUEST_DEFAULT_SMS) {
             updateStatusIndicators();
             if (resultCode == RESULT_OK && DefaultSms.isDefault(this)) {
