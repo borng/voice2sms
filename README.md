@@ -247,7 +247,7 @@ open App info for Voice2SMS, tap ⋮ and choose **Allow restricted settings**.
   sends it. An opaque "Sending scheduled message…" cover hides the screen for
   the whole send, locked or not. On a locked phone, the screen turns on and the
   cover shows over the lock screen; the phone stays locked. On an unlocked
-  phone, the cover has a **Stop** button. A send is given at most one minute.
+  phone, the cover has a **Stop** button. A send is given at most 75 seconds.
 - **Only that conversation.** The message is typed only into the conversation
   with the number you scheduled for. If Google Voice shows any other
   conversation, nothing is typed and you get a reminder instead.

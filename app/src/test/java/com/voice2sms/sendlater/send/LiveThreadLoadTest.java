@@ -134,6 +134,14 @@ public class LiveThreadLoadTest {
                 < LockCoverPolicy.HARD_TIMEOUT_MS);
     }
 
+    @Test public void theReloadPathLeavesAtLeastTenSecondsBeforeTheHardTimeout() {
+        // D43: compose 40 s + reload grace (settle 15 s + load 5 s) = 60 s, inside 75 s.
+        assertEquals(ScheduledCompose.THREAD_SETTLE_MS + 5_000L, ScheduledSendController.RELOAD_COMPOSE_GRACE_MS);
+        assertTrue(LockCoverPolicy.HARD_TIMEOUT_MS
+                - (ScheduledSendController.COMPOSE_TIMEOUT_MS + ScheduledSendController.RELOAD_COMPOSE_GRACE_MS)
+                >= 10_000L);
+    }
+
     // ================================================================== activity: scheduled loads
 
     @Test public void aClaimedScheduledLaunchLoadsNothingButTheJobsThread() throws IOException {
