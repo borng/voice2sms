@@ -149,13 +149,19 @@ The ADB commands persist across reboots.
 
 ## Settings
 
-- **Set as default SMS app**, **Switch Google account**
-- **Enable Gemini interception** — opens Accessibility settings
-- **Auto-send Gemini messages** — Automatically send intercepted Gemini SMS (vs. opening for review). Default on.
-- **Run setup wizard** — reopen the first-install guide
-- **Auto-send confirmation** — Show a "Sent via Google Voice" notification on auto-sends
-- **Incoming SMS notifications** — Show a heads-up notification for every received SMS (default on; useful for 2FA codes). Toggling off leaves the inbox-persistence path intact — only the live notification is suppressed.
-- **Send Later** category — the on/off switch, **Upcoming**, the **Morning / Afternoon / Evening / Night time** slots, **If I text them first** (Still send or Hold and ask), **Hold if they text first** (the default for new messages), **Clear draft after scheduling**, and live permission rows. See [Send Later](#send-later).
+Opening Voice2SMS from the launcher shows its home page. At the top, a
+**Scheduled messages** card lists the next three scheduled or held messages
+(time, name, first line; held ones are marked) and whether Send Later is on.
+Tap a scheduled message to edit it, a held one to open Upcoming, or
+**See all (N)** for the full Upcoming list. Below the card, settings are grouped
+into rows, each with a one-line live summary; tap a row to open that group:
+
+- **Send Later** — the on/off switch, **Upcoming**, the **Morning / Afternoon / Evening / Night time** slots, **If I text them first** (Still send or Hold and ask), **Hold if they text first** (the default for new messages), **Clear draft after scheduling**, live permission rows and the Battery row. See [Send Later](#send-later).
+- **Default SMS app** — **Set as default SMS app**
+- **Google account** — **Switch Google account**
+- **Gemini** — **Enable Gemini interception** (opens Accessibility settings); **Auto-send Gemini messages** (send intercepted Gemini SMS automatically instead of opening them for review; default on); **Run setup wizard** (reopen the first-install guide)
+- **Notifications** — **Auto-send confirmation** (a "Sent via Google Voice" notification on auto-sends); **Incoming SMS notifications** (a heads-up notification for every received SMS; default on, useful for 2FA codes. Turning it off only suppresses the live notification; messages are still saved to the inbox.)
+- **About** — version and build (long-press to copy)
 
 ## Send Later
 
@@ -187,7 +193,7 @@ text back only if the box is still empty in the same conversation.
 A light-blue **chip** above the message box shows what is scheduled in that
 conversation ("Scheduled · Sat 9:00 AM", "2 scheduled", "Held · …"). Tap it to
 edit a single message, or to see that conversation in **Upcoming**. Upcoming
-(Settings → Send Later → Upcoming) lists Pending, Held and Recent (last 30 days)
+(the home page's **See all**, or Settings → Send Later → Upcoming) lists Pending, Held and Recent (last 30 days)
 messages, with Change time, Cancel and Send now.
 
 Group conversations are not supported.
