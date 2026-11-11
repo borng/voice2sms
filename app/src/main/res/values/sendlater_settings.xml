@@ -5,6 +5,8 @@
     <string name="sendlater_settings_category">Send Later</string>
     <string name="sendlater_settings_enabled_title">Send Later</string>
     <string name="sendlater_settings_enabled_on">On. Schedule texts from Google Voice and they go out at the time you pick.</string>
+    <!-- D44: shown next to the switch while a restore or device transfer turned Send Later off. -->
+    <string name="sendlater_settings_restore_note">Turned off after restore</string>
     <string name="sendlater_settings_enabled_off">Off. Scheduled messages wait and nothing is sent automatically. Your saved messages are kept.</string>
 
     <string name="sendlater_settings_slot_morning">Morning time</string>
