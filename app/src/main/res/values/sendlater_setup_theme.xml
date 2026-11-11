@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- setup-dark (D51, R42a): the first-install setup wizard follows the system light/dark mode.
+     AppCompat DayNight NoActionBar matches the old Theme.AppCompat.Light.NoActionBar in light
+     mode; the window background is the wizard's own page colour (sendlater_setup_colors.xml). -->
+<resources>
+    <style name="Theme.Voice2SMS.Setup" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/sendlater_setup_page_bg</item>
+    </style>
+</resources>

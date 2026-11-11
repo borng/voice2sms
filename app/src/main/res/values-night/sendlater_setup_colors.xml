@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- setup-dark (D51, R42a): setup wizard colours, dark mode. Page #121212, step cards #1E1E1E.
+     Contrast (WCAG 2.x) on the card #1E1E1E unless noted:
+       title #E6E6E6 13.4:1 · body #C4C4C4 9.6:1 · hint #9E9E9E 6.2:1
+       subtitle #B0B0B0 8.6:1 on page #121212 · footer #8A8A8A 5.4:1 on page #121212
+       code #E0E0E0 on code box #2A2A2A 10.9:1
+       status ok #81C784 8.3:1 · status off #9E9E9E 6.2:1
+       step badge: white on #0077A3 5.0:1 · "Coming soon" text #8A8A8A 5.0:1 on #1A1A1A
+       battery indicator fills (values-night/sendlater_colors.xml): #1E9E46 4.8:1, #D96A00 4.8:1. -->
+<resources>
+    <color name="sendlater_setup_page_bg">#121212</color>
+    <color name="sendlater_setup_card_bg">#1E1E1E</color>
+    <color name="sendlater_setup_text_title">#E6E6E6</color>
+    <color name="sendlater_setup_text_subtitle">#B0B0B0</color>
+    <color name="sendlater_setup_text_body">#C4C4C4</color>
+    <color name="sendlater_setup_text_hint">#9E9E9E</color>
+    <color name="sendlater_setup_code_text">#E0E0E0</color>
+    <color name="sendlater_setup_code_bg">#2A2A2A</color>
+    <color name="sendlater_setup_badge_bg">#0077A3</color>
+    <color name="sendlater_setup_badge_text">#FFFFFF</color>
+    <color name="sendlater_setup_future_bg">#1A1A1A</color>
+    <color name="sendlater_setup_future_badge_bg">#5C5C5C</color>
+    <color name="sendlater_setup_future_text">#8A8A8A</color>
+    <color name="sendlater_setup_footer_text">#8A8A8A</color>
+    <color name="sendlater_setup_status_ok">#81C784</color>
+    <color name="sendlater_setup_status_off">#9E9E9E</color>
+</resources>
