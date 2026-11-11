@@ -1443,6 +1443,8 @@ function v2sSendLaterInit() {
     window._v2sSl = {
         installed: true,
         e164: null,          // 1:1 thread on screen, or null
+        ncCand: null,        // R10a: new-message page, single chip's page-derived E.164, or null
+        ncE164: null,        // R10a: ncCand as the bridge confirmed it (sendLaterNewComposeState), or null
         enabled: false,      // Send Later on for this page (chip state, or switchOn off-thread)
         switchOn: true,      // Java installs the module only while on; v2sSendLaterRefresh(on) updates it
         chip: null,          // last V2SBridge.sendLaterChipState answer
@@ -1487,7 +1489,7 @@ window.v2sSendLaterClear = function(messageId, expectedDraft, scheduledLabel) {
     var st = window._v2sSl;
     if (st) st.captureBusyUntil = 0;
     var ta = _v2sSlComposer();
-    var e164 = _v2sSlThreadE164();
+    var e164 = _v2sSlPageE164(st);
     var sameThread = !!(st && st.capture && e164 && e164 === st.capture.e164
         && location.href === st.capture.href);
     if (!ta || !sameThread || typeof expectedDraft !== 'string' || ta.value !== expectedDraft) {
@@ -1533,6 +1535,58 @@ function _v2sSlE164FromItemId(id) {
     // D38: the one E.164 rule (PhoneNumbers.isE164): no country code starts with 0.
     if (id.charAt(3) === '0') return null;
     return id.substring(2);
+}
+
+/**
+ * R10a: the number this page composes to: the open 1:1 thread's (R10), else, on GV's
+ * new-message page, the single recipient chip's number while it is still the one the bridge
+ * confirmed (sendLaterNewComposeState). Null otherwise.
+ */
+function _v2sSlPageE164(st) {
+    var e164 = _v2sSlThreadE164();
+    if (e164) return e164;
+    if (!st || !st.ncE164) return null;
+    var nc = _v2sSlNewComposeChip();
+    return nc.count === 1 && nc.e164 === st.ncE164 ? st.ncE164 : null;
+}
+
+/**
+ * R10a (D38): E.164 named by one chip field (text, aria-label or title), or null. "+" forms keep
+ * their digits; 10 digits, or 11 starting with 1, are NANP. Never a name: digits only.
+ */
+function _v2sSlChipFieldE164(text) {
+    var s = String(text || '');
+    var d = s.replace(/\D/g, '');
+    var e = null;
+    if (/\+\s*\d/.test(s)) e = '+' + d;
+    else if (d.length === 10) e = '+1' + d;
+    else if (d.length === 11 && d.charAt(0) === '1') e = '+' + d;
+    if (!e || !/^\+[1-9]\d{6,14}$/.test(e)) return null;
+    if (e.charAt(1) === '1' && (e.length !== 12 || e.charAt(2) < '2' || e.charAt(5) < '2')) return null;
+    return e;
+}
+
+/**
+ * R10a: recipient chips of GV's new-message page (the recipient input must be on the page):
+ * {count, e164}, e164 the single chip's number when its fields name exactly one, else null.
+ */
+function _v2sSlNewComposeChip() {
+    var input = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
+    var scope = input && input.closest ? input.closest('mat-chip-grid, mat-chip-list, mat-form-field') : null;
+    if (!scope) return { count: 0, e164: null };
+    var chips = scope.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR);
+    var e164 = null;
+    if (chips.length === 1) {
+        var c = chips[0];
+        var fields = [c.textContent || '', c.getAttribute('aria-label') || '', c.getAttribute('title') || ''];
+        for (var i = 0; i < fields.length; i++) {
+            var f = _v2sSlChipFieldE164(fields[i]);
+            if (!f) continue;
+            if (e164 && e164 !== f) return { count: chips.length, e164: null };
+            e164 = f;
+        }
+    }
+    return { count: chips.length, e164: e164 };
 }
 
 /** E.164 of the open 1:1 thread from location (itemId via URLSearchParams), else null. */
@@ -1595,10 +1649,17 @@ function _v2sSlTick(force) {
     if (!st) return;
     if (!force && (!st.enabled || document.hidden)) return;
     var e164 = _v2sSlThreadE164();
+    // R10a: on the new-message page (no thread), the single chip's number; a thread wins (R10).
+    var nc = e164 ? null : _v2sSlNewComposeChip();
+    var ncCand = nc && nc.count === 1 ? nc.e164 : null;
     if (e164 !== st.e164) {
         st.prevTitle = st.title ? st.title.title : '';
         st.e164 = e164;
+        st.ncCand = ncCand;
         st.title = null;
+        _v2sSlRefreshChip(st);
+    } else if (ncCand !== st.ncCand) {
+        st.ncCand = ncCand;
         _v2sSlRefreshChip(st);
     } else if (force || Date.now() - st.chipAt > 15000) {
         _v2sSlRefreshChip(st);
@@ -1656,9 +1717,23 @@ function _v2sSlRefreshChip(st) {
         }
         st.chip = state;
         st.enabled = !!(state && state.enabled === true);
+        st.ncE164 = null;
+    } else if (st.ncCand && V2SBridge.sendLaterNewComposeState) {
+        // R10a: the live activity confirms the single chip against its intent recipient.
+        var nc = _v2sSlNewComposeChip();
+        try {
+            state = JSON.parse(V2SBridge.sendLaterNewComposeState(_v2sBridgeNonce, nc.count, st.ncCand));
+        } catch (e) {
+            state = null;
+        }
+        var ok = !!(state && state.enabled === true);
+        st.ncE164 = ok ? st.ncCand : null;
+        st.chip = ok ? state : null;
+        st.enabled = ok || st.switchOn === true;
     } else {
         // No thread open: the switch as Java last pushed it (v2sSendLaterRefresh(on)).
         st.chip = null;
+        st.ncE164 = null;
         st.enabled = st.switchOn === true;
     }
     if (!st.enabled) {
@@ -1672,7 +1747,8 @@ function _v2sSlRefreshChip(st) {
 
 /** Runs the V2S_SL_TICK_MS timer only while Send Later is on and a 1:1 thread is open (R40). */
 function _v2sSlSchedule(st) {
-    var want = !!(st && st.enabled && st.e164);
+    // R10a: also on a confirmed new-message page (keeps the tab placed).
+    var want = !!(st && ((st.enabled && st.e164) || (st.enabled && st.ncE164)));
     if (want && !st.timer) {
         st.timer = setInterval(function() { _v2sSlTick(false); }, V2S_SL_TICK_MS);
     } else if (!want && st.timer) {
@@ -1704,7 +1780,7 @@ function _v2sSlOverlaps(a, b) {
 
 /** Positions (or hides) the edge tab, the chip and the bar around the compose row (R19). */
 function _v2sSlLayout(st) {
-    var ta = st && st.e164 ? _v2sSlComposer() : null;
+    var ta = st && (st.e164 || st.ncE164) ? _v2sSlComposer() : null;
     var rect = null;
     if (ta) {
         var rr = _v2sSlComposeRow(ta).getBoundingClientRect();
@@ -1803,15 +1879,18 @@ function _v2sSlChipTap() {
 function _v2sSlCapture() {
     var st = window._v2sSl;
     if (!st || !st.enabled) return;
-    var e164 = _v2sSlThreadE164();
+    var threadE164 = _v2sSlThreadE164();
+    // R10a: no thread: the new-message page's confirmed chip (Java re-checks the binding).
+    var e164 = threadE164 || _v2sSlPageE164(st);
     var ta = _v2sSlComposer();
-    if (!e164 || e164 !== st.e164 || !_v2sSlHasDraft(ta)) return;
+    if (!e164 || e164 !== (threadE164 ? st.e164 : st.ncE164) || !_v2sSlHasDraft(ta)) return;
     // UI M2: a second tap while the first capture is in flight opens no second sheet.
     if (st.captureBusyUntil && Date.now() < st.captureBusyUntil) return;
     st.captureBusyUntil = Date.now() + 1500;
     var bubbles = null;
     try {
-        bubbles = _v2sSlReadBubbles(20);
+        // R10a: a new-message page has no conversation: no watermark (DEVICE_ONLY).
+        bubbles = threadE164 ? _v2sSlReadBubbles(20) : null;
     } catch (e) {
         bubbles = null;
     }
@@ -1905,7 +1984,8 @@ function _v2sSlOnUndoTap() {
             return;
         }
         var ta = _v2sSlComposer();
-        if (ta && ta.value === '' && location.href === u.href && _v2sSlThreadE164() === u.e164) {
+        if (ta && ta.value === '' && location.href === u.href
+                && (_v2sSlThreadE164() === u.e164 || _v2sSlPageE164(st) === u.e164)) {
             _v2sSlSetInputValue(ta, u.draft, true);
             _v2sSlShowBar('Canceled — draft restored', null);
         } else {

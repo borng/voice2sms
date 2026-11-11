@@ -93,6 +93,14 @@ public final class CapturePayload {
     public Long getNewestMessageTimeMs() { return newestMessageTimeMs; }
     public Watermark.Quality getWatermarkQuality() { return watermarkQuality; }
 
+    /**
+     * R10a: the same capture with no watermark (DEVICE_ONLY): a new-message page has no thread
+     * yet, so nothing the page read is a newest message of this conversation.
+     */
+    public CapturePayload withoutWatermark() {
+        return new CapturePayload(e164, displayName, draftText, null, null);
+    }
+
     /** GV thread item id for this capture ("t." + E.164). */
     public String threadItemId() { return "t." + e164; }
 
