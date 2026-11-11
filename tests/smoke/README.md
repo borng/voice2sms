@@ -19,6 +19,7 @@ observation window. Covers the pre-v1.3.0 `WV.h22.run` NPE caused by
 ```bash
 ./tests/smoke/test-sms-intent.sh                       # default: 3 iterations
 ITERATIONS=10 WAIT_SECS=8 ./tests/smoke/test-sms-intent.sh
+SERIAL=<device-serial> ./tests/smoke/test-sms-intent.sh   # several devices attached
 ```
 
 Environment variables:
@@ -27,8 +28,39 @@ Environment variables:
 |--------------|------------------|------------------------------------------|
 | `ITERATIONS` | 3                | how many cold-start intent cycles to run |
 | `WAIT_SECS`  | 5                | time to wait for crash to appear         |
-| `RECIPIENT`  | `+12025550123`   | destination number (not sent, just URI)  |
-| `BODY`       | `smoke-test`     | body text (URL-encoded automatically)    |
+| `RECIPIENT`  | `+12025550123`   | destination number (fictional 555-01xx; never sent, just URI) |
+| `BODY`       | `smoke-test`     | body text (URL-encoded automatically; keep it one line) |
+| `ADB`        | `$ANDROID_HOME/platform-tools/adb`, then `/opt/android-sdk/platform-tools/adb`, then `adb` on PATH, then Windows `platform-tools/adb.exe` under `/mnt/c/Users/*` (WSL) | adb binary or a wrapper |
+| `SERIAL`     | none             | passed as `adb -s`                       |
+| `CLEANUP`    | `1`              | `0` = leave the typed body in the message box |
+| `CLEANUP_WAIT_SECS` | 30        | how long cleanup waits for the body to show up in the box |
+
+Exit codes: 0 pass, 1 crash detected, 2 setup problem, 3 no crash but the body text is
+still in the message box after cleanup.
+
+**Windows adb.** Every adb output is passed through `tr -d '\r'`, so plain `adb.exe` (CRLF
+output) works from WSL with no wrapper. The installed-package check uses `pm list packages
+--user 0` (Samsung Secure Folder / Pixel Private space users are not shell-accessible). The
+logcat start marker is taken from the device clock, so a WSL/phone time-zone difference does
+not hide a crash.
+
+**Draft cleanup.** Each intent types `BODY` into the Google Voice message box for
+`RECIPIENT`. `am force-stop` does not remove it: the WebView profile survives a force-stop,
+and Google Voice may keep the text as a draft for that conversation. So after the last
+iteration the script:
+
+1. waits up to `CLEANUP_WAIT_SECS` for the body to appear in the screen's accessibility dump
+   (`uiautomator dump`; the WebView's text fields are in it);
+2. only while `com.voice2sms` has window focus, sends `KEYCODE_MOVE_END` and
+   `KEYCODE_DEL` x (body length + 8) with `adb shell input keyevent` (real key events, so the
+   page sees an ordinary edit and saves the now-empty draft), up to 3 passes;
+3. dumps the screen again and requires the body text to be gone (exit 3 otherwise).
+
+If the screen cannot be read (locked phone, another app in front) it prints a warning and the
+manual step: open Voice2SMS and delete the body text from the message box. The dump can
+contain private screen content: it stays in a shell variable, is only grepped, is deleted from
+the device (`/data/local/tmp/v2s-smoke-dump.xml`) and is never printed. Keep the phone
+unlocked during the run.
 
 ### `sendlater-smoke.sh` (Send Later, debug build only)
 

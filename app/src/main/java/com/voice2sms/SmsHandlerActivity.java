@@ -61,7 +61,7 @@ public class SmsHandlerActivity extends Activity {
         // Offer to become default SMS app
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             RoleManager roleManager = getSystemService(RoleManager.class);
-            if (roleManager != null && !roleManager.isRoleHeld(RoleManager.ROLE_SMS)) {
+            if (roleManager != null && !DefaultSms.isDefault(this)) {
                 Intent roleIntent = roleManager.createRequestRoleIntent(RoleManager.ROLE_SMS);
                 startActivityForResult(roleIntent, REQUEST_DEFAULT_SMS);
                 return;
