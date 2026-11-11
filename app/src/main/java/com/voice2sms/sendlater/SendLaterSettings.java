@@ -2,11 +2,11 @@ package com.voice2sms.sendlater;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 
 import androidx.preference.PreferenceManager;
 
 import com.voice2sms.sendlater.domain.OutboundPolicy;
-import com.voice2sms.sendlater.store.SendLaterDatabase;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -60,6 +60,13 @@ public final class SendLaterSettings {
      * transfer: Send Later starts off there (D36). A fresh install has neither and starts on (D26).
      */
     public static final String SWITCH_SEEN_MARKER = "sendlater_switch_seen";
+    /**
+     * D44: set in {@link #SWITCH_PREFS} (never backed up) when the one-time set-up turned Send Later
+     * off because the phone was restored or transferred; Settings then shows "Turned off after
+     * restore" next to the switch. Cleared when the user sets the switch by hand
+     * ({@link #setEnabled}).
+     */
+    public static final String RESTORE_NOTE_FLAG = "sendlater_off_by_restore";
 
     private static final Object SWITCH_LOCK = new Object();
 
@@ -70,17 +77,45 @@ public final class SendLaterSettings {
             synchronized (SWITCH_LOCK) {
                 v = Read.bool(local, KEY_ENABLED, DEFAULT_ENABLED);
                 if (v == null) {
-                    v = Switch.migrate(prefs(c), local,
-                            c.getDatabasePath(SendLaterDatabase.NAME).exists());
+                    v = Switch.migrate(prefs(c), local, updatedOnThisPhone(c));
                 }
             }
         }
         return Parse.enabled(Read.one(KEY_ENABLED, v));
     }
 
-    /** Stores the master switch (D36: in {@link #SWITCH_PREFS}, never in the backed-up prefs). */
+    /**
+     * Stores the master switch set by hand (D36: in {@link #SWITCH_PREFS}, never in the backed-up
+     * prefs) and clears the "turned off after restore" note (D44).
+     */
     public static void setEnabled(Context c, boolean on) {
-        switchPrefs(c).edit().putBoolean(KEY_ENABLED, on).apply();
+        Switch.set(switchPrefs(c), on);
+    }
+
+    /**
+     * D44: true while Send Later is off because this phone was restored or transferred and the
+     * user has not set the switch by hand since. Runs the one-time switch set-up first.
+     */
+    public static boolean offByRestore(Context c) {
+        isEnabled(c);
+        return Switch.offByRestore(switchPrefs(c));
+    }
+
+    /**
+     * D36/D44: whether the app was updated on this phone (not freshly installed), from the package
+     * manager's install times, which are never part of a backup. A restore or device transfer
+     * installs the app fresh (first install time == last update time); an upgrade over a build
+     * that kept the old switch key does not. This replaces the old "sendlater.db exists" test,
+     * which the engine's process-start work could make true before the first switch read.
+     * Unreadable counts as not updated: the old key's value is then dropped (Send Later off).
+     */
+    static boolean updatedOnThisPhone(Context c) {
+        try {
+            PackageInfo pi = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
+            return pi.lastUpdateTime > pi.firstInstallTime;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** The non-backed-up prefs file that holds the master switch (D36). */
@@ -171,13 +206,15 @@ public final class SendLaterSettings {
      *   <li>{@link #SWITCH_SEEN_MARKER} in the default prefs: they were restored or transferred from
      *       another phone, so Send Later starts <b>off</b>.</li>
      *   <li>The old {@link #KEY_ENABLED} in the default prefs (builds before D36): an upgrade on
-     *       this phone keeps its value, but only when Send Later's database exists here
-     *       ({@code localData}, never backed up); without it the value came from a backup of an
-     *       older build and Send Later starts <b>off</b>.</li>
+     *       this phone keeps its value, but only when the app was updated here
+     *       ({@code localData}: {@link #updatedOnThisPhone}, never backed up); on a fresh install
+     *       the value came from a backup of an older build and Send Later starts <b>off</b>.</li>
      *   <li>Neither: a fresh install, {@link #DEFAULT_ENABLED} (on, D26).</li>
      * </ul>
      * Writes the result to {@code local}, removes the old key from the default prefs (so it is
      * no longer backed up) and marks them with {@link #SWITCH_SEEN_MARKER}. Returns the value.
+     * When the restore rule turned Send Later off, also sets {@link #RESTORE_NOTE_FLAG} in
+     * {@code local} (D44); {@link #set} (by hand) clears it.
      */
     static final class Switch {
         private Switch() {}
@@ -191,13 +228,34 @@ public final class SendLaterSettings {
             return DEFAULT_ENABLED;
         }
 
+        /** True when {@link #initial} turns Send Later off because the prefs came from a backup. */
+        static boolean turnedOffByRestore(SharedPreferences defaults, boolean localData) {
+            if (defaults == null) return false;
+            if (defaults.contains(SWITCH_SEEN_MARKER)) return true;
+            Object legacy = Read.bool(defaults, KEY_ENABLED, DEFAULT_ENABLED);
+            return legacy != null && !localData && Parse.enabled(Read.one(KEY_ENABLED, legacy));
+        }
+
         static boolean migrate(SharedPreferences defaults, SharedPreferences local, boolean localData) {
             boolean on = initial(defaults, localData);
-            local.edit().putBoolean(KEY_ENABLED, on).apply();
+            SharedPreferences.Editor e = local.edit().putBoolean(KEY_ENABLED, on);
+            if (!on && turnedOffByRestore(defaults, localData)) e.putBoolean(RESTORE_NOTE_FLAG, true);
+            e.apply();
             if (defaults != null) {
                 defaults.edit().remove(KEY_ENABLED).putBoolean(SWITCH_SEEN_MARKER, true).apply();
             }
             return on;
+        }
+
+        /** The switch set by hand: stores it and clears the restore note (D44). */
+        static void set(SharedPreferences local, boolean on) {
+            local.edit().putBoolean(KEY_ENABLED, on).remove(RESTORE_NOTE_FLAG).apply();
+        }
+
+        /** D44: the "turned off after restore" flag in the switch prefs (absent or unreadable: no). */
+        static boolean offByRestore(SharedPreferences local) {
+            return Parse.bool(Read.one(RESTORE_NOTE_FLAG, Read.bool(local, RESTORE_NOTE_FLAG, false)),
+                    RESTORE_NOTE_FLAG, false);
         }
     }
 

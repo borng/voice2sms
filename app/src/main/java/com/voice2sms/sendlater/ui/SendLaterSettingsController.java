@@ -86,10 +86,12 @@ public final class SendLaterSettingsController {
             // D36: the switch is not persisted by the preference framework (that would put it
             // in the backed-up default prefs); it shows and writes SendLaterSettings' own file.
             enabled.setChecked(SendLaterSettings.isEnabled(ctx()));
+            restoreNote(enabled, ctx());
             enabled.setOnPreferenceChangeListener((pref, newValue) -> {
                 final boolean on = Boolean.TRUE.equals(newValue);
                 final Context app = ctx().getApplicationContext();
                 SendLaterSettings.setEnabled(app, on);
+                restoreNote(enabled, app);
                 // Runs after the new value is stored, so every receiver of the broadcast reads
                 // the new state.
                 new Handler(Looper.getMainLooper()).post(() -> applyEnabled(app, on));
@@ -135,7 +137,10 @@ public final class SendLaterSettingsController {
         Context c = ctx();
 
         SwitchPreferenceCompat enabled = fragment.findPreference(SendLaterSettings.KEY_ENABLED);
-        if (enabled != null) enabled.setChecked(SendLaterSettings.isEnabled(c));
+        if (enabled != null) {
+            enabled.setChecked(SendLaterSettings.isEnabled(c));
+            restoreNote(enabled, c);
+        }
 
         int[] slots = SendLaterSettings.slotMinutes(c);
         for (int i = 0; i < SendLaterSettings.SLOT_KEYS.length && i < slots.length; i++) {
@@ -182,6 +187,18 @@ public final class SendLaterSettingsController {
         summary(KEY_CONTACTS_ROW, granted(c, Manifest.permission.READ_CONTACTS)
                 ? R.string.sendlater_settings_contacts_granted
                 : R.string.sendlater_settings_contacts_denied);
+    }
+
+    /**
+     * D44: while Send Later is off because the phone was restored or transferred (and the user has
+     * not set the switch by hand since), the off summary carries one more line: "Turned off after
+     * restore". Setting the switch by hand clears it.
+     */
+    private static void restoreNote(SwitchPreferenceCompat enabled, Context c) {
+        String off = c.getString(R.string.sendlater_settings_enabled_off);
+        enabled.setSummaryOff(SendLaterSettings.offByRestore(c)
+                ? c.getString(R.string.sendlater_settings_restore_note) + "\n" + off
+                : off);
     }
 
     private void summary(String key, int resId) {

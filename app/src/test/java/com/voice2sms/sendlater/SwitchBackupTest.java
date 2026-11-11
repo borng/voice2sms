@@ -142,7 +142,8 @@ public class SwitchBackupTest {
         assertTrue(body.contains("switchPrefs(c)"));
         assertTrue(body.contains("synchronized (SWITCH_LOCK)"));
         assertTrue(body.indexOf("Switch.migrate(") > body.indexOf("synchronized (SWITCH_LOCK)"));
-        assertTrue(body.contains("getDatabasePath(SendLaterDatabase.NAME).exists()"));
+        // D44 replaced the sendlater.db existence test (racy with the engine) by install times.
+        assertTrue(body.contains("updatedOnThisPhone(c)"));
         assertFalse("the switch is not read from the default prefs", body.contains("Read.bool(prefs(c)"));
     }
 
@@ -187,6 +188,12 @@ public class SwitchBackupTest {
         int at = src.indexOf("public static void setEnabled(");
         assertTrue(at > 0);
         String body = src.substring(at, src.indexOf("\n    }\n", at));
-        assertTrue(body.contains("switchPrefs(c).edit().putBoolean(KEY_ENABLED, on)"));
+        // D44: setEnabled writes the switch prefs through the hand-set write, which also clears
+        // the restore note.
+        assertTrue(body.contains("Switch.set(switchPrefs(c), on)"));
+        int set = src.indexOf("static void set(SharedPreferences local, boolean on)");
+        assertTrue(set > 0);
+        assertTrue(src.substring(set, src.indexOf("\n        }\n", set))
+                .contains("local.edit().putBoolean(KEY_ENABLED, on)"));
     }
 }
