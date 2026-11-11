@@ -1567,18 +1567,65 @@ function _v2sSlChipFieldE164(text) {
 }
 
 /**
- * R10a: recipient chips of GV's new-message page (the recipient input must be on the page):
+ * D57 (H3): the To field holding GV's recipient chips, or null. Once a chip exists GV's To input
+ * placeholder becomes "Add recipients", which V2S_SCHEDULED_RECIPIENT_SELECTOR does not match,
+ * so the chip grid is located directly: the input's grid when the selector still finds it, else
+ * the editable chip grid (mat-chip-grid, the To field; prefer one that holds an input), else the
+ * field around a recipient chip row. Chip sets elsewhere (mat-chip-listbox / mat-chip-option) are
+ * never a recipient field.
+ */
+function _v2sSlRecipientChipScope() {
+    var input = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
+    var scope = input && input.closest ? input.closest('mat-chip-grid, mat-chip-list, mat-form-field') : null;
+    if (scope) return scope;
+    var grids = document.querySelectorAll('mat-chip-grid');
+    for (var i = 0; i < grids.length; i++) {
+        if (grids[i].querySelector('input')) return grids[i];
+    }
+    if (grids.length) return grids[0];
+    var row = document.querySelector('mat-chip-row');
+    if (row && row.closest) return row.closest('mat-chip-grid, mat-form-field') || row.parentElement;
+    return null;
+}
+
+/**
+ * D57 (H3): a chip's visible text without its Remove button: the chip's text label when it has
+ * one, else its text minus any button/remove-icon subtree. The button may carry hidden
+ * "Remove <number>" text, so the whole textContent can hold the number twice.
+ */
+function _v2sSlChipLabelText(c) {
+    var label = c.querySelector
+        ? c.querySelector('.mdc-evolution-chip__text-label, .mat-mdc-chip-action-label')
+        : null;
+    if (label) return label.textContent || '';
+    var out = '';
+    (function walk(n) {
+        var kids = n.childNodes || [];
+        for (var i = 0; i < kids.length; i++) {
+            var k = kids[i];
+            if (k.nodeType === 3) {
+                out += k.textContent || '';
+            } else if (k.nodeType === 1) {
+                if (k.matches && k.matches('button, .mat-mdc-chip-remove, .mat-mdc-chip-trailing-icon')) continue;
+                walk(k);
+            }
+        }
+    })(c);
+    return out;
+}
+
+/**
+ * R10a: recipient chips of GV's new-message page (the To field must be on the page):
  * {count, e164}, e164 the single chip's number when its fields name exactly one, else null.
  */
 function _v2sSlNewComposeChip() {
-    var input = document.querySelector(V2S_SCHEDULED_RECIPIENT_SELECTOR);
-    var scope = input && input.closest ? input.closest('mat-chip-grid, mat-chip-list, mat-form-field') : null;
+    var scope = _v2sSlRecipientChipScope();
     if (!scope) return { count: 0, e164: null };
     var chips = scope.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR);
     var e164 = null;
     if (chips.length === 1) {
         var c = chips[0];
-        var fields = [c.textContent || '', c.getAttribute('aria-label') || '', c.getAttribute('title') || ''];
+        var fields = [_v2sSlChipLabelText(c), c.getAttribute('aria-label') || '', c.getAttribute('title') || ''];
         for (var i = 0; i < fields.length; i++) {
             var f = _v2sSlChipFieldE164(fields[i]);
             if (!f) continue;
