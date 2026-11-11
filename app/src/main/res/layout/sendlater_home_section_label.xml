@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "SETTINGS" section label above the group rows (D55): teal, upper case, no icon indent. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/title"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:accessibilityHeading="true"
+    android:paddingStart="?android:attr/listPreferredItemPaddingStart"
+    android:paddingTop="16dp"
+    android:paddingEnd="?android:attr/listPreferredItemPaddingEnd"
+    android:paddingBottom="4dp"
+    android:letterSpacing="0.08"
+    android:textAllCaps="true"
+    android:textColor="@color/sendlater_section_header"
+    android:textSize="13sp"
+    android:textStyle="bold" />

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- home-redesign (D55): hairline between card rows. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/sendlater_home_card_divider" />
+    <size android:height="1dp" />
+</shape>

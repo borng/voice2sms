@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- home-redesign (D55): static, decorative picture of the Send Later tab for the card's empty
+     state: a message field with a typed line, and the blue clock tab on its right edge. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="56dp"
+    android:viewportWidth="240"
+    android:viewportHeight="56">
+    <!-- message field -->
+    <path
+        android:fillColor="@color/sendlater_home_illus_field"
+        android:strokeColor="@color/sendlater_home_illus_stroke"
+        android:strokeWidth="1"
+        android:pathData="M13,7H227A12,12 0,0 1,239 19V37A12,12 0,0 1,227 49H13A12,12 0,0 1,1 37V19A12,12 0,0 1,13 7Z" />
+    <!-- typed text and cursor -->
+    <path
+        android:fillColor="@color/sendlater_home_card_text_secondary"
+        android:pathData="M16,26H132A2,2 0,0 1,134 28A2,2 0,0 1,132 30H16A2,2 0,0 1,14 28A2,2 0,0 1,16 26ZM140,19H142V37H140Z" />
+    <!-- the clock tab on the right edge -->
+    <path
+        android:fillColor="@color/sendlater_accent"
+        android:pathData="M220,7H227A12,12 0,0 1,239 19V37A12,12 0,0 1,227 49H220A10,10 0,0 1,210 39V17A10,10 0,0 1,220 7Z" />
+    <path
+        android:strokeColor="@color/sendlater_on_accent"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M225,21A7,7 0,1 1,224.99 21ZM225,24V28L228,30" />
+</vector>

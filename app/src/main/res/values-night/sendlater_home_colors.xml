@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- home-redesign (D55, H2, R36b): dark values for the Scheduled messages card. Ratios are WCAG
+     contrast on the dark card surface #1F2633. -->
+<resources>
+    <!-- Card surface (mockup #1F2633). Text #E8EAED on it = 12.6:1. -->
+    <color name="sendlater_home_card_bg">#1F2633</color>
+    <!-- Card primary text: 12.6:1 on the card. -->
+    <color name="sendlater_home_card_text">#E8EAED</color>
+    <!-- Card secondary text and row chevron: 8.4:1 on the card. -->
+    <color name="sendlater_home_card_text_secondary">#BDC1C6</color>
+    <!-- Hairline between card sections (non-text, decorative): 1.3:1 on the card. -->
+    <color name="sendlater_home_card_divider">#2E3A4D</color>
+    <!-- Held tag background (mockup dark amber). Tag text #FFD27A on it = 7.1:1. -->
+    <color name="sendlater_home_held_bg">#5C3B00</color>
+    <!-- Held tag text: 7.1:1 on the tag background. -->
+    <color name="sendlater_home_held_text">#FFD27A</color>
+    <!-- Empty-state illustration: text field fill (decorative, 1.1:1 on the card; field line
+         #BDC1C6 on it = 8.9:1). -->
+    <color name="sendlater_home_illus_field">#202124</color>
+    <!-- Empty-state illustration: text field outline (decorative): 2.5:1 on the card. -->
+    <color name="sendlater_home_illus_stroke">#5F6368</color>
+</resources>

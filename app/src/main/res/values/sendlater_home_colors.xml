@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- home-redesign (D55, H2, R36b): launcher page Scheduled messages card. Night values in
+     values-night/sendlater_home_colors.xml. Ratios are WCAG contrast on the card surface. -->
+<resources>
+    <!-- Card surface (mockup #E8F0FE). Dark text #202124 on it = 14.1:1. -->
+    <color name="sendlater_home_card_bg">#E8F0FE</color>
+    <!-- Card primary text (title, time, name, empty title): 14.1:1 on the card. -->
+    <color name="sendlater_home_card_text">#202124</color>
+    <!-- Card secondary text (first line, how-to, scope line) and row chevron: 5.3:1 on the card. -->
+    <color name="sendlater_home_card_text_secondary">#5F6368</color>
+    <!-- Hairline between card sections (non-text, decorative): 1.3:1 on the card. -->
+    <color name="sendlater_home_card_divider">#C6D7F5</color>
+    <!-- Held tag background (mockup amber). Tag text #7A4300 on it = 6.6:1. -->
+    <color name="sendlater_home_held_bg">#FDE7C2</color>
+    <!-- Held tag text: 6.6:1 on the tag background, 7.0:1 on the card. -->
+    <color name="sendlater_home_held_text">#7A4300</color>
+    <!-- Empty-state illustration: text field fill (decorative, 1.2:1 on the card; field line
+         #5F6368 on it = 6.0:1). -->
+    <color name="sendlater_home_illus_field">#FFFFFF</color>
+    <!-- Empty-state illustration: text field outline (decorative): 2.3:1 on the card. -->
+    <color name="sendlater_home_illus_stroke">#9AA0A6</color>
+</resources>

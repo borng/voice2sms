@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget for a launcher-page group row (D55): a chevron at the end of the row. -->
+<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="20dp"
+    android:layout_height="20dp"
+    android:importantForAccessibility="no"
+    android:src="@drawable/sendlater_ic_chevron_right" />
