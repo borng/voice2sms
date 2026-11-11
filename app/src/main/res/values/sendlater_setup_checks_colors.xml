@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- setup-checks (OD45): "Needs attention" warning icon. Night values in values-night. Non-text
+     contrast of the disc: 6.5:1 on #FFFFFF, 6.3:1 on #FAFAFA. The "!" on the disc: 6.5:1. -->
+<resources>
+    <color name="sendlater_setup_warn">#B3261E</color>
+    <color name="sendlater_setup_warn_glyph">#FFFFFF</color>
+</resources>

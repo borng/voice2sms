@@ -60,4 +60,21 @@
     <string name="sendlater_about_what_summary">voice2sms sends your texts through Google Voice: when it is your default texting app, when you ask Gemini to send a text, and when you send one from your watch. Send Later lets you schedule a text to go out at a time you pick.</string>
     <string name="sendlater_about_how_title">How to schedule a text</string>
     <string name="sendlater_about_how_summary">Open a conversation with one person and type your message. Then tap the blue clock tab on the right edge of the screen and pick a time.</string>
+    <!-- setup-checks (D59, OD44, OD45): a required item is missing. The warning icon replaces the
+         row chevron; the summary names what is missing ("Needs: accessibility, exact alarms"). -->
+    <string name="sendlater_setup_needs_attention">Needs attention</string>
+    <string name="sendlater_setup_needs">Needs: %1$s</string>
+    <string name="sendlater_setup_item_default_sms">default texting app</string>
+    <string name="sendlater_setup_item_accessibility">accessibility</string>
+    <string name="sendlater_setup_item_listener">notification access</string>
+    <string name="sendlater_setup_item_notifications">notifications</string>
+    <string name="sendlater_setup_item_exact_alarms">exact alarms</string>
+    <string name="sendlater_setup_item_battery">unrestricted battery</string>
+    <string name="sendlater_setup_item_full_screen">full-screen alerts</string>
+    <string name="sendlater_setup_item_account">Google sign-in</string>
+    <!-- Send Later row for the full-screen-intent permission (Android 14+) -->
+    <string name="sendlater_setup_full_screen_title">Show sends over the lock screen</string>
+    <string name="sendlater_setup_full_screen_on">Allowed: a scheduled text can be sent while the phone is locked</string>
+    <string name="sendlater_setup_full_screen_off">Not allowed: a scheduled text may wait until you unlock the phone. Tap to allow.</string>
+    <string name="sendlater_setup_no_screen">Could not open that settings screen. Open Settings → Apps → voice2sms.</string>
 </resources>
