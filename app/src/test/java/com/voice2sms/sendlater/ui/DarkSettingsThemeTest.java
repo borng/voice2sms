@@ -69,7 +69,8 @@ public class DarkSettingsThemeTest {
 
     @Test public void setupWebViewAndSheetThemesUnchanged() throws IOException {
         String manifest = read(MAIN.resolve("AndroidManifest.xml"));
-        assertEquals("@style/Theme.AppCompat.Light.NoActionBar", themeOf(manifest, ".SetupActivity"));
+        // setup-dark (D51, R42a) moved the wizard to its own DayNight theme; see SetupDarkThemeTest.
+        assertEquals("@style/Theme.Voice2SMS.Setup", themeOf(manifest, ".SetupActivity"));
         assertEquals("@style/Theme.AppCompat.Light.DarkActionBar", themeOf(manifest, ".GVoiceWebViewActivity"));
         assertEquals("@style/Theme.SendLater.Sheet", themeOf(manifest, ".sendlater.ui.SendLaterSheetActivity"));
     }
