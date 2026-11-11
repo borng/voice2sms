@@ -969,9 +969,7 @@ function v2sScheduledCompose(phone, body, autoSendDelay, token) {
         var chips = scope.querySelectorAll(V2S_SCHEDULED_CHIP_SELECTOR);
         var digits = '';
         if (chips.length === 1) {
-            var c = chips[0];
-            digits = [c.textContent || '', c.getAttribute('aria-label') || '', c.getAttribute('title') || '']
-                .map(function(v) { return String(v).replace(/\D/g, ''); }).join(',');
+            digits = _v2sSlChipDigits(chips[0]);
         }
         return { count: chips.length, digits: digits };
     }
@@ -1589,15 +1587,19 @@ function _v2sSlRecipientChipScope() {
 }
 
 /**
- * D57 (H3): a chip's visible text without its Remove button: the chip's text label when it has
- * one, else its text minus any button/remove-icon subtree. The button may carry hidden
- * "Remove <number>" text, so the whole textContent can hold the number twice.
+ * D57 (H3): a chip's visible text, read once: GV's .chip-name when present, else the text
+ * label (or the chip) minus the Remove button and any .cdk-visually-hidden copy. The button
+ * carries hidden "Remove <number>" text and GV adds a spelled-out screen-reader copy of the
+ * digits, so the raw textContent can hold the number two or three times.
  */
 function _v2sSlChipLabelText(c) {
+    // GV (live, 2026-11-11): the label holds the visible .chip-name AND a .cdk-visually-hidden
+    // spelled-out copy of the digits for screen readers; reading both doubles the number.
+    var name = c.querySelector ? c.querySelector('.chip-name') : null;
+    if (name) return name.textContent || '';
     var label = c.querySelector
         ? c.querySelector('.mdc-evolution-chip__text-label, .mat-mdc-chip-action-label')
         : null;
-    if (label) return label.textContent || '';
     var out = '';
     (function walk(n) {
         var kids = n.childNodes || [];
@@ -1606,11 +1608,14 @@ function _v2sSlChipLabelText(c) {
             if (k.nodeType === 3) {
                 out += k.textContent || '';
             } else if (k.nodeType === 1) {
-                if (k.matches && k.matches('button, .mat-mdc-chip-remove, .mat-mdc-chip-trailing-icon')) continue;
+                if (k.matches && k.matches(
+                        'button, .mat-mdc-chip-remove, .mat-mdc-chip-trailing-icon, .cdk-visually-hidden')) {
+                    continue;
+                }
                 walk(k);
             }
         }
-    })(c);
+    })(label || c);
     return out;
 }
 
@@ -1634,6 +1639,16 @@ function _v2sSlNewComposeChip() {
         }
     }
     return { count: chips.length, e164: e164 };
+}
+
+/**
+ * deliver H1/L2: one chip's digit runs for the Java Send gate (ScheduledCompose.chipNamesNumber):
+ * its visible label (_v2sSlChipLabelText: no Remove button, no screen-reader copy, which would
+ * double the digits on GV's real chip), aria-label and title, digits only, comma separated.
+ */
+function _v2sSlChipDigits(c) {
+    return [_v2sSlChipLabelText(c), c.getAttribute('aria-label') || '', c.getAttribute('title') || '']
+        .map(function(v) { return String(v).replace(/\D/g, ''); }).join(',');
 }
 
 /** E.164 of the open 1:1 thread from location (itemId via URLSearchParams), else null. */

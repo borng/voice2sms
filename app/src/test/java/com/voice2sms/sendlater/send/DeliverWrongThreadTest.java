@@ -186,7 +186,8 @@ public class DeliverWrongThreadTest {
         int in = ask.indexOf("V2SBridge.scheduledClickStateIn(_v2sBridgeNonce, token, String(location.href), chips.count, chips.digits)");
         assertTrue("the chip-aware ask comes first", in >= 0 && in < ask.indexOf("V2SBridge.scheduledClickStateAt("));
         String chips = block(entry, "function recipientChips\\s*\\(\\s*\\)\\s*\\{");
-        assertTrue("digits only, never a name", chips.contains(".replace(/\\D/g, '')"));
+        assertTrue("digits only, never a name (via _v2sSlChipDigits)", chips.contains("_v2sSlChipDigits(chips[0])")
+                && code(INJECT).contains(".map(function(v) { return String(v).replace(/\\D/g, ''); })"));
     }
 
     // ================================================================== L1
