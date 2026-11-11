@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher page (SettingsActivity): Scheduled messages card (R35a) and grouped settings rows (R36a). -->
+<resources>
+    <!-- Scheduled messages card (R35a, D47, OD37) -->
+    <string name="sendlater_home_card_title">Scheduled messages</string>
+    <string name="sendlater_home_card_loading">Loading…</string>
+    <string name="sendlater_home_card_empty">Nothing scheduled. Messages you schedule from Google Voice show up here.</string>
+    <string name="sendlater_home_card_load_failed">Could not load scheduled messages.</string>
+    <string name="sendlater_home_card_switch_on">Send Later is on</string>
+    <string name="sendlater_home_card_switch_off">Send Later is off. Nothing is sent automatically. Tap to change.</string>
+    <string name="sendlater_home_card_held">Held</string>
+    <plurals name="sendlater_home_see_all">
+        <item quantity="one">See all (%d)</item>
+        <item quantity="other">See all (%d)</item>
+    </plurals>
+
+    <!-- Group rows (R36a, D48, OD38) -->
+    <string name="sendlater_home_title">Voice2SMS</string>
+    <string name="sendlater_home_group_send_later">Send Later</string>
+    <string name="sendlater_home_group_default_sms">Default SMS app</string>
+    <string name="sendlater_home_group_account">Google account</string>
+    <string name="sendlater_home_group_gemini">Gemini</string>
+    <string name="sendlater_home_group_notifications">Notifications</string>
+    <string name="sendlater_home_group_about">About</string>
+
+    <!-- Group summaries, recomputed on every resume -->
+    <string name="sendlater_home_summary_send_later_on">On</string>
+    <string name="sendlater_home_summary_send_later_attention">On · needs attention</string>
+    <string name="sendlater_home_summary_send_later_off">Off</string>
+    <string name="sendlater_home_summary_send_later_off_restore">Off · turned off after restore</string>
+    <string name="sendlater_home_summary_default_sms_yes">Voice2SMS is the default SMS app</string>
+    <string name="sendlater_home_summary_default_sms_no">Not the default SMS app. Tap to set it.</string>
+    <string name="sendlater_home_summary_account">Current: %1$s</string>
+    <string name="sendlater_home_summary_account_none">Not set</string>
+    <string name="sendlater_home_summary_gemini">Interception %1$s · auto-send %2$s</string>
+    <string name="sendlater_home_summary_notifications">Auto-send confirmation %1$s · incoming SMS %2$s</string>
+    <string name="sendlater_home_on">on</string>
+    <string name="sendlater_home_off">off</string>
+    <string name="sendlater_home_summary_about">Version %1$s</string>
+</resources>

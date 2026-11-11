@@ -43,7 +43,7 @@ Other capture/send paths:
 | `app/src/main/java/com/voice2sms/SmsHandlerActivity.java` | SMS intent router; exports `EXTRA_FORCE_AUTO_SEND` constant; honours it only with an `AutoSendAuth` token |
 | `app/src/main/java/com/voice2sms/AutoSendAuth.java` | Per-process auto-send token: `attach` at the three internal origins (Gemini, Wear, RESPOND_VIA_MESSAGE), `isAuthorized` + `strip` at the two consumers |
 | `app/src/main/java/com/voice2sms/SetupActivity.java` | First-install setup wizard (steps 4 Send Later, 5 Battery; statuses refreshed in onResume) |
-| `app/src/main/java/com/voice2sms/SettingsActivity.java` | Preferences + Gemini toggle + Send Later category + build stamp |
+| `app/src/main/java/com/voice2sms/SettingsActivity.java` | Launcher page: Scheduled messages card + grouped settings (nested `PreferenceScreen` per group in `preferences.xml`: Send Later, Default SMS app, Google account, Gemini, Notifications, About) + build stamp; `EXTRA_SHOW_SCHEDULED` |
 | `app/src/main/java/com/voice2sms/wear/WearSmsListenerService.java` | Receives `{phone,body,requestId}` from watch; trampolines to `SmsHandlerActivity` |
 | `app/src/main/java/com/voice2sms/wear/WearPayloadValidator.java` | Pure-JVM payload validator (tested by `WearPayloadValidatorTest`) |
 | `app/src/main/assets/fingerprint-mask.js` | Anti-detection + dark mode |
