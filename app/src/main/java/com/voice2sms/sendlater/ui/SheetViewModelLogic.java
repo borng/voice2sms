@@ -12,7 +12,9 @@ import com.voice2sms.sendlater.voice.logic.RecipientResolver;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TimeZone;
 
 /**
@@ -294,6 +296,77 @@ public final class SheetViewModelLogic {
         long min = Math.max(1L, (budgetMs + LatenessBudget.MINUTE_MS / 2) / LatenessBudget.MINUTE_MS);
         if (min >= 60 && min % 60 == 0) return (min / 60) + " h";
         return min + " min";
+    }
+
+    // ------------------------------------------------------------------ re-creation (D52, R12b)
+
+    static final String KEY_EDIT_MODE = "editMode";
+    static final String KEY_RECIPIENT = "recipient";
+    static final String KEY_TIME = "timeMs";
+    static final String KEY_PRESET = "preset";
+    static final String KEY_HOLD = "hold";
+    static final String KEY_POLICY = "policy";
+    static final String KEY_TEXT = "text";
+
+    /**
+     * D52 / OD43 / R12b: the in-progress choices (edited text, chosen preset or picked time, hold,
+     * If late, chosen or typed number) as Bundle-safe values (String, Long, Integer, Boolean; enums
+     * by name). The activity keeps them only in its instance-state Bundle, never the DB or logs.
+     */
+    public Map<String, Object> saveState() {
+        Map<String, Object> out = new HashMap<>();
+        out.put(KEY_EDIT_MODE, editMode);
+        out.put(KEY_RECIPIENT, getE164());
+        out.put(KEY_TIME, selectedTimeMs);
+        out.put(KEY_PRESET, selectedPresetIndex);
+        out.put(KEY_HOLD, holdIfReplied);
+        out.put(KEY_POLICY, latenessPolicy.name());
+        if (editMode) out.put(KEY_TEXT, text);
+        return out;
+    }
+
+    /**
+     * Applies a {@link #saveState()} map over this freshly built model of the same mode (capture:
+     * rebuilt from the intent; edit: rebuilt from the reloaded, re-checked row), so the user's
+     * unsaved choices win over the loaded values. False, and nothing changes, for a null or empty
+     * map or one saved in the other mode. A recipient is only restored the way the user could
+     * have set it (a listed candidate, or the manual entry); edit mode's recipient stays fixed.
+     */
+    public boolean restoreState(Map<String, ?> saved) {
+        if (saved == null || saved.isEmpty()) return false;
+        Object mode = saved.get(KEY_EDIT_MODE);
+        if (!(mode instanceof Boolean) || (Boolean) mode != editMode) return false;
+
+        Object number = saved.get(KEY_RECIPIENT);
+        if (!editMode && number instanceof String) {
+            if (showsCandidateChoice()) chooseCandidate((String) number);
+            else if (showsNumberEntry()) enterNumber((String) number);
+        }
+
+        Object time = saved.get(KEY_TIME);
+        if (time instanceof Long && (Long) time > 0) {
+            long t = (Long) time;
+            Object preset = saved.get(KEY_PRESET);
+            int idx = preset instanceof Integer ? (Integer) preset : -1;
+            selectedTimeMs = t;
+            // The chosen row when it still means the same time; otherwise the time as picked.
+            selectedPresetIndex = idx >= 0 && idx < presets.size() && presets.get(idx).getTimeMs() == t
+                    ? idx : indexOfPreset(t);
+        }
+
+        Object hold = saved.get(KEY_HOLD);
+        if (hold instanceof Boolean) holdIfReplied = (Boolean) hold;
+
+        Object policy = saved.get(KEY_POLICY);
+        if (policy instanceof String) {
+            for (LatenessPolicy p : LatenessPolicy.values()) {
+                if (p.name().equals(policy)) latenessPolicy = p;
+            }
+        }
+
+        Object t = saved.get(KEY_TEXT);
+        if (editMode && t instanceof String) text = (String) t;
+        return true;
     }
 
     // ------------------------------------------------------------------ edit baseline (OD31 P2)

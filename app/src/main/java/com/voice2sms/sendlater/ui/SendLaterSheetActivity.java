@@ -53,7 +53,9 @@ import com.voice2sms.sendlater.store.SendLaterRepository;
 
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -77,6 +79,8 @@ public class SendLaterSheetActivity extends AppCompatActivity {
 
     private static final String TAG = "SendLaterSheet";
     private static final int REQ_NOTIFICATIONS = 4101;
+    /** D52 / R12b: the model's unsaved choices, kept only in the instance-state Bundle. */
+    private static final String KEY_SHEET_STATE = "sendlater.sheet.state";
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
@@ -121,11 +125,14 @@ public class SendLaterSheetActivity extends AppCompatActivity {
     private Watermark watermark;
     private boolean hasWebSession;
     private long editId = -1L;
+    /** The re-created activity's saved state, until it is applied over the rebuilt model. */
+    private Bundle restoredState;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         app = getApplicationContext();
+        restoredState = savedInstanceState;
         setContentView(R.layout.sendlater_sheet);
         bindViews();
 
@@ -149,6 +156,45 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         } else {
             finish();
         }
+    }
+
+    /**
+     * D52 / OD43 / R12b: a light/dark switch or other re-creation keeps the unsaved choices
+     * (rotation and fold do not re-create: see configChanges). Bundle only: never the DB or logs.
+     */
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (logic != null) {
+            outState.putBundle(KEY_SHEET_STATE, toBundle(logic.saveState()));
+        } else if (editable && restoredState != null) {
+            // Re-created again while the edit row is still loading: keep what was saved before.
+            Bundle pending = restoredState.getBundle(KEY_SHEET_STATE);
+            if (pending != null) outState.putBundle(KEY_SHEET_STATE, pending);
+        }
+    }
+
+    private static Bundle toBundle(Map<String, Object> state) {
+        Bundle b = new Bundle();
+        for (Map.Entry<String, Object> e : state.entrySet()) {
+            Object v = e.getValue();
+            if (v instanceof Long) b.putLong(e.getKey(), (Long) v);
+            else if (v instanceof Integer) b.putInt(e.getKey(), (Integer) v);
+            else if (v instanceof Boolean) b.putBoolean(e.getKey(), (Boolean) v);
+            else if (v instanceof String) b.putString(e.getKey(), (String) v);
+        }
+        return b;
+    }
+
+    /** Applies the saved choices over the freshly built model, once; nothing saved: no change. */
+    @SuppressWarnings("deprecation")
+    private void restoreUnsavedEdits() {
+        Bundle saved = restoredState != null ? restoredState.getBundle(KEY_SHEET_STATE) : null;
+        restoredState = null;
+        if (saved == null || logic == null) return;
+        Map<String, Object> state = new HashMap<>();
+        for (String k : saved.keySet()) state.put(k, saved.get(k));
+        logic.restoreState(state);
     }
 
     @Override
@@ -254,6 +300,7 @@ public class SendLaterSheetActivity extends AppCompatActivity {
         logic = SheetViewModelLogic.forCapture(givenNumber, candidates, unconfirmed,
                 SendLaterSettings.holdDefault(this), System.currentTimeMillis(),
                 TimeZone.getDefault(), SendLaterSettings.slotMinutes(this));
+        restoreUnsavedEdits(); // D52: re-creation keeps the chosen number, time, hold, If late
         bindLogic();
         if (isDraftEmpty()) showError(R.string.sendlater_sheet_empty_draft);
     }
@@ -325,7 +372,10 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                 draft = loaded.getText();
                 logic = SheetViewModelLogic.forEdit(loaded, System.currentTimeMillis(),
                         TimeZone.getDefault(), SendLaterSettings.slotMinutes(this));
+                // D52: only a row that passed the re-check above gets the unsaved edits back.
+                restoreUnsavedEdits();
                 bindLogic();
+                if (isDraftEmpty()) showError(R.string.sendlater_sheet_empty_draft);
             });
         });
     }
@@ -461,6 +511,13 @@ public class SendLaterSheetActivity extends AppCompatActivity {
                         getString(R.string.sendlater_sheet_card_unknown)));
             } else {
                 cardRecipient.setText(R.string.sendlater_sheet_card_unknown);
+            }
+
+            if (logic.showsCandidateChoice() && logic.getE164() != null) {
+                for (int i = 0; i < recipientChoices.getChildCount(); i++) {
+                    View row = recipientChoices.getChildAt(i);
+                    if (logic.getE164().equals(row.getTag())) recipientChoices.check(row.getId());
+                }
             }
 
             int sel = logic.getSelectedPresetIndex();
