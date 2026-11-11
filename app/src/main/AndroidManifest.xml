@@ -218,7 +218,7 @@
         <activity
             android:name=".SetupActivity"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+            android:theme="@style/Theme.Voice2SMS.Setup" />
 
         <!-- sendlater:upcoming-settings start -->
         <!-- Send Later Upcoming list (R35): Settings, the chip and notifications open it with

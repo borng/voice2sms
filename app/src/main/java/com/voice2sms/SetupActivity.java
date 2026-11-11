@@ -191,13 +191,13 @@ public class SetupActivity extends Activity {
             }
         }
         step1Status.setText(isDefault ? "Status: Default SMS app" : "Status: Not set");
-        step1Status.setTextColor(isDefault ? 0xFF4CAF50 : 0xFF888888);
+        step1Status.setTextColor(statusColour(isDefault));
 
         // Step 3 status: is accessibility service enabled?
         TextView step3Status = findViewById(R.id.step3_status);
         boolean a11yEnabled = isAccessibilityServiceEnabled();
         step3Status.setText(a11yEnabled ? "Status: Enabled" : "Status: Not enabled");
-        step3Status.setTextColor(a11yEnabled ? 0xFF4CAF50 : 0xFF888888);
+        step3Status.setTextColor(statusColour(a11yEnabled));
 
         // Step 4: Send Later statuses (R42)
         boolean listenerOn = SendLaterListenerStatus.isEnabled(this);
@@ -222,7 +222,12 @@ public class SetupActivity extends Activity {
     private void status(int viewId, boolean on, int onText, int offText) {
         TextView t = findViewById(viewId);
         t.setText(on ? onText : offText);
-        t.setTextColor(on ? 0xFF4CAF50 : 0xFF888888);
+        t.setTextColor(statusColour(on));
+    }
+
+    /** Status text colour (D51, R42a): resources with night values, 4.5:1 on the step card. */
+    private int statusColour(boolean on) {
+        return getColor(on ? R.color.sendlater_setup_status_ok : R.color.sendlater_setup_status_off);
     }
 
     private boolean isAccessibilityServiceEnabled() {

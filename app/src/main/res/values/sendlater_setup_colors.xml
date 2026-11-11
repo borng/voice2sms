@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- setup-dark (D51, R42a): setup wizard colours, light mode. Every name has a night value in
+     values-night/sendlater_setup_colors.xml. Light values are the wizard's old hard-coded colours
+     (it looks the same as before), except the two status colours, which now meet 4.5:1.
+     Contrast (WCAG 2.x) on the white step card #FFFFFF unless noted:
+       title #1A1A1A 17.4:1 · body #555555 7.5:1 · subtitle #666666 5.5:1 on page #FAFAFA
+       code #333333 on code box #F0F0F0 11.1:1
+       status ok #2E7D32 5.1:1 (was #4CAF50 2.8:1) · status off #757575 4.6:1 (was #888888 3.5:1)
+       step badge: white on #0099CC 3.3:1 (unchanged, decorative number)
+     Hint #888888, the dimmed "Coming soon" card and the footer keep their old light values. -->
+<resources>
+    <color name="sendlater_setup_page_bg">#FAFAFA</color>
+    <color name="sendlater_setup_card_bg">#FFFFFF</color>
+    <color name="sendlater_setup_text_title">#1A1A1A</color>
+    <color name="sendlater_setup_text_subtitle">#666666</color>
+    <color name="sendlater_setup_text_body">#555555</color>
+    <color name="sendlater_setup_text_hint">#888888</color>
+    <color name="sendlater_setup_code_text">#333333</color>
+    <color name="sendlater_setup_code_bg">#F0F0F0</color>
+    <color name="sendlater_setup_badge_bg">#0099CC</color>
+    <color name="sendlater_setup_badge_text">#FFFFFF</color>
+    <color name="sendlater_setup_future_bg">#F5F5F5</color>
+    <color name="sendlater_setup_future_badge_bg">#AAAAAA</color>
+    <color name="sendlater_setup_future_text">#999999</color>
+    <color name="sendlater_setup_footer_text">#AAAAAA</color>
+    <!-- Step status lines (SetupActivity): text, 4.5:1. -->
+    <color name="sendlater_setup_status_ok">#2E7D32</color>
+    <color name="sendlater_setup_status_off">#757575</color>
+</resources>
