@@ -8,7 +8,6 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.provider.Telephony;
 import android.view.accessibility.AccessibilityManager;
 import android.webkit.CookieManager;
 import android.widget.Toast;
@@ -268,6 +267,10 @@ public class SettingsActivity extends AppCompatActivity
             if (account != null) {
                 refreshAccount(account);
             }
+            Preference defaultSms = findPreference("set_default_sms");
+            if (defaultSms != null) {
+                updateDefaultSmsStatus(defaultSms);
+            }
             PreferenceScreen screen = getPreferenceScreen();
             if (screen != null && screen.getTitle() != null) {
                 requireActivity().setTitle(screen.getTitle());
@@ -318,7 +321,7 @@ public class SettingsActivity extends AppCompatActivity
 
             Preference defaultSmsRow = findPreference(KEY_GROUP_DEFAULT_SMS);
             if (defaultSmsRow != null) {
-                defaultSmsRow.setSummary(isDefaultSmsApp(c)
+                defaultSmsRow.setSummary(DefaultSms.isDefault(c)
                         ? R.string.sendlater_home_summary_default_sms_yes
                         : R.string.sendlater_home_summary_default_sms_no);
             }
@@ -359,12 +362,11 @@ public class SettingsActivity extends AppCompatActivity
                     : getString(R.string.sendlater_home_summary_account, account));
         }
 
-        private static boolean isDefaultSmsApp(android.content.Context c) {
-            try {
-                return c.getPackageName().equals(Telephony.Sms.getDefaultSmsPackage(c));
-            } catch (RuntimeException e) {
-                return false;
-            }
+        /** D54: the Default SMS sub-screen row shows the live status, rechecked on resume. */
+        private void updateDefaultSmsStatus(Preference pref) {
+            pref.setSummary(DefaultSms.isDefault(requireContext())
+                    ? R.string.sendlater_home_summary_default_sms_yes
+                    : R.string.sendlater_home_summary_default_sms_no);
         }
 
         private void updateBatteryStatus(Preference pref) {

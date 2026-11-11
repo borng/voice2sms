@@ -183,13 +183,7 @@ public class SetupActivity extends Activity {
     private void updateStatusIndicators() {
         // Step 1 status: is default SMS app?
         TextView step1Status = findViewById(R.id.step1_status);
-        boolean isDefault = false;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            RoleManager rm = getSystemService(RoleManager.class);
-            if (rm != null) {
-                isDefault = rm.isRoleHeld(RoleManager.ROLE_SMS);
-            }
-        }
+        boolean isDefault = DefaultSms.isDefault(this);
         step1Status.setText(isDefault ? "Status: Default SMS app" : "Status: Not set");
         step1Status.setTextColor(statusColour(isDefault));
 
