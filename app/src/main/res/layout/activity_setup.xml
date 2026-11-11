@@ -81,7 +81,8 @@
                 android:text="Status: Not set"
                 android:textSize="13sp"
                 android:textColor="@color/sendlater_setup_status_off"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="8dp"
+                android:drawablePadding="8dp" />
 
             <Button
                 android:id="@+id/btn_set_default_sms"
@@ -90,8 +91,10 @@
                 android:text="Set Default SMS App" />
         </LinearLayout>
 
-        <!-- Step 2: Block Gemini Direct SMS -->
+        <!-- sendlater:wizard-all-steps start (D60, OD46): Google sign-in -->
+        <!-- Step 2: Sign in to Google Voice -->
         <LinearLayout
+            android:id="@+id/step_google_signin"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
@@ -111,6 +114,69 @@
                     android:layout_width="32dp"
                     android:layout_height="32dp"
                     android:text="2"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/sendlater_setup_badge_text"
+                    android:background="@color/sendlater_setup_badge_bg"
+                    android:gravity="center"
+                    android:layout_marginEnd="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sendlater_wizard_signin_title"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/sendlater_setup_text_title" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_wizard_signin_body"
+                android:textSize="14sp"
+                android:textColor="@color/sendlater_setup_text_body"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:id="@+id/google_signin_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_wizard_signin_off"
+                android:textSize="13sp"
+                android:textColor="@color/sendlater_setup_status_off"
+                android:drawablePadding="8dp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btn_google_signin"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sendlater_wizard_signin_button" />
+        </LinearLayout>
+        <!-- sendlater:wizard-all-steps end -->
+
+        <!-- Step 3: Block Gemini Direct SMS -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/sendlater_setup_card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:text="3"
                     android:textSize="16sp"
                     android:textStyle="bold"
                     android:textColor="@color/sendlater_setup_badge_text"
@@ -164,7 +230,7 @@
                 android:textStyle="italic" />
         </LinearLayout>
 
-        <!-- Step 3: Enable Accessibility Service -->
+        <!-- Step 4: Enable Accessibility Service -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -184,7 +250,7 @@
                 <TextView
                     android:layout_width="32dp"
                     android:layout_height="32dp"
-                    android:text="3"
+                    android:text="4"
                     android:textSize="16sp"
                     android:textStyle="bold"
                     android:textColor="@color/sendlater_setup_badge_text"
@@ -224,7 +290,8 @@
                 android:text="Status: Not enabled"
                 android:textSize="13sp"
                 android:textColor="@color/sendlater_setup_status_off"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="8dp"
+                android:drawablePadding="8dp" />
 
             <Button
                 android:id="@+id/btn_enable_accessibility"
@@ -234,7 +301,7 @@
         </LinearLayout>
 
         <!-- sendlater:wizard-defaults start (R42, R43, R37) -->
-        <!-- Step 4: Send Later -->
+        <!-- Step 5: Send Later -->
         <LinearLayout
             android:id="@+id/step_sendlater"
             android:layout_width="match_parent"
@@ -255,7 +322,7 @@
                 <TextView
                     android:layout_width="32dp"
                     android:layout_height="32dp"
-                    android:text="4"
+                    android:text="5"
                     android:textSize="16sp"
                     android:textStyle="bold"
                     android:textColor="@color/sendlater_setup_badge_text"
@@ -311,7 +378,8 @@
                 android:text="@string/sendlater_setup_listener_off"
                 android:textSize="13sp"
                 android:textColor="@color/sendlater_setup_status_off"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="8dp"
+                android:drawablePadding="8dp" />
 
             <Button
                 android:id="@+id/btn_sendlater_listener"
@@ -327,7 +395,8 @@
                 android:text="@string/sendlater_setup_exact_off"
                 android:textSize="13sp"
                 android:textColor="@color/sendlater_setup_status_off"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="8dp"
+                android:drawablePadding="8dp" />
 
             <Button
                 android:id="@+id/btn_sendlater_exact"
@@ -343,16 +412,44 @@
                 android:text="@string/sendlater_setup_notifications_off"
                 android:textSize="13sp"
                 android:textColor="@color/sendlater_setup_status_off"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="8dp"
+                android:drawablePadding="8dp" />
 
             <Button
                 android:id="@+id/btn_sendlater_notifications"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/sendlater_setup_notifications_button" />
+
+            <!-- sendlater:wizard-all-steps start (D60, OD46): full-screen intent, Android 14+ only -->
+            <LinearLayout
+                android:id="@+id/sendlater_full_screen_group"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/sendlater_full_screen_status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sendlater_wizard_full_screen_off"
+                    android:textSize="13sp"
+                    android:textColor="@color/sendlater_setup_status_off"
+                    android:drawablePadding="8dp"
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btn_sendlater_full_screen"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sendlater_wizard_full_screen_button" />
+            </LinearLayout>
+            <!-- sendlater:wizard-all-steps end -->
         </LinearLayout>
 
-        <!-- Step 5: Battery -->
+        <!-- Step 6: Battery -->
         <LinearLayout
             android:id="@+id/step_battery"
             android:layout_width="match_parent"
@@ -373,7 +470,7 @@
                 <TextView
                     android:layout_width="32dp"
                     android:layout_height="32dp"
-                    android:text="5"
+                    android:text="6"
                     android:textSize="16sp"
                     android:textStyle="bold"
                     android:textColor="@color/sendlater_setup_badge_text"
@@ -437,7 +534,8 @@
                     android:layout_height="wrap_content"
                     android:text="@string/sendlater_battery_setup_status_limited"
                     android:textSize="13sp"
-                    android:textColor="@color/sendlater_setup_status_off" />
+                    android:textColor="@color/sendlater_setup_status_off"
+                    android:drawablePadding="8dp" />
             </LinearLayout>
 
             <Button
