@@ -75,8 +75,9 @@ public class LockCoverPolicyTest {
         assertFalse(LockCoverPolicy.finishNow(null, true));
     }
 
-    @Test public void hardTimeoutIsSixtySeconds() {
-        assertEquals(60_000L, LockCoverPolicy.HARD_TIMEOUT_MS);
+    @Test public void hardTimeoutIsSeventyFiveSeconds() {
+        // D43: 75 s so the reload path (compose + reload grace) fits with room to spare.
+        assertEquals(75_000L, LockCoverPolicy.HARD_TIMEOUT_MS);
     }
 
     @Test public void theCoverShowsOnlyTheLastFourDigits() {

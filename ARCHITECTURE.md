@@ -266,7 +266,7 @@ hold notification.
   cover is up and cleared before it comes down; the keyguard is never
   dismissed. The full-screen notification carries no text or name.
 - While covered: touch, key and back events are consumed, no keyboard shows,
-  and navigation is limited to the target thread. 60 s hard timeout and "a
+  and navigation is limited to the target thread. 75 s hard timeout and "a
   pause ends the job" (1 s grace) for every job.
 - On an unlocked phone the cover offers **Stop** before typing starts; Stop
   ends the current and queued jobs with a "You stopped the send" reminder.

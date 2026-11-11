@@ -40,8 +40,11 @@ public final class LockCoverPolicy {
     /** Lifecycle moments at which {@link #finishNow} is asked. */
     public enum Event { JOB_ENDED, TIMEOUT, PAUSED, STOPPED }
 
-    /** A scheduled job never runs longer than this from its launch claim (every job, OD26). */
-    public static final long HARD_TIMEOUT_MS = 60_000L;
+    /**
+     * A scheduled job never runs longer than this from its launch claim (every job, OD26). D43:
+     * 75 s, so the reload path (compose 40 s + reload grace 20 s) ends with room to spare.
+     */
+    public static final long HARD_TIMEOUT_MS = 75_000L;
 
     private LockCoverPolicy() {}
 

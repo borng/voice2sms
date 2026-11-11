@@ -41,7 +41,7 @@ public final class SendLaterNotifications {
     static final String EXTRA_KIND = "com.voice2sms.sendlater.notification_kind";
     static final String KIND_LAST_CALL = "lastCall";
     static final String KIND_SENDING = "sending";
-    /** "Sending to X now" goes away on its own if no outcome replaces it (the send job is 60 s). */
+    /** "Sending to X now" goes away on its own if no outcome replaces it (the send job is at most 75 s). */
     static final long SENDING_TIMEOUT_MS = 2 * 60_000L;
     /** A stale-tap notice is short-lived. */
     static final long STALE_TAP_TIMEOUT_MS = 60_000L;
