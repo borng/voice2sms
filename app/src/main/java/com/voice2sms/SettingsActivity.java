@@ -1,6 +1,5 @@
 package com.voice2sms;
 
-import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accounts.AccountManager;
 import android.app.role.RoleManager;
 import android.content.Intent;
@@ -8,7 +7,6 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.view.accessibility.AccessibilityManager;
 import android.webkit.CookieManager;
 import android.widget.Toast;
 
@@ -21,11 +19,14 @@ import androidx.preference.PreferenceManager;
 import androidx.preference.PreferenceScreen;
 import androidx.preference.SwitchPreferenceCompat;
 
+import java.util.List;
+
 import com.voice2sms.sendlater.SendLaterSettings;
 import com.voice2sms.sendlater.a11y.A11yWarning;
 import com.voice2sms.sendlater.ui.ScheduledCardController;
 import com.voice2sms.sendlater.ui.ScheduledCardPreference;
 import com.voice2sms.sendlater.ui.SendLaterSettingsController;
+import com.voice2sms.sendlater.ui.SetupChecks;
 import com.voice2sms.sendlater.battery.BatteryAdvice;
 import com.voice2sms.sendlater.battery.BatteryHealth;
 import com.voice2sms.sendlater.battery.BatteryIndicator;
@@ -124,14 +125,21 @@ public class SettingsActivity extends AppCompatActivity
         static final String KEY_GROUP_NOTIFICATIONS = "group_notifications";
         static final String KEY_GROUP_ABOUT = "group_about";
 
+        /** Group rows checked against SetupChecks (D59): every row of the root page. */
+        private static final String[] GROUP_KEYS = {KEY_GROUP_SEND_LATER, KEY_GROUP_DEFAULT_SMS,
+                KEY_GROUP_ACCOUNT, KEY_GROUP_GEMINI, KEY_GROUP_NOTIFICATIONS, KEY_GROUP_ABOUT};
+
         /** True on the root page (card + group rows); false on a group sub-screen. */
         private boolean home;
+        /** Key of the group this sub-screen shows (null on the root page). */
+        private String group;
         private ScheduledCardController card;
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
             setPreferencesFromResource(R.xml.preferences, rootKey);
             home = rootKey == null;
+            group = rootKey;
             if (home) {
                 // The root also contains the nested group screens; their rows are wired only
                 // when a group's own sub-screen is shown.
@@ -219,6 +227,13 @@ public class SettingsActivity extends AppCompatActivity
                 });
             }
 
+            // Send Later full-screen-intent row (D59): Android 14+ only; live status in onResume
+            Preference fullScreen = findPreference(SetupChecks.KEY_FULL_SCREEN_ROW);
+            if (fullScreen != null) fullScreen.setVisible(Build.VERSION.SDK_INT >= 34);
+
+            // D59 / OD45: a setup row without its own handler opens the screen that fixes it.
+            wireSetupFixes();
+
             // Version + build (long-press to copy for bug reports)
             Preference version = findPreference("app_version");
             if (version != null) {
@@ -271,6 +286,14 @@ public class SettingsActivity extends AppCompatActivity
             if (defaultSms != null) {
                 updateDefaultSmsStatus(defaultSms);
             }
+            Preference fullScreen = findPreference(SetupChecks.KEY_FULL_SCREEN_ROW);
+            if (fullScreen != null && fullScreen.isVisible()) {
+                fullScreen.setSummary(SetupChecks.live(requireContext())
+                        .isOk(SetupChecks.Item.FULL_SCREEN_INTENT)
+                        ? R.string.sendlater_setup_full_screen_on
+                        : R.string.sendlater_setup_full_screen_off);
+            }
+            refreshSetupMarks();
             PreferenceScreen screen = getPreferenceScreen();
             if (screen != null && screen.getTitle() != null) {
                 requireActivity().setTitle(screen.getTitle());
@@ -299,6 +322,8 @@ public class SettingsActivity extends AppCompatActivity
             android.content.Context c = getContext();
             if (c == null) return;
             SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(c);
+            // D59 / OD44: one list of required items decides which rows need attention.
+            SetupChecks.Probes probes = SetupChecks.live(c);
 
             Preference sendLaterRow = findPreference(KEY_GROUP_SEND_LATER);
             if (sendLaterRow != null) {
@@ -312,11 +337,8 @@ public class SettingsActivity extends AppCompatActivity
                             ? R.string.sendlater_home_summary_send_later_off_restore
                             : R.string.sendlater_home_summary_send_later_off;
                 } else {
-                    boolean attention = !batteryOk || !exact
-                            || !SendLaterSettingsController.notificationsAllowed(c)
-                            || !A11yWarning.isServiceEnabled(c, false);
-                    res = attention ? R.string.sendlater_home_summary_send_later_attention
-                            : R.string.sendlater_home_summary_send_later_on;
+                    // A missing item replaces this line with "Needs: ..." below.
+                    res = R.string.sendlater_home_summary_send_later_on;
                 }
                 sendLaterRow.setSummary(c.getString(R.string.sendlater_home_summary_send_later_detail,
                         c.getString(res), onOff(c, exact),
@@ -337,7 +359,7 @@ public class SettingsActivity extends AppCompatActivity
             Preference geminiRow = findPreference(KEY_GROUP_GEMINI);
             if (geminiRow != null) {
                 geminiRow.setSummary(c.getString(R.string.sendlater_home_summary_gemini,
-                        onOff(c, isAccessibilityServiceEnabled()),
+                        onOff(c, A11yWarning.isServiceEnabled(c, false)),
                         onOff(c, prefs.getBoolean("gemini_auto_send", true))));
             }
 
@@ -353,6 +375,65 @@ public class SettingsActivity extends AppCompatActivity
                 aboutRow.setSummary(c.getString(R.string.sendlater_home_summary_about,
                         BuildConfig.VERSION_NAME));
             }
+
+            // OD45: a group with a missing item shows the warning icon in place of the chevron
+            // and "Needs: <labels>" as its summary; an OK group keeps its chevron and line.
+            for (String key : GROUP_KEYS) {
+                Preference row = findPreference(key);
+                if (row == null) continue;
+                List<SetupChecks.Item> missing = SetupChecks.missing(probes, key);
+                row.setWidgetLayoutResource(missing.isEmpty()
+                        ? R.layout.sendlater_home_chevron : R.layout.sendlater_setup_warn);
+                if (!missing.isEmpty()) row.setSummary(SetupChecks.needsSummary(c, missing));
+            }
+        }
+
+        /**
+         * OD45, inside a group: the row of each missing item shows the warning icon at its end;
+         * an OK row has no end widget. Rechecked on every resume.
+         */
+        private void refreshSetupMarks() {
+            android.content.Context c = getContext();
+            if (c == null || group == null) return;
+            List<SetupChecks.Item> missing = SetupChecks.missing(SetupChecks.live(c), group);
+            for (SetupChecks.Item item : SetupChecks.Item.values()) {
+                String key = SetupChecks.rowKey(item, group);
+                Preference row = key == null ? null : findPreference(key);
+                if (row == null) continue;
+                row.setWidgetLayoutResource(missing.contains(item) ? R.layout.sendlater_setup_warn : 0);
+            }
+        }
+
+        /**
+         * OD45: tapping a setup row opens the screen that fixes it. Rows that already have a
+         * handler keep it (each already opens that item's screen, some with a better flow such as
+         * the in-app permission prompt); any other setup row gets SetupChecks.fixIntent.
+         */
+        private void wireSetupFixes() {
+            if (group == null) return;
+            for (final SetupChecks.Item item : SetupChecks.Item.values()) {
+                String key = SetupChecks.rowKey(item, group);
+                Preference row = key == null ? null : findPreference(key);
+                if (row == null || row.getOnPreferenceClickListener() != null) continue;
+                row.setOnPreferenceClickListener(pref -> {
+                    openSetupFix(item);
+                    return true;
+                });
+            }
+        }
+
+        private void openSetupFix(SetupChecks.Item item) {
+            Intent fix = SetupChecks.fixIntent(requireContext(), item);
+            try {
+                if (fix != null) {
+                    startActivity(fix);
+                    return;
+                }
+            } catch (android.content.ActivityNotFoundException | SecurityException e) {
+                // falls through to the hint below
+            }
+            Toast.makeText(requireContext(), R.string.sendlater_setup_no_screen,
+                    Toast.LENGTH_LONG).show();
         }
 
         private static String onOff(android.content.Context c, boolean on) {
@@ -397,23 +478,11 @@ public class SettingsActivity extends AppCompatActivity
         }
 
         private void updateGeminiInterceptStatus(Preference pref) {
-            boolean enabled = isAccessibilityServiceEnabled();
+            // OD44: the one accessibility test, fail-closed (an unreadable setting shows "off").
+            boolean enabled = A11yWarning.isServiceEnabled(requireContext(), false);
             pref.setSummary(enabled
                     ? "Enabled \u2014 Gemini Send taps are intercepted"
                     : "Tap to open Accessibility Settings");
-        }
-
-        private boolean isAccessibilityServiceEnabled() {
-            AccessibilityManager am = (AccessibilityManager)
-                    requireContext().getSystemService(android.content.Context.ACCESSIBILITY_SERVICE);
-            if (am == null) return false;
-            java.util.List<AccessibilityServiceInfo> enabled =
-                    am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC);
-            String targetId = requireContext().getPackageName() + "/.GeminiSmsInterceptService";
-            for (AccessibilityServiceInfo info : enabled) {
-                if (info.getId() != null && info.getId().equals(targetId)) return true;
-            }
-            return false;
         }
 
         private void requestDefaultSms() {

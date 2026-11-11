@@ -107,6 +107,12 @@
                     android:key="sendlater_battery"
                     android:title="@string/sendlater_battery_title"
                     android:persistent="false" />
+                <!-- sendlater:setup-checks row (D59, OD44): full-screen-intent grant,
+                     shown on Android 14+ only (SettingsActivity hides it below). -->
+                <Preference
+                    android:key="sendlater_full_screen"
+                    android:title="@string/sendlater_setup_full_screen_title"
+                    android:persistent="false" />
             </PreferenceCategory>
             <!-- sendlater:upcoming-settings end -->
         </PreferenceScreen>
